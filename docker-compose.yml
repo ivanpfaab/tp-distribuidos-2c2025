@@ -1,0 +1,23 @@
+services:
+  server:
+    build: ./server
+    container_name: echo-server
+    ports:
+      - "8080:8080"
+    networks:
+      - echo-network
+
+  client:
+    build: ./client
+    container_name: echo-client
+    depends_on:
+      - server
+    networks:
+      - echo-network
+    volumes:
+      - ./input.txt:/app/input.txt
+    command: ["./main", "/app/input.txt"]
+
+networks:
+  echo-network:
+    driver: bridge

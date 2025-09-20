@@ -1,0 +1,8 @@
+Hello World!
+This is a test message
+Go is awesome
+Docker makes deployment easy
+Testing the echo server
+This is line 6
+Final message
+exit
