@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"strings"
 	"time"
+
+	"shared/rabbitmq"
 )
 
 func main() {
@@ -25,26 +26,40 @@ func main() {
 	}
 	defer file.Close()
 	
-	// Connect to the server
-	serverAddr := "server:8080" // Use service name for Docker networking
-	conn, err := net.Dial("tcp", serverAddr)
+	// Connect to RabbitMQ using the shared module
+	config := rabbitmq.DefaultConfig()
+	conn, err := rabbitmq.NewConnection(config)
 	if err != nil {
-		log.Fatalf("Failed to connect to server: %v", err)
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
 	defer conn.Close()
 	
-	fmt.Printf("Connected to echo server at %s\n", serverAddr)
+	// Declare the request queue
+	requestQueue, err := conn.DeclareQueue("echo_requests")
+	if err != nil {
+		log.Fatalf("Failed to declare request queue: %v", err)
+	}
+	
+	// Declare the response queue
+	responseQueue, err := conn.DeclareQueue("echo_responses")
+	if err != nil {
+		log.Fatalf("Failed to declare response queue: %v", err)
+	}
+	
+	// Set up consumer for responses
+	msgs, err := conn.ConsumeMessages(responseQueue.Name)
+	if err != nil {
+		log.Fatalf("Failed to register consumer: %v", err)
+	}
+	
+	fmt.Printf("Connected to RabbitMQ\n")
 	fmt.Printf("Reading messages from file: %s\n", inputFile)
 	
 	// Start a goroutine to read responses from server
 	go func() {
-		scanner := bufio.NewScanner(conn)
-		for scanner.Scan() {
-			response := scanner.Text()
+		for d := range msgs {
+			response := string(d.Body)
 			fmt.Printf("Server response: %s\n", response)
-		}
-		if err := scanner.Err(); err != nil {
-			log.Printf("Error reading from server: %v", err)
 		}
 	}()
 	
@@ -63,10 +78,10 @@ func main() {
 		
 		fmt.Printf("Sending line %d: %s\n", lineCount, message)
 		
-		// Send message to server
-		_, err := conn.Write([]byte(message + "\n"))
+		// Send message to request queue
+		err = conn.PublishMessage(requestQueue.Name, message, responseQueue.Name)
 		if err != nil {
-			log.Printf("Failed to send message: %v", err)
+			log.Printf("Failed to publish message: %v", err)
 			break
 		}
 		

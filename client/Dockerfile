@@ -4,13 +4,16 @@ FROM golang:1.21-alpine AS builder
 WORKDIR /app
 
 # Copy go mod files
-COPY go.mod ./
+COPY client/go.mod ./
+
+# Copy shared module first (needed for go mod download)
+COPY shared ./shared
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY . .
+COPY client/ .
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
