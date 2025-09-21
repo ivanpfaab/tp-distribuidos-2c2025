@@ -90,7 +90,9 @@ func main() {
 		
 		// Check for exit command
 		if strings.ToLower(message) == "exit" {
-			fmt.Println("Exit command found, stopping...")
+			fmt.Println("Exit command found, waiting for response before stopping...")
+			// Wait a bit longer for the final response
+			time.Sleep(500 * time.Millisecond)
 			break
 		}
 	}

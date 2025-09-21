@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"strings"
 
 	"shared/rabbitmq"
 )
@@ -56,12 +55,6 @@ func main() {
 			log.Printf("Failed to publish response: %v", err)
 		} else {
 			fmt.Printf("Sent response: %s\n", response)
-		}
-
-		// Check for exit command
-		if strings.ToLower(strings.TrimSpace(message)) == "exit" {
-			fmt.Println("Exit command received, server stopping...")
-			break
 		}
 	}
 }
