@@ -15,8 +15,8 @@ services:
     networks:
       - echo-network
     volumes:
-      - ./input.txt:/app/input.txt
-    command: ["./main", "/app/input.txt"]
+      - ./test.csv:/app/test.csv
+    command: ["./main", "/app/test.csv"]
 
 networks:
   echo-network:
