@@ -30,11 +30,43 @@ services:
     networks:
       - echo-network
 
-  client:
+  client-1:
     build:
       context: .
       dockerfile: ./client/Dockerfile
-    container_name: echo-client
+    container_name: echo-client-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    networks:
+      - echo-network
+    volumes:
+      - ./input.txt:/app/input.txt
+    command: ["./main", "/app/input.txt"]
+
+  client-2:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    container_name: echo-client-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    networks:
+      - echo-network
+    volumes:
+      - ./input.txt:/app/input.txt
+    command: ["./main", "/app/input.txt"]
+
+  client-3:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    container_name: echo-client-3
     depends_on:
       rabbitmq:
         condition: service_healthy
