@@ -1,0 +1,736 @@
+Repository: 7574-sistemas-distribuidos/rabbitmq-example
+Files analyzed: 36
+
+Estimated tokens: 4.0k
+
+Directory structure:
+└── 7574-sistemas-distribuidos-rabbitmq-example/
+    ├── README.md
+    ├── LICENSE
+    ├── base-images/
+    │   ├── build.sh
+    │   └── python-base.dockerfile
+    ├── hello-world/
+    │   ├── docker-compose-dev.yaml
+    │   ├── run.sh
+    │   ├── stop.sh
+    │   ├── consumer/
+    │   │   ├── consumer.dockerfile
+    │   │   └── consumer.py
+    │   ├── producer/
+    │   │   ├── producer.dockerfile
+    │   │   └── producer.py
+    │   └── rabbitmq/
+    │       └── rabbitmq.dockerfile
+    ├── publisher-subscriber/
+    │   ├── docker-compose-dev.yaml
+    │   ├── run.sh
+    │   ├── stop.sh
+    │   ├── consumer/
+    │   │   ├── consumer.dockerfile
+    │   │   └── consumer.py
+    │   ├── producer/
+    │   │   ├── producer.dockerfile
+    │   │   └── producer.py
+    │   └── rabbitmq/
+    │       └── rabbitmq.dockerfile
+    ├── routing/
+    │   ├── docker-compose-dev.yaml
+    │   ├── run.sh
+    │   ├── stop.sh
+    │   ├── consumer/
+    │   │   ├── consumer.dockerfile
+    │   │   └── consumer.py
+    │   ├── producer/
+    │   │   ├── producer.dockerfile
+    │   │   └── producer.py
+    │   └── rabbitmq/
+    │       └── rabbitmq.dockerfile
+    └── work-queues/
+        ├── docker-compose-dev.yaml
+        ├── run.sh
+        ├── stop.sh
+        ├── consumer/
+        │   ├── consumer.dockerfile
+        │   └── consumer.py
+        ├── producer/
+        │   ├── producer.dockerfile
+        │   └── producer.py
+        └── rabbitmq/
+            └── rabbitmq.dockerfile
+
+
+================================================
+FILE: README.md
+================================================
+# rabbitmq-example
+
+## Hello World Example
+The following example is a dockerization of the [RabbitMQ Hello World!! example](https://www.rabbitmq.com/tutorials/tutorial-one-python.html). It consists in two processes:
+* **Producer:** Process that constantly sends messages in queue _hello_ 
+* **Consumer:** Process receives messages from queue _hello_ and prints them
+
+The example run via **docker-compose** and can be executed with the script **run.sh**. The example needs to be stopped executing the script **stop.sh** which will free all docker-compose resources allocated 
+
+
+================================================
+FILE: LICENSE
+================================================
+MIT License
+
+Copyright (c) 2018 7574-sistemas-distribuidos
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
+================================================
+FILE: base-images/build.sh
+================================================
+#!/bin/bash
+docker build -f python-base.dockerfile -t rabbitmq-python-base:0.0.1 .
+
+
+================================================
+FILE: base-images/python-base.dockerfile
+================================================
+FROM ubuntu:20.04
+
+# Install golang
+RUN apt update && apt install python3 python3-pip -y
+RUN pip3 install pika
+
+
+
+================================================
+FILE: hello-world/docker-compose-dev.yaml
+================================================
+version: '3'
+services:
+  rabbitmq:
+    build:
+      context: ./rabbitmq
+      dockerfile: rabbitmq.dockerfile
+    ports:
+      - 15672:15672
+    healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:15672"]
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+  producer:
+    build:
+      context: ./producer
+      dockerfile: producer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  consumer:
+    build:
+      context: ./consumer
+      dockerfile: consumer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+
+
+================================================
+FILE: hello-world/run.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml up --build 
+
+
+
+================================================
+FILE: hello-world/stop.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml stop -t 1
+docker-compose -f docker-compose-dev.yaml down
+
+
+
+================================================
+FILE: hello-world/consumer/consumer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY consumer.py /root/consumer.py
+CMD /root/consumer.py
+
+
+================================================
+FILE: hello-world/consumer/consumer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import time
+
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+
+channel = connection.channel()
+channel.queue_declare(queue='hello')
+
+
+def callback(ch, method, properties, body):
+    print(" [x] Received %r" % body)
+
+channel.basic_consume(
+    queue='hello', on_message_callback=callback, auto_ack=True)
+
+print(' [*] Waiting for messages. To exit press CTRL+C')
+channel.start_consuming()
+
+
+================================================
+FILE: hello-world/producer/producer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY producer.py /root/producer.py
+CMD /root/producer.py
+
+
+================================================
+FILE: hello-world/producer/producer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import time
+
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+channel = connection.channel()
+
+channel.queue_declare(queue='hello')
+
+for i in range(100):
+    channel.basic_publish(exchange='', routing_key='hello', body='Hello World {}!'.format(i))
+    print(" [x] Sent 'Hello World {}!'".format(i))
+    time.sleep(1)
+
+connection.close()
+
+
+================================================
+FILE: hello-world/rabbitmq/rabbitmq.dockerfile
+================================================
+FROM rabbitmq:3.9.16-management-alpine
+RUN apk update && apk add curl
+
+
+
+================================================
+FILE: publisher-subscriber/docker-compose-dev.yaml
+================================================
+version: '3'
+services:
+  rabbitmq:
+    build:
+      context: ./rabbitmq
+      dockerfile: rabbitmq.dockerfile
+    ports:
+      - 15672:15672
+
+  producer:
+    build:
+      context: ./producer
+      dockerfile: producer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  consumer1:
+    build:
+      context: ./consumer
+      dockerfile: consumer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONSUMER_ID=1
+
+  consumer2:
+    build:
+      context: ./consumer
+      dockerfile: consumer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONSUMER_ID=2
+
+
+================================================
+FILE: publisher-subscriber/run.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml up --build 
+
+
+
+================================================
+FILE: publisher-subscriber/stop.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml stop -t 1
+docker-compose -f docker-compose-dev.yaml down
+
+
+
+================================================
+FILE: publisher-subscriber/consumer/consumer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY consumer.py /root/consumer.py
+CMD /root/consumer.py
+
+
+================================================
+FILE: publisher-subscriber/consumer/consumer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import time
+import os
+
+# Wait for rabbitmq to come up
+time.sleep(10)
+
+consumer_id = os.environ["CONSUMER_ID"]
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+channel = connection.channel()
+
+channel.exchange_declare(exchange='logs', exchange_type='fanout')
+
+result = channel.queue_declare(queue='', durable=True)
+queue_name = result.method.queue
+channel.queue_bind(exchange='logs', queue=queue_name)
+
+print('[{}] Waiting for messages. To exit press CTRL+C'.format(consumer_id))
+
+def callback(ch, method, properties, body):
+    print("[{}] Received {}".format(consumer_id, body))
+
+channel.basic_qos(prefetch_count=1)
+channel.basic_consume(
+    queue=queue_name, on_message_callback=callback, auto_ack=True)
+
+channel.start_consuming()
+
+
+================================================
+FILE: publisher-subscriber/producer/producer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY producer.py /root/producer.py
+CMD /root/producer.py
+
+
+================================================
+FILE: publisher-subscriber/producer/producer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import sys
+import random
+import time
+
+# Wait for rabbitmq to come up
+time.sleep(10)
+
+# Create RabbitMQ communication channel
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+channel = connection.channel()
+
+channel.exchange_declare(exchange='logs', exchange_type='fanout')
+
+for i in range(100):
+    message = "Random number FTW: {}".format(random.randint(1,11))
+    channel.basic_publish(exchange='logs', routing_key='', body=message)
+    print(" [x] Sent %r" % message)
+    time.sleep(1)
+
+connection.close()
+
+
+================================================
+FILE: publisher-subscriber/rabbitmq/rabbitmq.dockerfile
+================================================
+FROM rabbitmq:3.9.16-management-alpine
+RUN apk update && apk add curl
+
+
+
+================================================
+FILE: routing/docker-compose-dev.yaml
+================================================
+version: '3'
+services:
+  rabbitmq:
+    build:
+      context: ./rabbitmq
+      dockerfile: rabbitmq.dockerfile
+    ports:
+      - 15672:15672
+
+  producer:
+    build:
+      context: ./producer
+      dockerfile: producer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  consumer1:
+    build:
+      context: ./consumer
+      dockerfile: consumer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONSUMER_ID=1
+      - LOG_SEVERITY=info
+
+  consumer2:
+    build:
+      context: ./consumer
+      dockerfile: consumer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONSUMER_ID=2
+      - LOG_SEVERITY=error
+
+
+================================================
+FILE: routing/run.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml up --build 
+
+
+
+================================================
+FILE: routing/stop.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml stop -t 1
+docker-compose -f docker-compose-dev.yaml down
+
+
+
+================================================
+FILE: routing/consumer/consumer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY consumer.py /root/consumer.py
+CMD /root/consumer.py
+
+
+================================================
+FILE: routing/consumer/consumer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import time
+import os
+
+# Wait for rabbitmq to come up
+time.sleep(10)
+
+consumer_id = os.environ["CONSUMER_ID"]
+severities = os.environ["LOG_SEVERITY"].split(',')
+
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+channel = connection.channel()
+
+channel.exchange_declare(exchange='direct_logs', exchange_type='direct')
+
+result = channel.queue_declare(queue='', durable=True)
+queue_name = result.method.queue
+
+for severity in severities:
+    channel.queue_bind(
+        exchange='direct_logs', queue=queue_name, routing_key=severity)
+
+print('[{}] Waiting for messages. To exit press CTRL+C'.format(consumer_id))
+
+def callback(ch, method, properties, body):
+    print("[{}] Routing Key: {} - Message: {}".format(consumer_id, method.routing_key, body))
+
+channel.basic_consume(
+    queue=queue_name, on_message_callback=callback, auto_ack=True)
+
+channel.start_consuming()
+
+
+================================================
+FILE: routing/producer/producer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY producer.py /root/producer.py
+CMD /root/producer.py
+
+
+================================================
+FILE: routing/producer/producer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import sys
+import random
+import time
+
+# Wait for rabbitmq to come up
+time.sleep(10)
+
+# Create RabbitMQ communication channel
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+channel = connection.channel()
+
+channel.exchange_declare(exchange='direct_logs', exchange_type='direct')
+severity = ["error", "info", "debug"]
+
+for i in range(100):
+    log_level = severity[random.randint(0,2)]
+    message = "[{}] Log with random severity".format(log_level)
+    channel.basic_publish(exchange='direct_logs', routing_key=log_level, body=message)
+    print(" [x] Sent %r" % message)
+    time.sleep(1)
+
+connection.close()
+
+
+
+================================================
+FILE: routing/rabbitmq/rabbitmq.dockerfile
+================================================
+FROM rabbitmq:3.9.16-management-alpine
+RUN apk update && apk add curl
+
+
+
+================================================
+FILE: work-queues/docker-compose-dev.yaml
+================================================
+version: '3'
+services:
+  rabbitmq:
+    build:
+      context: ./rabbitmq
+      dockerfile: rabbitmq.dockerfile
+    ports:
+      - 15672:15672
+
+  producer:
+    build:
+      context: ./producer
+      dockerfile: producer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+    # healthcheck:
+    #     test: ["CMD", "curl", "-f", "http://rabbitmq:15672"]
+    #     interval: 10s
+    #     timeout: 5s
+    #     retries: 10
+
+  consumer1:
+    build:
+      context: ./consumer
+      dockerfile: consumer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONSUMER_ID=1
+
+  consumer2:
+    build:
+      context: ./consumer
+      dockerfile: consumer.dockerfile
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    links: 
+      - rabbitmq
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONSUMER_ID=2
+
+
+================================================
+FILE: work-queues/run.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml up --build 
+
+
+
+================================================
+FILE: work-queues/stop.sh
+================================================
+#!/bin/bash
+docker-compose -f docker-compose-dev.yaml stop -t 1
+docker-compose -f docker-compose-dev.yaml down
+
+
+
+================================================
+FILE: work-queues/consumer/consumer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY consumer.py /root/consumer.py
+CMD /root/consumer.py
+
+
+================================================
+FILE: work-queues/consumer/consumer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import time
+import os
+
+# Wait for rabbitmq to come up
+time.sleep(10)
+
+consumer_id = os.environ["CONSUMER_ID"]
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+channel = connection.channel()
+
+channel.queue_declare(queue='task_queue', durable=True)
+print('[{}] Waiting for messages. To exit press CTRL+C'.format(consumer_id))
+
+
+def callback(ch, method, properties, body):
+    print("[{}] Received {}".format(consumer_id, body))
+    if consumer_id == "1":
+        time.sleep(body.count(b'.'))
+    print("[{}] Done".format(consumer_id))
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+channel.basic_qos(prefetch_count=1)
+channel.basic_consume(queue='task_queue', on_message_callback=callback)
+
+channel.start_consuming()
+
+
+================================================
+FILE: work-queues/producer/producer.dockerfile
+================================================
+FROM rabbitmq-python-base:0.0.1
+
+COPY producer.py /root/producer.py
+CMD /root/producer.py
+
+
+================================================
+FILE: work-queues/producer/producer.py
+================================================
+#!/usr/bin/env python3
+import pika
+import sys
+import random
+import time
+
+# Wait for rabbitmq to come up
+time.sleep(10)
+
+# Create RabbitMQ communication channel
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host='rabbitmq'))
+channel = connection.channel()
+
+
+channel.queue_declare(queue='task_queue', durable=True)
+
+for i in range(100):
+    message = "." * random.randint(1,11)
+    channel.basic_publish(
+        exchange='',
+        routing_key='task_queue',
+        body=message,
+        properties=pika.BasicProperties(
+            delivery_mode=2,  # make message persistent
+        ))
+    print(" [x] Sent %r" % message)
+    time.sleep(1)
+
+connection.close()
+
+
+================================================
+FILE: work-queues/rabbitmq/rabbitmq.dockerfile
+================================================
+FROM rabbitmq:3.9.16-management-alpine
+RUN apk update && apk add curl
+
