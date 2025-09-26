@@ -3,6 +3,7 @@ package rabbitmq
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/streadway/amqp"
@@ -20,13 +21,28 @@ type Config struct {
 
 // DefaultConfig returns a default RabbitMQ configuration
 func DefaultConfig() *Config {
+	// Read from environment variables with fallback to defaults
+	host := getEnvOrDefault("RABBITMQ_HOST", "rabbitmq")
+	port := getEnvOrDefault("RABBITMQ_PORT", "5672")
+	username := getEnvOrDefault("RABBITMQ_USER", "admin")
+	password := getEnvOrDefault("RABBITMQ_PASS", "password")
+	vhost := getEnvOrDefault("RABBITMQ_VHOST", "/")
+
 	return &Config{
-		Username: "admin",
-		Password: "password",
-		Host:     "rabbitmq",
-		Port:     "5672",
-		VHost:    "/",
+		Username: username,
+		Password: password,
+		Host:     host,
+		Port:     port,
+		VHost:    vhost,
 	}
+}
+
+// getEnvOrDefault returns environment variable value or default if not set
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
 
 // Connection wraps RabbitMQ connection and channel
@@ -44,7 +60,7 @@ func NewConnection(config *Config) (*Connection, error) {
 
 	// Build connection URL
 	if config.URL == "" {
-		config.URL = fmt.Sprintf("amqp://%s:%s@%s:%s%s", 
+		config.URL = fmt.Sprintf("amqp://%s:%s@%s:%s%s",
 			config.Username, config.Password, config.Host, config.Port, config.VHost)
 	}
 

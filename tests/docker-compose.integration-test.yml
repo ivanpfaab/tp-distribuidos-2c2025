@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: test-rabbitmq
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  server:
+    build:
+      context: ..
+      dockerfile: ./server/Dockerfile
+    container_name: test-echo-server
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - test-network
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+
+  client-1:
+    build:
+      context: ..
+      dockerfile: ./client/Dockerfile
+    container_name: test-echo-client-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    networks:
+      - test-network
+    volumes:
+      - ../input.txt:/app/input.txt:ro
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+    command: ["./main", "/app/input.txt"]
+
+  client-2:
+    build:
+      context: ..
+      dockerfile: ./client/Dockerfile
+    container_name: test-echo-client-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    networks:
+      - test-network
+    volumes:
+      - ../input.txt:/app/input.txt:ro
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+    command: ["./main", "/app/input.txt"]
+
+  client-3:
+    build:
+      context: ..
+      dockerfile: ./client/Dockerfile
+    container_name: test-echo-client-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    networks:
+      - test-network
+    volumes:
+      - ../input.txt:/app/input.txt:ro
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+    command: ["./main", "/app/input.txt"]
+
+  # Test runner that validates the communication
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: test-runner
+    depends_on:
+      - client-1
+      - client-2
+      - client-3
+    networks:
+      - test-network
+    volumes:
+      - ../shared:/app/shared:ro
+    environment:
+      - GO111MODULE=on
+      - DOCKER_TEST=true
+    command: ["go", "test", "-v", "-run", "TestDockerMultiClientIntegration", "-timeout", "5m"]
+    working_dir: /app
+
+networks:
+  test-network:
+    driver: bridge
+

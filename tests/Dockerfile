@@ -16,8 +16,9 @@ WORKDIR /app/tests
 # Download dependencies and generate go.sum
 RUN go mod tidy
 
-# Make the test runner executable
+# Make the test runners executable
 RUN chmod +x run_tests.sh
+RUN chmod +x run_multi_client_test.sh
 
 # Default command to run tests
 CMD ["bash", "./run_tests.sh"]
