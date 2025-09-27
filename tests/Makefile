@@ -2,25 +2,29 @@
 
 .PHONY: test test-build test-run test-clean test-setup
 
-# Run all tests
+# Run all tests (with real-time logs)
 test: test-setup
-	@echo "Running all tests..."
-	docker compose -f docker-compose.test.yaml up --build --abort-on-container-exit --quiet-pull
+	@echo "Running all tests with real-time logs..."
+	docker compose -f docker-compose.test.yaml up --build
+	@echo "Following logs..."
+	docker compose -f docker-compose.test.yaml logs -f test-runner
 
 # Build test containers
 test-build:
 	@echo "Building test containers..."
 	docker compose -f docker-compose.test.yaml build
 
-# Run tests without rebuilding
-test-run:
-	@echo "Running tests..."
-	docker compose -f docker-compose.test.yaml up --abort-on-container-exit --quiet-pull
+# Run tests without rebuilding (buffered output)
+test-buffered:
+	@echo "Running tests (buffered output)..."
+	docker compose -f docker-compose.test.yaml up
 
-# Clean up test containers and images
-test-clean:
-	@echo "Cleaning up test containers..."
-	docker compose -f docker-compose.test.yaml down --rmi all --volumes --remove-orphans
+# Run tests without rebuilding (real-time logs)
+test-run:
+	@echo "Running tests with real-time logs..."
+	docker compose -f docker-compose.test.yaml up
+	@echo "Following logs..."
+	docker compose -f docker-compose.test.yaml logs -f test-runner
 
 # Setup test environment
 test-setup:
@@ -39,9 +43,10 @@ test-protocol:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  test          - Run all tests"
+	@echo "  test          - Run all tests with real-time logs (default)"
 	@echo "  test-build    - Build test containers"
-	@echo "  test-run      - Run tests without rebuilding"
+	@echo "  test-run      - Run tests without rebuilding (real-time logs)"
+	@echo "  test-buffered - Run tests with buffered output"
 	@echo "  test-clean    - Clean up test containers"
 	@echo "  test-setup    - Setup test environment"
 	@echo "  test-middleware - Run middleware tests only"

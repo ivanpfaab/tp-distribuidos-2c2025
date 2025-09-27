@@ -23,4 +23,9 @@ RUN go mod tidy
 # Change to tests directory and run tests
 WORKDIR /app/tests
 RUN go mod tidy
+
+# Set environment variables for unbuffered output
+ENV PYTHONUNBUFFERED=1
+ENV GOCACHE=/tmp/go-cache
+
 CMD ["go", "test", "-v", "./..."]
