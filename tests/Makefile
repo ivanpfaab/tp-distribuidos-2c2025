@@ -6,8 +6,6 @@
 test: test-setup
 	@echo "Running all tests with real-time logs..."
 	docker compose -f docker-compose.test.yaml up --build
-	@echo "Following logs..."
-	docker compose -f docker-compose.test.yaml logs -f test-runner
 
 # Build test containers
 test-build:
@@ -23,8 +21,6 @@ test-buffered:
 test-run:
 	@echo "Running tests with real-time logs..."
 	docker compose -f docker-compose.test.yaml up
-	@echo "Following logs..."
-	docker compose -f docker-compose.test.yaml logs -f test-runner
 
 # Setup test environment
 test-setup:
