@@ -185,30 +185,30 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	received3 := false
 
 	onMessageCallback1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		message := delivery.Body
-		middleware.LogStep("Consumer 1 received message: %s", string(message))
-		received1 = true
-		delivery.Ack(false)
-		close(done)
+		for delivery := range *consumeChannel {
+			message := delivery.Body
+			middleware.LogStep("Consumer 1 received message: %s", string(message))
+			received1 = true
+			delivery.Ack(false)
+		}
 	}
 
 	onMessageCallback2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		message := delivery.Body
-		middleware.LogStep("Consumer 2 received message: %s", string(message))
-		received2 = true
-		delivery.Ack(false)
-		close(done)
+		for delivery := range *consumeChannel {
+			message := delivery.Body
+			middleware.LogStep("Consumer 2 received message: %s", string(message))
+			received2 = true
+			delivery.Ack(false)
+		}
 	}
 
 	onMessageCallback3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		message := delivery.Body
-		middleware.LogStep("Consumer 3 received message: %s", string(message))
-		received3 = true
-		delivery.Ack(false)
-		close(done)
+		for delivery := range *consumeChannel {
+			message := delivery.Body
+			middleware.LogStep("Consumer 3 received message: %s", string(message))
+			received3 = true
+			delivery.Ack(false)
+		}
 	}
 
 	// Start all consumers
@@ -224,6 +224,13 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 		[]byte("Message 1 for worker queue 1tomany"),
 		[]byte("Message 2 for worker queue 1tomany"),
 		[]byte("Message 3 for worker queue 1tomany"),
+		[]byte("Message 4 for worker queue 1tomany"),
+		[]byte("Message 5 for worker queue 1tomany"),
+		[]byte("Message 6 for worker queue 1tomany"),
+		[]byte("Message 7 for worker queue 1tomany"),
+		[]byte("Message 8 for worker queue 1tomany"),
+		[]byte("Message 9 for worker queue 1tomany"),
+		[]byte("Message 10 for worker queue 1tomany"),
 	}
 
 	for _, message := range messages {
