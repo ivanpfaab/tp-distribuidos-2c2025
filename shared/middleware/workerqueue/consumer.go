@@ -1,7 +1,6 @@
 package workerqueue
 
 import (
-	"fmt"
 	"tp-distribuidos-2c2025/shared/middleware"
 )
 
@@ -18,7 +17,7 @@ func NewQueueConsumer(
 	// Create channel
 	channel, err := middleware.CreateMiddlewareChannel(config)
 	if err != nil {
-		fmt.Printf("Queue '%s' Consumer: Failed to create channel: %v\n", queueName, err)
+		middleware.LogError("Queue Consumer", "Failed to create channel for queue '%s': %v", queueName, err)
 		return nil
 	}
 
@@ -49,7 +48,7 @@ func (m *QueueConsumer) StartConsuming(
 		nil,   // arguments
 	)
 	if err != nil {
-		fmt.Printf("Queue '%s' Consumer: Failed to start consuming: %v\n", m.QueueName, err)
+		middleware.LogError("Queue Consumer", "Failed to start consuming for queue '%s': %v", m.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
@@ -59,7 +58,7 @@ func (m *QueueConsumer) StartConsuming(
 	// Start the processing loop in a goroutine
 	go func() {
 		done := make(chan error, 1)
-		fmt.Printf("Queue '%s' Consumer: Starting consumer.\n", m.QueueName)
+		middleware.LogDebug("Queue Consumer", "Starting consumer for queue '%s'", m.QueueName)
 
 		// Call the onMessageCallback with the consume channel
 		onMessageCallback(m.ConsumeChannel, done)
@@ -75,20 +74,20 @@ func (m *QueueConsumer) StopConsuming() middleware.MessageMiddlewareError {
 	}
 	
 	if m.ConsumeChannel == nil {
-		fmt.Printf("Queue '%s' Consumer: Not consuming, StopConsuming has no effect.\n", m.QueueName)
+		middleware.LogDebug("Queue Consumer", "Not consuming for queue '%s', StopConsuming has no effect", m.QueueName)
 		return 0 
 	}
 	
 	// Cancel the consumer
 	err := (*m.Channel).Cancel("", false) // Empty string cancels all consumers on this channel
 	if err != nil {
-		fmt.Printf("Queue '%s' Consumer: Failed to cancel consumer: %v\n", m.QueueName, err)
+		middleware.LogError("Queue Consumer", "Failed to cancel consumer for queue '%s': %v", m.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Clear the consume channel reference
 	m.ConsumeChannel = nil 
-	fmt.Printf("Queue '%s' Consumer: Halted.\n", m.QueueName)
+	middleware.LogDebug("Queue Consumer", "Consumer halted for queue '%s'", m.QueueName)
 
 	return 0
 }
@@ -103,19 +102,19 @@ func (m *QueueConsumer) Close() middleware.MessageMiddlewareError {
 	if m.ConsumeChannel != nil {
 		stopErr := m.StopConsuming()
 		if stopErr != 0 {
-			fmt.Printf("Queue '%s': Error stopping consumption during close: %v\n", m.QueueName, stopErr)
+			middleware.LogError("Queue Consumer", "Error stopping consumption during close for queue '%s': %v", m.QueueName, stopErr)
 		}
 	}
 
 	// Close the AMQP channel
 	err := (*m.Channel).Close()
 	if err != nil {
-		fmt.Printf("Queue '%s': Close error: %v\n", m.QueueName, err)
+		middleware.LogError("Queue Consumer", "Close error for queue '%s': %v", m.QueueName, err)
 		return middleware.MessageMiddlewareCloseError
 	}
 
 	m.Channel = nil 
-	fmt.Printf("Queue '%s': Channel closed.\n", m.QueueName)
+	middleware.LogDebug("Queue Consumer", "Channel closed for queue '%s'", m.QueueName)
 
 	return 0
 }

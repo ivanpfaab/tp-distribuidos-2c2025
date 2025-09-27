@@ -5,7 +5,7 @@
 # Run all tests
 test: test-setup
 	@echo "Running all tests..."
-	docker compose -f docker-compose.test.yaml up --build --abort-on-container-exit
+	docker compose -f docker-compose.test.yaml up --build --abort-on-container-exit --quiet-pull
 
 # Build test containers
 test-build:
@@ -15,7 +15,7 @@ test-build:
 # Run tests without rebuilding
 test-run:
 	@echo "Running tests..."
-	docker compose -f docker-compose.test.yaml up --abort-on-container-exit
+	docker compose -f docker-compose.test.yaml up --abort-on-container-exit --quiet-pull
 
 # Clean up test containers and images
 test-clean:

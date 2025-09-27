@@ -2,7 +2,6 @@ package exchange
 
 import (
 	amqp "github.com/rabbitmq/amqp091-go"
-	"fmt"
 	"tp-distribuidos-2c2025/shared/middleware"
 )
 
@@ -16,7 +15,7 @@ func NewMessageMiddlewareExchange(exchangeName string, routeKeys []string, confi
 	// Create channel
 	channel, err := middleware.CreateMiddlewareChannel(config)
 	if err != nil {
-		fmt.Printf("Exchange '%s' Producer: Failed to create channel: %v\n", exchangeName, err)
+		middleware.LogError("Exchange Producer", "Failed to create channel for '%s': %v", exchangeName, err)
 		return nil
 	}
 
@@ -57,11 +56,11 @@ func (m *ExchangeMiddleware) DeclareExchange(
 		nil, // arguments
 	)
 	if err != nil {
-		fmt.Printf("Exchange '%s' Producer: Failed to declare exchange: %v\n", m.ExchangeName, err)
+		middleware.LogError("Exchange Producer", "Failed to declare exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 	
-	fmt.Printf("Exchange '%s' Producer: Successfully declared (type: %s, durable: %t).\n", m.ExchangeName, exchangeType, durable)
+	middleware.LogDebug("Exchange Producer", "Exchange '%s' declared (type: %s, durable: %t)", m.ExchangeName, exchangeType, durable)
 	return 0
 }
 
@@ -87,10 +86,10 @@ func (m *ExchangeMiddleware) Send(
 			},
 		)
 		if err != nil {
-			fmt.Printf("Exchange '%s' Producer: Send error for key '%s': %v\n", m.ExchangeName, routeKey, err)
+			middleware.LogError("Exchange Producer", "Send error for exchange '%s' key '%s': %v", m.ExchangeName, routeKey, err)
 			return middleware.MessageMiddlewareMessageError
 		}
-		fmt.Printf("Exchange '%s' Producer: Message sent with key '%s'.\n", m.ExchangeName, routeKey)
+		middleware.LogDebug("Exchange Producer", "Message sent to exchange '%s' with key '%s'", m.ExchangeName, routeKey)
 	}
 
 	return 0
@@ -110,11 +109,11 @@ func (m *ExchangeMiddleware) Delete() middleware.MessageMiddlewareError {
 	)
 
 	if err != nil {
-		fmt.Printf("Exchange '%s': Delete error: %v\n", m.ExchangeName, err)
+		middleware.LogError("Exchange Producer", "Delete error for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareDeleteError
 	}
 	
-	fmt.Printf("Exchange '%s': Remote exchange deleted.\n", m.ExchangeName)
+	middleware.LogDebug("Exchange Producer", "Exchange '%s' deleted", m.ExchangeName)
 
 	return 0
 }
@@ -128,12 +127,12 @@ func (m *ExchangeMiddleware) Close() middleware.MessageMiddlewareError {
 	// Close the AMQP channel
 	err := (*m.AmqpChannel).Close()
 	if err != nil {
-		fmt.Printf("Exchange '%s': Close error: %v\n", m.ExchangeName, err)
+		middleware.LogError("Exchange Producer", "Close error for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareCloseError
 	}
 
 	m.AmqpChannel = nil 
-	fmt.Printf("Exchange '%s': Channel closed.\n", m.ExchangeName)
+	middleware.LogDebug("Exchange Producer", "Exchange '%s' channel closed", m.ExchangeName)
 
 	return 0
 }

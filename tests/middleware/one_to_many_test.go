@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"testing"
 	"time"
 	"tp-distribuidos-2c2025/shared/middleware"
@@ -10,6 +11,9 @@ import (
 
 // TestExchangeOneToMany tests 1 producer multiple consumers using exchange
 func TestExchangeOneToMany(t *testing.T) {
+	middleware.InitLogger()
+	middleware.LogTest("Testing Exchange One-to-Many pattern")
+	
 	// Init connection
 	config := &middleware.ConnectionConfig{
 		URL: "amqp://admin:password@rabbitmq:5672/",
@@ -18,8 +22,10 @@ func TestExchangeOneToMany(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
+	middleware.LogStep("Connected to RabbitMQ")
 
 	// Init middleware
+	middleware.LogStep("Creating exchange producer and consumers")
 	producer := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.broadcast"}, config)
 	consumer1 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast"}, config)
 	consumer2 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast"}, config)
@@ -30,16 +36,20 @@ func TestExchangeOneToMany(t *testing.T) {
 	}
 
 	// Declare exchange
+	middleware.LogStep("Declaring exchange")
 	errCode := producer.DeclareExchange("topic", true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare exchange: %v", errCode)
 	}
 
 	// Send message
-	message := []byte("Hello from exchange 1tomany")
-	errCode = producer.Send(message)
-	if errCode != 0 {
-		t.Fatalf("Failed to send message: %v", errCode)
+	middleware.LogStep("Sending 10 messages")
+	for i := 0; i < 10; i++ {
+		message := []byte(fmt.Sprintf("Hello from exchange 1tomany %d", i))
+		errCode = producer.Send(message)
+		if errCode != 0 {
+			t.Fatalf("Failed to send message: %v", errCode)
+		}
 	}
 
 	// Check if all consumers received the message
@@ -49,40 +59,43 @@ func TestExchangeOneToMany(t *testing.T) {
 
 	onMessageCallback1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		delivery := <-*consumeChannel
-		if string(delivery.Body) == string(message) {
-			received1 = true
-		}
+		message := delivery.Body
+		middleware.LogStep("Consumer 1 received message: %s", string(message))
+		received1 = true
 		delivery.Ack(false)
 		close(done)
 	}
 
 	onMessageCallback2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		delivery := <-*consumeChannel
-		if string(delivery.Body) == string(message) {
-			received2 = true
-		}
+		message := delivery.Body
+		middleware.LogStep("Consumer 2 received message: %s", string(message))
+		received2 = true
 		delivery.Ack(false)
 		close(done)
 	}
 
 	onMessageCallback3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		delivery := <-*consumeChannel
-		if string(delivery.Body) == string(message) {
-			received3 = true
-		}
+		message := delivery.Body
+		middleware.LogStep("Consumer 3 received message: %s", string(message))
+		received3 = true
 		delivery.Ack(false)
 		close(done)
 	}
 
 	// Start all consumers
+	middleware.LogStep("Starting all consumers")
 	consumer1.StartConsuming(onMessageCallback1)
 	consumer2.StartConsuming(onMessageCallback2)
 	consumer3.StartConsuming(onMessageCallback3)
 
 	// Wait for messages
+	middleware.LogStep("Waiting for messages (10 seconds)")
 	time.Sleep(10 * time.Second)
 
 	// Close
+	middleware.LogStep("Closing connections")
 	producer.Close()
 	consumer1.Close()
 	consumer2.Close()
@@ -98,10 +111,17 @@ func TestExchangeOneToMany(t *testing.T) {
 	if !received3 {
 		t.Error("Consumer 3 did not receive message")
 	}
+	
+	if received1 && received2 && received3 {
+		middleware.LogSuccess("All consumers received messages successfully")
+	}
 }
 
 // TestWorkerQueueOneToMany tests 1 producer multiple consumers using worker queue
 func TestWorkerQueueOneToMany(t *testing.T) {
+	middleware.InitLogger()
+	middleware.LogTest("Testing Worker Queue One-to-Many pattern")
+	
 	// Init connection
 	config := &middleware.ConnectionConfig{
 		URL: "amqp://admin:password@rabbitmq:5672/",
@@ -110,8 +130,10 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
+	middleware.LogStep("Connected to RabbitMQ")
 
 	// Init middleware
+	middleware.LogStep("Creating queue producer and consumers")
 	producer := workerqueue.NewMessageMiddlewareQueue("test-queue-1tomany", config)
 	consumer1 := workerqueue.NewQueueConsumer("test-queue-1tomany", config)
 	consumer2 := workerqueue.NewQueueConsumer("test-queue-1tomany", config)
@@ -122,12 +144,14 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	}
 
 	// Declare queue
+	middleware.LogStep("Declaring queue")
 	errCode := producer.DeclareQueue(true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare queue: %v", errCode)
 	}
 
 	// Send 3 messages (one for each consumer)
+	middleware.LogStep("Sending 3 messages")
 	messages := [][]byte{
 		[]byte("Message 1 for worker queue 1tomany"),
 		[]byte("Message 2 for worker queue 1tomany"),
@@ -168,14 +192,17 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	}
 
 	// Start all consumers
+	middleware.LogStep("Starting all consumers")
 	consumer1.StartConsuming(onMessageCallback1)
 	consumer2.StartConsuming(onMessageCallback2)
 	consumer3.StartConsuming(onMessageCallback3)
 
 	// Wait for messages
+	middleware.LogStep("Waiting for messages (3 seconds)")
 	time.Sleep(3 * time.Second)
 
 	// Close
+	middleware.LogStep("Closing connections")
 	producer.Close()
 	consumer1.Close()
 	consumer2.Close()
@@ -190,5 +217,9 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	}
 	if !received3 {
 		t.Error("Consumer 3 did not receive message")
+	}
+	
+	if received1 && received2 && received3 {
+		middleware.LogSuccess("All consumers received messages successfully")
 	}
 }

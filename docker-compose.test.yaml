@@ -8,6 +8,8 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: admin
       RABBITMQ_DEFAULT_PASS: password
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     networks:
       - test-network
     healthcheck:
@@ -16,6 +18,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    logging:
+      driver: "none"  # Completely suppress RabbitMQ logs
 
   test-runner:
     build:
@@ -29,6 +33,7 @@ services:
       - test-network
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
+      LOG_LEVEL: "info"  # Set log level for cleaner output
     command: ["go", "test", "-v", "./..."]
 
 networks:

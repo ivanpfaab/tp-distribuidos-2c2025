@@ -2,7 +2,6 @@ package workerqueue
 
 import (
 	amqp "github.com/rabbitmq/amqp091-go"
-	"fmt"
 	"tp-distribuidos-2c2025/shared/middleware"
 )
 
@@ -16,7 +15,7 @@ func NewMessageMiddlewareQueue(queueName string, config *middleware.ConnectionCo
 	// Create channel
 	channel, err := middleware.CreateMiddlewareChannel(config)
 	if err != nil {
-		fmt.Printf("Queue '%s' Producer: Failed to create channel: %v\n", queueName, err)
+		middleware.LogError("Queue Producer", "Failed to create channel for queue '%s': %v", queueName, err)
 		return nil
 	}
 
@@ -53,11 +52,11 @@ func (m *QueueMiddleware) DeclareQueue(
 		nil, // arguments
 	)
 	if err != nil {
-		fmt.Printf("Queue '%s' Producer: Failed to declare queue: %v\n", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Failed to declare queue '%s': %v", m.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 	
-	fmt.Printf("Queue '%s' Producer: Successfully declared (durable: %t).\n", m.QueueName, durable)
+	middleware.LogDebug("Queue Producer", "Queue '%s' declared (durable: %t)", m.QueueName, durable)
 	return 0
 }
 
@@ -82,10 +81,10 @@ func (m *QueueMiddleware) Send(
 	)
 
 	if err != nil {
-		fmt.Printf("Queue '%s' Producer: Send error: %v\n", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Send error for queue '%s': %v", m.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
-	fmt.Printf("Queue '%s' Producer: Message sent.\n", m.QueueName)
+	middleware.LogDebug("Queue Producer", "Message sent to queue '%s'", m.QueueName)
 
 	return 0
 }
@@ -105,11 +104,11 @@ func (m *QueueMiddleware) Delete() middleware.MessageMiddlewareError {
 	)
 
 	if err != nil {
-		fmt.Printf("Queue '%s': Delete error: %v\n", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Delete error for queue '%s': %v", m.QueueName, err)
 		return middleware.MessageMiddlewareDeleteError
 	}
 	
-	fmt.Printf("Queue '%s': Remote queue deleted.\n", m.QueueName)
+	middleware.LogDebug("Queue Producer", "Queue '%s' deleted", m.QueueName)
 
 	return 0
 }
@@ -123,12 +122,12 @@ func (m *QueueMiddleware) Close() middleware.MessageMiddlewareError {
 	// Close the AMQP channel
 	err := (*m.Channel).Close()
 	if err != nil {
-		fmt.Printf("Queue '%s': Close error: %v\n", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Close error for queue '%s': %v", m.QueueName, err)
 		return middleware.MessageMiddlewareCloseError
 	}
 
 	m.Channel = nil 
-	fmt.Printf("Queue '%s': Channel closed.\n", m.QueueName)
+	middleware.LogDebug("Queue Producer", "Channel closed for queue '%s'", m.QueueName)
 
 	return 0
 }
