@@ -1,4 +1,4 @@
-clmodule tp-distribuidos-2c2025/shared/middleware
+module tp-distribuidos-2c2025/shared/middleware
 
 go 1.21
 
