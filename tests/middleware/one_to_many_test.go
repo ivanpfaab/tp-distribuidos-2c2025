@@ -26,18 +26,21 @@ func TestExchangeOneToMany(t *testing.T) {
 
 	// Init middleware
 	middleware.LogStep("Creating exchange producer and consumers")
-	producer := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.broadcast1", "test.broadcast2", "test.broadcast3"}, config)
-	consumer1 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast1"}, config)
-	consumer2 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast2"}, config)
-	consumer3 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast3"}, config)
+	producerBroadcast := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.broadcast"}, config)
+	producer1 := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.producer1"}, config)
+	producer2 := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.producer2"}, config)
+	producer3 := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.producer3"}, config)
+	consumer1 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast", "test.producer1"}, config)
+	consumer2 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast", "test.producer2"}, config)
+	consumer3 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast", "test.producer3"}, config)
 	
-	if producer == nil || consumer1 == nil || consumer2 == nil || consumer3 == nil {
+	if producerBroadcast == nil || producer1 == nil || producer2 == nil || producer3 == nil || consumer1 == nil || consumer2 == nil || consumer3 == nil {
 		t.Fatal("Failed to create middleware")
 	}
 
 	// Declare exchange
 	middleware.LogStep("Declaring exchange")
-	errCode := producer.DeclareExchange("topic", true, false, false, false)
+	errCode := producerBroadcast.DeclareExchange("topic", true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare exchange: %v", errCode)
 	}
@@ -86,10 +89,30 @@ func TestExchangeOneToMany(t *testing.T) {
 	// Send message
 	middleware.LogStep("Sending 10 messages")
 	for i := 0; i < 10; i++ {
-		message := []byte(fmt.Sprintf("Hello from exchange 1tomany %d", i))
-		errCode = producer.Send(message)
+		message := []byte(fmt.Sprintf("Hello from exchange broadcast %d", i))
+		errCode = producerBroadcast.Send(message)
 		if errCode != 0 {
 			t.Fatalf("Failed to send message: %v", errCode)
+		}
+
+		if i % 3 == 0 {
+			message := []byte(fmt.Sprintf("Hello from exchange producer1 %d", i))
+			errCode = producer1.Send(message)
+			if errCode != 0 {
+				t.Fatalf("Failed to send message: %v", errCode)
+			}
+		} else if i % 3 == 1 {
+			message := []byte(fmt.Sprintf("Hello from exchange producer2 %d", i))
+			errCode = producer2.Send(message)
+			if errCode != 0 {
+				t.Fatalf("Failed to send message: %v", errCode)
+			}
+		} else {
+			message := []byte(fmt.Sprintf("Hello from exchange producer3 %d", i))
+			errCode = producer3.Send(message)
+			if errCode != 0 {
+				t.Fatalf("Failed to send message: %v", errCode)
+			}
 		}
 	}
 
@@ -99,7 +122,10 @@ func TestExchangeOneToMany(t *testing.T) {
 
 	// Close
 	middleware.LogStep("Closing connections")
-	producer.Close()
+	producerBroadcast.Close()
+	producer1.Close()
+	producer2.Close()
+	producer3.Close()
 	consumer1.Close()
 	consumer2.Close()
 	consumer3.Close()
