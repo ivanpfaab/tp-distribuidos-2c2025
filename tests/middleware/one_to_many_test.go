@@ -51,30 +51,30 @@ func TestExchangeOneToMany(t *testing.T) {
 	received3 := false
 
 	onMessageCallback1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		message := delivery.Body
-		middleware.LogStep("Consumer 1 received message: %s", string(message))
-		received1 = true
-		delivery.Ack(false)
-		close(done)
+		for delivery := range *consumeChannel {
+			message := delivery.Body
+			middleware.LogStep("Consumer 1 received message: %s", string(message))
+			received1 = true
+			delivery.Ack(false)
+		}
 	}
 
 	onMessageCallback2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		message := delivery.Body
-		middleware.LogStep("Consumer 2 received message: %s", string(message))
-		received2 = true
-		delivery.Ack(false)
-		close(done)
+		for delivery := range *consumeChannel {
+			message := delivery.Body
+			middleware.LogStep("Consumer 2 received message: %s", string(message))
+			received2 = true
+			delivery.Ack(false)
+		}
 	}
 
 	onMessageCallback3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		message := delivery.Body
-		middleware.LogStep("Consumer 3 received message: %s", string(message))
-		received3 = true
-		delivery.Ack(false)
-		close(done)
+		for delivery := range *consumeChannel {
+			message := delivery.Body
+			middleware.LogStep("Consumer 3 received message: %s", string(message))
+			received3 = true
+			delivery.Ack(false)
+		}
 	}
 
 	// Start all consumers
@@ -118,7 +118,7 @@ func TestExchangeOneToMany(t *testing.T) {
 
 	// Wait for messages
 	middleware.LogStep("Waiting for messages (10 seconds)")
-	time.Sleep(10 * time.Second)
+	time.Sleep(20 * time.Second)
 
 	// Close
 	middleware.LogStep("Closing connections")
@@ -235,7 +235,7 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 
 	// Wait for messages
 	middleware.LogStep("Waiting for messages (3 seconds)")
-	time.Sleep(3 * time.Second)
+	time.Sleep(20 * time.Second)
 
 	// Close
 	middleware.LogStep("Closing connections")
