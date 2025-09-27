@@ -1,35 +1,49 @@
-# Test Makefile for Protocol Tests
+# Test Makefile
 
-.PHONY: help test test-batch test-chunk clean
+.PHONY: test test-build test-run test-clean test-setup
 
-# Default target
+# Run all tests
+test: test-setup
+	@echo "Running all tests..."
+	docker compose -f docker-compose.test.yaml up --build --abort-on-container-exit
+
+# Build test containers
+test-build:
+	@echo "Building test containers..."
+	docker compose -f docker-compose.test.yaml build
+
+# Run tests without rebuilding
+test-run:
+	@echo "Running tests..."
+	docker compose -f docker-compose.test.yaml up --abort-on-container-exit
+
+# Clean up test containers and images
+test-clean:
+	@echo "Cleaning up test containers..."
+	docker compose -f docker-compose.test.yaml down --rmi all --volumes --remove-orphans
+
+# Setup test environment
+test-setup:
+	@echo "Setting up test environment..."
+	./create_test_compose.sh
+
+# Run specific test package
+test-middleware:
+	@echo "Running middleware tests..."
+	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/middleware/...
+
+test-protocol:
+	@echo "Running protocol tests..."
+	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/protocol/...
+
+# Help
 help:
 	@echo "Available targets:"
-	@echo "  test           - Run all tests using Docker (default)"
-	@echo "  test-batch     - Run only batch protocol tests using Docker"
-	@echo "  test-chunk     - Run only chunk protocol tests using Docker"
-	@echo "  clean          - Clean build artifacts and Docker images"
-
-
-# Default test target - uses Docker
-test:
-	@echo "Building Docker image and running all tests..."
-	cd .. && docker build -f tests/Dockerfile -t protocol-tests .
-	docker run --rm protocol-tests
-
-# Run only batch tests using Docker
-test-batch:
-	@echo "Building Docker image and running batch protocol tests..."
-	cd .. && docker build -f tests/Dockerfile -t protocol-tests .
-	docker run --rm protocol-tests bash -c "go test -v ./protocol -run TestBatch"
-
-# Run only chunk tests using Docker
-test-chunk:
-	@echo "Building Docker image and running chunk protocol tests..."
-	cd .. && docker build -f tests/Dockerfile -t protocol-tests .
-	docker run --rm protocol-tests bash -c "go test -v ./protocol -run TestChunk"
-
-# Clean build artifacts and Docker images
-clean:
-	rm -f test-runner
-	docker rmi protocol-tests 2>/dev/null || true
+	@echo "  test          - Run all tests"
+	@echo "  test-build    - Build test containers"
+	@echo "  test-run      - Run tests without rebuilding"
+	@echo "  test-clean    - Clean up test containers"
+	@echo "  test-setup    - Setup test environment"
+	@echo "  test-middleware - Run middleware tests only"
+	@echo "  test-protocol   - Run protocol tests only"
+	@echo "  help          - Show this help"

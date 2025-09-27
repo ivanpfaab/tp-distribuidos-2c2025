@@ -1,23 +1,26 @@
-# Use official Go image as base
 FROM golang:1.21-alpine
 
-# Install git and make
-RUN apk add --no-cache git make bash
+# Install dependencies
+RUN apk add --no-cache git
 
 # Set working directory
 WORKDIR /app
 
-# Copy the entire project structure
+# Copy go mod files first for better caching
+COPY go.mod ./
+COPY shared/middleware/exchange/go.mod ./shared/middleware/exchange/
+COPY shared/middleware/workerqueue/go.mod ./shared/middleware/workerqueue/
+COPY protocol/batch/go.mod ./protocol/batch/
+COPY protocol/chunk/go.mod ./protocol/chunk/
+
+# Copy source code
 COPY . .
 
-# Change to tests directory
-WORKDIR /app/tests
-
-# Download dependencies and generate go.sum
+# Download dependencies and tidy
+RUN go mod download
 RUN go mod tidy
 
-# Make the test runner executable
-RUN chmod +x run_tests.sh
-
-# Default command to run tests
-CMD ["bash", "./run_tests.sh"]
+# Change to tests directory and run tests
+WORKDIR /app/tests
+RUN go mod tidy
+CMD ["go", "test", "-v", "./..."]
