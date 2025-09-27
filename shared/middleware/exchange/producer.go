@@ -1,8 +1,9 @@
 package exchange
 
 import (
-	amqp "github.com/rabbitmq/amqp091-go"
 	"tp-distribuidos-2c2025/shared/middleware"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // ExchangeMiddleware wraps the middleware.MessageMiddlewareExchange with additional methods
@@ -59,22 +60,36 @@ func (m *ExchangeMiddleware) DeclareExchange(
 		middleware.LogError("Exchange Producer", "Failed to declare exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
-	
+
 	middleware.LogDebug("Exchange Producer", "Exchange '%s' declared (type: %s, durable: %t)", m.ExchangeName, exchangeType, durable)
 	return 0
 }
 
-
 // Send implements the producer logic for MessageMiddlewareExchange.
 func (m *ExchangeMiddleware) Send(
 	message []byte,
+	routeKeys []string,
 ) middleware.MessageMiddlewareError {
 	if m.AmqpChannel == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
+	// Fanout case (maybe handle this a bit more nicely?)
+	if len(routeKeys) == 0 {
+		err := (*m.AmqpChannel).Publish(
+			m.ExchangeName,
+			"", // routing key ignored
+			false,
+			false,
+			amqp.Publishing{ContentType: "text/plain", Body: message},
+		)
+		if err != nil {
+			return middleware.MessageMiddlewareMessageError
+		}
+	}
+
 	// Send to each routing key
-	for _, routeKey := range m.RouteKeys {
+	for _, routeKey := range routeKeys {
 		err := (*m.AmqpChannel).Publish(
 			m.ExchangeName, // The target exchange
 			routeKey,       // The routing key
@@ -112,7 +127,7 @@ func (m *ExchangeMiddleware) Delete() middleware.MessageMiddlewareError {
 		middleware.LogError("Exchange Producer", "Delete error for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareDeleteError
 	}
-	
+
 	middleware.LogDebug("Exchange Producer", "Exchange '%s' deleted", m.ExchangeName)
 
 	return 0
@@ -131,7 +146,7 @@ func (m *ExchangeMiddleware) Close() middleware.MessageMiddlewareError {
 		return middleware.MessageMiddlewareCloseError
 	}
 
-	m.AmqpChannel = nil 
+	m.AmqpChannel = nil
 	middleware.LogDebug("Exchange Producer", "Exchange '%s' channel closed", m.ExchangeName)
 
 	return 0

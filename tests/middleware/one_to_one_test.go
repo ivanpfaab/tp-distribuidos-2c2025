@@ -4,15 +4,15 @@ import (
 	"testing"
 	"time"
 	"tp-distribuidos-2c2025/shared/middleware"
-	"tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"tp-distribuidos-2c2025/shared/middleware/exchange"
+	"tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 // TestExchangeOneToOne tests 1 producer 1 consumer using exchange
 func TestExchangeOneToOne(t *testing.T) {
 	middleware.InitLogger()
 	middleware.LogTest("Testing Exchange One-to-One pattern")
-	
+
 	// Init connection
 	config := &middleware.ConnectionConfig{
 		URL: "amqp://admin:password@rabbitmq:5672/",
@@ -27,7 +27,7 @@ func TestExchangeOneToOne(t *testing.T) {
 	middleware.LogStep("Creating exchange producer and consumer")
 	producer := exchange.NewMessageMiddlewareExchange("test-exchange-1to1", []string{"test.key"}, config)
 	consumer := exchange.NewExchangeConsumer("test-exchange-1to1", []string{"test.key"}, config)
-	
+
 	if producer == nil || consumer == nil {
 		t.Fatal("Failed to create middleware")
 	}
@@ -41,7 +41,7 @@ func TestExchangeOneToOne(t *testing.T) {
 
 	// Define message content
 	message := []byte("Hello from exchange 1to1")
-	
+
 	// Check if message was received
 	received := false
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
@@ -65,7 +65,7 @@ func TestExchangeOneToOne(t *testing.T) {
 
 	// Send message
 	middleware.LogStep("Sending message")
-	errCode = producer.Send(message)
+	errCode = producer.Send(message, []string{"test.key"})
 	if errCode != 0 {
 		t.Fatalf("Failed to send message: %v", errCode)
 	}
@@ -90,7 +90,7 @@ func TestExchangeOneToOne(t *testing.T) {
 func TestWorkerQueueOneToOne(t *testing.T) {
 	middleware.InitLogger()
 	middleware.LogTest("Testing Worker Queue One-to-One pattern")
-	
+
 	// Init connection
 	config := &middleware.ConnectionConfig{
 		URL: "amqp://admin:password@rabbitmq:5672/",
@@ -105,7 +105,7 @@ func TestWorkerQueueOneToOne(t *testing.T) {
 	middleware.LogStep("Creating queue producer and consumer")
 	producer := workerqueue.NewMessageMiddlewareQueue("test-queue-1to1", config)
 	consumer := workerqueue.NewQueueConsumer("test-queue-1to1", config)
-	
+
 	if producer == nil || consumer == nil {
 		t.Fatal("Failed to create middleware")
 	}
