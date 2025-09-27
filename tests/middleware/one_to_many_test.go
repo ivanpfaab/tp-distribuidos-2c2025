@@ -26,10 +26,10 @@ func TestExchangeOneToMany(t *testing.T) {
 
 	// Init middleware
 	middleware.LogStep("Creating exchange producer and consumers")
-	producer := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.broadcast"}, config)
-	consumer1 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast"}, config)
-	consumer2 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast"}, config)
-	consumer3 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast"}, config)
+	producer := exchange.NewMessageMiddlewareExchange("test-exchange-1tomany", []string{"test.broadcast1", "test.broadcast2", "test.broadcast3"}, config)
+	consumer1 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast1"}, config)
+	consumer2 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast2"}, config)
+	consumer3 := exchange.NewExchangeConsumer("test-exchange-1tomany", []string{"test.broadcast3"}, config)
 	
 	if producer == nil || consumer1 == nil || consumer2 == nil || consumer3 == nil {
 		t.Fatal("Failed to create middleware")
@@ -40,16 +40,6 @@ func TestExchangeOneToMany(t *testing.T) {
 	errCode := producer.DeclareExchange("topic", true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare exchange: %v", errCode)
-	}
-
-	// Send message
-	middleware.LogStep("Sending 10 messages")
-	for i := 0; i < 10; i++ {
-		message := []byte(fmt.Sprintf("Hello from exchange 1tomany %d", i))
-		errCode = producer.Send(message)
-		if errCode != 0 {
-			t.Fatalf("Failed to send message: %v", errCode)
-		}
 	}
 
 	// Check if all consumers received the message
@@ -89,6 +79,19 @@ func TestExchangeOneToMany(t *testing.T) {
 	consumer1.StartConsuming(onMessageCallback1)
 	consumer2.StartConsuming(onMessageCallback2)
 	consumer3.StartConsuming(onMessageCallback3)
+
+	// Small delay to ensure consumers are ready
+	time.Sleep(100 * time.Millisecond)
+
+	// Send message
+	middleware.LogStep("Sending 10 messages")
+	for i := 0; i < 10; i++ {
+		message := []byte(fmt.Sprintf("Hello from exchange 1tomany %d", i))
+		errCode = producer.Send(message)
+		if errCode != 0 {
+			t.Fatalf("Failed to send message: %v", errCode)
+		}
+	}
 
 	// Wait for messages
 	middleware.LogStep("Waiting for messages (10 seconds)")
@@ -150,6 +153,45 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 		t.Fatalf("Failed to declare queue: %v", errCode)
 	}
 
+	// Check if consumers received messages
+	received1 := false
+	received2 := false
+	received3 := false
+
+	onMessageCallback1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		delivery := <-*consumeChannel
+		message := delivery.Body
+		middleware.LogStep("Consumer 1 received message: %s", string(message))
+		received1 = true
+		delivery.Ack(false)
+		close(done)
+	}
+
+	onMessageCallback2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		delivery := <-*consumeChannel
+		message := delivery.Body
+		middleware.LogStep("Consumer 2 received message: %s", string(message))
+		received2 = true
+		delivery.Ack(false)
+		close(done)
+	}
+
+	onMessageCallback3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		delivery := <-*consumeChannel
+		message := delivery.Body
+		middleware.LogStep("Consumer 3 received message: %s", string(message))
+		received3 = true
+		delivery.Ack(false)
+		close(done)
+	}
+
+	// Start all consumers
+	middleware.LogStep("Starting all consumers")
+	consumer1.StartConsuming(onMessageCallback1)
+	consumer2.StartConsuming(onMessageCallback2)
+	consumer3.StartConsuming(onMessageCallback3)
+
+
 	// Send 3 messages (one for each consumer)
 	middleware.LogStep("Sending 3 messages")
 	messages := [][]byte{
@@ -164,38 +206,6 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 			t.Fatalf("Failed to send message: %v", errCode)
 		}
 	}
-
-	// Check if consumers received messages
-	received1 := false
-	received2 := false
-	received3 := false
-
-	onMessageCallback1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		received1 = true
-		delivery.Ack(false)
-		close(done)
-	}
-
-	onMessageCallback2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		received2 = true
-		delivery.Ack(false)
-		close(done)
-	}
-
-	onMessageCallback3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		delivery := <-*consumeChannel
-		received3 = true
-		delivery.Ack(false)
-		close(done)
-	}
-
-	// Start all consumers
-	middleware.LogStep("Starting all consumers")
-	consumer1.StartConsuming(onMessageCallback1)
-	consumer2.StartConsuming(onMessageCallback2)
-	consumer3.StartConsuming(onMessageCallback3)
 
 	// Wait for messages
 	middleware.LogStep("Waiting for messages (3 seconds)")

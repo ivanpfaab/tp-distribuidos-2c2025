@@ -39,14 +39,9 @@ func TestExchangeOneToOne(t *testing.T) {
 		t.Fatalf("Failed to declare exchange: %v", errCode)
 	}
 
-	// Send message
-	middleware.LogStep("Sending message")
+	// Define message content
 	message := []byte("Hello from exchange 1to1")
-	errCode = producer.Send(message)
-	if errCode != 0 {
-		t.Fatalf("Failed to send message: %v", errCode)
-	}
-
+	
 	// Check if message was received
 	received := false
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
@@ -63,6 +58,16 @@ func TestExchangeOneToOne(t *testing.T) {
 	errCode = consumer.StartConsuming(onMessageCallback)
 	if errCode != 0 {
 		t.Fatalf("Failed to start consuming: %v", errCode)
+	}
+
+	// Small delay to ensure consumer is ready
+	time.Sleep(100 * time.Millisecond)
+
+	// Send message
+	middleware.LogStep("Sending message")
+	errCode = producer.Send(message)
+	if errCode != 0 {
+		t.Fatalf("Failed to send message: %v", errCode)
 	}
 
 	// Wait for message
