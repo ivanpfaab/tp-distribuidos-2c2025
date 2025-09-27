@@ -66,3 +66,37 @@ func WaitForConnection(config *ConnectionConfig, maxRetries int, retryInterval t
 	}
 	return fmt.Errorf("failed to connect to RabbitMQ after %d retries", maxRetries)
 }
+
+// CreateConnection creates a new RabbitMQ connection
+func CreateConnection(config *ConnectionConfig) (*amqp.Connection, error) {
+	conn, err := amqp.Dial(config.BuildURL())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RabbitMQ connection: %w", err)
+	}
+	return conn, nil
+}
+
+// CreateChannel creates a new channel from a connection
+func CreateChannel(conn *amqp.Connection) (*amqp.Channel, error) {
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create channel: %w", err)
+	}
+	return ch, nil
+}
+
+// CreateMiddlewareChannel creates a channel for our middleware
+func CreateMiddlewareChannel(config *ConnectionConfig) (MiddlewareChannel, error) {
+	conn, err := CreateConnection(config)
+	if err != nil {
+		return nil, err
+	}
+	
+	ch, err := CreateChannel(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	
+	return ch, nil
+}

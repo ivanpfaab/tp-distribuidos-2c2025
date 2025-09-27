@@ -1,151 +1,99 @@
 package exchange
 
 import (
-	"fmt"
-
 	amqp "github.com/rabbitmq/amqp091-go"
+	"fmt"
 )
 
-// Valid exchange types
-const (
-	ExchangeTypeFanout  = "fanout"
-	ExchangeTypeDirect  = "direct"
-	ExchangeTypeTopic   = "topic"
-	ExchangeTypeDefault = ""
-)
-
-// ExchangeProducer implements MessageMiddleware for exchange-based communication
-type ExchangeProducer struct {
-	exchangeName string
-	exchangeType string
-	routeKeys    []string
-	amqpChannel  *amqp.Channel
-	connection   *amqp.Connection
-}
-
-// NewExchangeProducer creates a new exchange producer
-func NewExchangeProducer(rabbitMQURL, exchangeName, exchangeType string, routeKeys []string) (*ExchangeProducer, error) {
-	conn, err := amqp.Dial(rabbitMQURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+// DeclareExchange declares the exchange on the RabbitMQ server.
+// Parameters:
+//   - exchangeType: Type of exchange ("direct", "topic", "fanout", "headers")
+//   - durable: If true, the exchange will survive server restarts
+//   - autoDelete: If true, the exchange will be deleted when no longer used
+//   - internal: If true, the exchange cannot be used directly by publishers
+//   - noWait: If true, don't wait for a server response
+func (e *MessageMiddlewareExchange) DeclareExchange(
+	m *MessageMiddlewareExchange,
+	exchangeType string,
+	durable bool,
+	autoDelete bool,
+	internal bool,
+	noWait bool,
+) MessageMiddlewareError {
+	if m.amqpChannel == nil {
+		return MessageMiddlewareDisconnectedError
 	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to open channel: %w", err)
-	}
-
-	// Declare the exchange
-	err = ch.ExchangeDeclare(
-		exchangeName, // name
-		exchangeType, // type
-		true,         // durable
-		false,        // auto-deleted
-		false,        // internal
-		false,        // no-wait
-		nil,          // arguments
+	
+	err := (*m.amqpChannel).ExchangeDeclare(
+		m.exchangeName,
+		exchangeType,
+		durable,
+		autoDelete,
+		internal,
+		noWait,
 	)
 	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare exchange: %w", err)
+		fmt.Printf("Exchange '%s' Producer: Failed to declare exchange: %v\n", m.exchangeName, err)
+		return MessageMiddlewareMessageError
 	}
-
-	return &ExchangeProducer{
-		exchangeName: exchangeName,
-		exchangeType: exchangeType,
-		routeKeys:    routeKeys,
-		amqpChannel:  ch,
-		connection:   conn,
-	}, nil
+	
+	fmt.Printf("Exchange '%s' Producer: Successfully declared (type: %s, durable: %t).\n", m.exchangeName, exchangeType, durable)
+	return 0
 }
 
-// StartConsuming is not applicable for producers
-func (ep *ExchangeProducer) StartConsuming(m *ExchangeProducer, onMessageCallback func(<-chan amqp.Delivery, chan error)) MessageMiddlewareError {
-	return MessageMiddlewareMessageError
-}
 
-// StopConsuming is not applicable for producers
-func (ep *ExchangeProducer) StopConsuming(m *ExchangeProducer) MessageMiddlewareError {
-	return MessageMiddlewareMessageError
-}
-
-// Send publishes a message to the exchange
-func (ep *ExchangeProducer) Send(m *ExchangeProducer, message []byte) MessageMiddlewareError {
-	if ep.amqpChannel == nil || ep.connection == nil {
+// Send implements the producer logic for MessageMiddlewareExchange.
+func (e *MessageMiddlewareExchange) Send(
+	m *MessageMiddlewareExchange,
+	message []byte,
+) MessageMiddlewareError {
+	if m.amqpChannel == nil {
 		return MessageMiddlewareDisconnectedError
 	}
 
-	// Determine routing key based on exchange type
-	routingKey := ""
-	if ep.exchangeType == ExchangeTypeDirect || ep.exchangeType == ExchangeTypeTopic {
-		// For direct and topic exchanges, use the first route key if available
-		if len(ep.routeKeys) > 0 {
-			routingKey = ep.routeKeys[0]
+	// Send to each routing key
+	for _, routeKey := range m.routeKeys {
+		err := (*m.amqpChannel).Publish(
+			m.exchangeName, // The target exchange
+			routeKey,       // The routing key
+			false,          // mandatory
+			false,          // immediate
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        message,
+			},
+		)
+		if err != nil {
+			fmt.Printf("Exchange '%s' Producer: Send error for key '%s': %v\n", m.exchangeName, routeKey, err)
+			return MessageMiddlewareMessageError
 		}
+		fmt.Printf("Exchange '%s' Producer: Message sent with key '%s'.\n", m.exchangeName, routeKey)
 	}
 
-	err := ep.amqpChannel.Publish(
-		ep.exchangeName, // exchange
-		routingKey,      // routing key
-		false,           // mandatory
-		false,           // immediate
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        message,
-		},
+	return 0
+}
+
+// Delete forces the remote deletion of the exchange.
+func (e *MessageMiddlewareExchange) Delete(
+	m *MessageMiddlewareExchange,
+) MessageMiddlewareError {
+	if m.amqpChannel == nil {
+		return MessageMiddlewareDisconnectedError
+	}
+
+	// Delete the exchange
+	err := (*m.amqpChannel).ExchangeDelete(
+		m.exchangeName,
+		false, // ifUnused - set to false to force deletion even if in use
+		false, // noWait
 	)
 
 	if err != nil {
-		return MessageMiddlewareMessageError
-	}
-
-	return 0 // No error
-}
-
-// Close closes the connection and channel
-func (ep *ExchangeProducer) Close(m *ExchangeProducer) MessageMiddlewareError {
-	var err error
-	if ep.amqpChannel != nil {
-		err = ep.amqpChannel.Close()
-		if err != nil {
-			return MessageMiddlewareCloseError
-		}
-	}
-	if ep.connection != nil {
-		err = ep.connection.Close()
-		if err != nil {
-			return MessageMiddlewareCloseError
-		}
-	}
-	return 0 // No error
-}
-
-// Delete deletes the exchange
-func (ep *ExchangeProducer) Delete(m *ExchangeProducer) MessageMiddlewareError {
-	if ep.amqpChannel == nil {
+		fmt.Printf("Exchange '%s': Delete error: %v\n", m.exchangeName, err)
 		return MessageMiddlewareDeleteError
 	}
+	
+	fmt.Printf("Exchange '%s': Remote exchange deleted.\n", m.exchangeName)
 
-	err := ep.amqpChannel.ExchangeDelete(
-		ep.exchangeName, // name
-		false,           // if-unused
-		false,           // no-wait
-	)
-	if err != nil {
-		return MessageMiddlewareDeleteError
-	}
-
-	return 0 // No error
+	return 0
 }
-
-// MessageMiddlewareError represents different types of middleware errors
-type MessageMiddlewareError int
-
-const (
-	MessageMiddlewareMessageError MessageMiddlewareError = iota + 1
-	MessageMiddlewareDisconnectedError
-	MessageMiddlewareCloseError
-	MessageMiddlewareDeleteError
-)

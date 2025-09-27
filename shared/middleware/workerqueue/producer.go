@@ -1,137 +1,95 @@
 package workerqueue
 
 import (
-	"context"
-	"fmt"
-	"time"
-
 	amqp "github.com/rabbitmq/amqp091-go"
+	"fmt"
 )
 
-// WorkerQueueProducer implements MessageMiddleware for work queue communication
-type WorkerQueueProducer struct {
-	queueName   string
-	amqpChannel *amqp.Channel
-	connection  *amqp.Connection
-}
-
-// NewWorkerQueueProducer creates a new work queue producer
-func NewWorkerQueueProducer(rabbitMQURL, queueName string) (*WorkerQueueProducer, error) {
-	conn, err := amqp.Dial(rabbitMQURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+// DeclareQueue declares the queue on the RabbitMQ server.
+// Parameters:
+//   - durable: If true, the queue will survive server restarts
+//   - autoDelete: If true, the queue will be deleted when no longer used
+//   - exclusive: If true, the queue can only be used by one connection
+//   - noWait: If true, don't wait for a server response
+func (q *MessageMiddlewareQueue) DeclareQueue(
+	m *MessageMiddlewareQueue,
+	durable bool,
+	autoDelete bool,
+	exclusive bool,
+	noWait bool
+) MessageMiddlewareError {
+	if m.channel == nil {
+		return MessageMiddlewareDisconnectedError
 	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to open channel: %w", err)
-	}
-
-	// Declare the queue as durable
-	_, err = ch.QueueDeclare(
-		queueName, // name
-		true,      // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
+	
+	_, err := (*m.channel).QueueDeclare(
+		m.queueName,
+		durable,
+		autoDelete,
+		exclusive,
+		noWait
 	)
 	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare queue: %w", err)
+		fmt.Printf("Queue '%s' Producer: Failed to declare queue: %v\n", m.queueName, err)
+		return MessageMiddlewareMessageError
 	}
-
-	return &WorkerQueueProducer{
-		queueName:   queueName,
-		amqpChannel: ch,
-		connection:  conn,
-	}, nil
+	
+	fmt.Printf("Queue '%s' Producer: Successfully declared (durable: %t).\n", m.queueName, durable)
+	return 0
 }
 
-// StartConsuming is not applicable for producers
-func (wqp *WorkerQueueProducer) StartConsuming(m *WorkerQueueProducer, onMessageCallback func(<-chan amqp.Delivery, chan error)) MessageMiddlewareError {
-	return MessageMiddlewareMessageError
-}
 
-// StopConsuming is not applicable for producers
-func (wqp *WorkerQueueProducer) StopConsuming(m *WorkerQueueProducer) MessageMiddlewareError {
-	return MessageMiddlewareMessageError
-}
-
-// Send publishes a message to the work queue
-func (wqp *WorkerQueueProducer) Send(m *WorkerQueueProducer, message []byte) MessageMiddlewareError {
-	if wqp.amqpChannel == nil || wqp.connection == nil {
+// Send implements the producer logic for MessageMiddlewareQueue.
+func (q *MessageMiddlewareQueue) Send(
+	m *MessageMiddlewareQueue,
+	message []byte,
+) MessageMiddlewareError {
+	if m.channel == nil {
 		return MessageMiddlewareDisconnectedError
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := wqp.amqpChannel.PublishWithContext(
-		ctx,
-		"",           // exchange (empty for default exchange)
-		wqp.queueName, // routing key
-		false,        // mandatory
-		false,        // immediate
+	err := (*m.channel).Publish(
+		"",          // exchange (empty for default queue)
+		m.queueName, // routing key
+		false,       // mandatory
+		false,       // immediate
 		amqp.Publishing{
-			DeliveryMode: amqp.Persistent, // Make message persistent
-			ContentType:  "text/plain",
-			Body:         message,
+			ContentType: "text/plain",
+			Body:        message,
 		},
 	)
 
 	if err != nil {
+		fmt.Printf("Queue '%s' Producer: Send error: %v\n", m.queueName, err)
 		return MessageMiddlewareMessageError
 	}
+	fmt.Printf("Queue '%s' Producer: Message sent.\n", m.queueName)
 
-	return 0 // No error
+	return 0
 }
 
-// Close closes the connection and channel
-func (wqp *WorkerQueueProducer) Close(m *WorkerQueueProducer) MessageMiddlewareError {
-	var err error
-	if wqp.amqpChannel != nil {
-		err = wqp.amqpChannel.Close()
-		if err != nil {
-			return MessageMiddlewareCloseError
-		}
-	}
-	if wqp.connection != nil {
-		err = wqp.connection.Close()
-		if err != nil {
-			return MessageMiddlewareCloseError
-		}
-	}
-	return 0 // No error
-}
-
-// Delete deletes the queue
-func (wqp *WorkerQueueProducer) Delete(m *WorkerQueueProducer) MessageMiddlewareError {
-	if wqp.amqpChannel == nil {
-		return MessageMiddlewareDeleteError
+// Delete forces the remote deletion of the queue.
+func (q *MessageMiddlewareQueue) Delete(
+	m *MessageMiddlewareQueue,
+) MessageMiddlewareError {
+	if m.channel == nil {
+		return MessageMiddlewareDisconnectedError
 	}
 
-	_, err := wqp.amqpChannel.QueueDelete(
-		wqp.queueName, // name
-		false,         // if-unused
-		false,         // if-empty
-		false,         // no-wait
+	// Delete the queue
+	_, err := (*m.channel).QueueDelete(
+		m.queueName,
+		false, // ifUnused - set to false to force deletion even if in use
+		false, // ifEmpty - set to false to force deletion even if not empty
+		false, // noWait
 	)
+
 	if err != nil {
+		fmt.Printf("Queue '%s': Delete error: %v\n", m.queueName, err)
 		return MessageMiddlewareDeleteError
 	}
+	
+	fmt.Printf("Queue '%s': Remote queue deleted.\n", m.queueName)
 
-	return 0 // No error
+	return 0
 }
-
-// MessageMiddlewareError represents different types of middleware errors
-type MessageMiddlewareError int
-
-const (
-	MessageMiddlewareMessageError MessageMiddlewareError = iota + 1
-	MessageMiddlewareDisconnectedError
-	MessageMiddlewareCloseError
-	MessageMiddlewareDeleteError
-)

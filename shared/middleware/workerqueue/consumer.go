@@ -1,153 +1,104 @@
 package workerqueue
 
 import (
-	"fmt"
-
 	amqp "github.com/rabbitmq/amqp091-go"
+	"fmt"
 )
 
-// WorkerQueueConsumer implements MessageMiddleware for work queue communication
-type WorkerQueueConsumer struct {
-	queueName      string
-	amqpChannel    *amqp.Channel
-	connection     *amqp.Connection
-	consumeChannel <-chan amqp.Delivery
-}
-
-// NewWorkerQueueConsumer creates a new work queue consumer
-func NewWorkerQueueConsumer(rabbitMQURL, queueName string) (*WorkerQueueConsumer, error) {
-	conn, err := amqp.Dial(rabbitMQURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
-	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to open channel: %w", err)
-	}
-
-	// Declare the queue as durable
-	_, err = ch.QueueDeclare(
-		queueName, // name
-		true,      // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
-	)
-	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare queue: %w", err)
-	}
-
-	return &WorkerQueueConsumer{
-		queueName:   queueName,
-		amqpChannel: ch,
-		connection:  conn,
-	}, nil
-}
-
-// StartConsuming begins consuming messages from the work queue
-func (wqc *WorkerQueueConsumer) StartConsuming(m *WorkerQueueConsumer, onMessageCallback func(<-chan amqp.Delivery, chan error)) MessageMiddlewareError {
-	if wqc.amqpChannel == nil || wqc.connection == nil {
+// StartConsuming implements the consumer startup logic for MessageMiddlewareQueue.
+func (q *MessageMiddlewareQueue) StartConsuming(
+	m *MessageMiddlewareQueue,
+	onMessageCallback onMessageCallback,
+) MessageMiddlewareError {
+	if m.channel == nil {
 		return MessageMiddlewareDisconnectedError
 	}
-
-	// Start consuming
-	msgs, err := wqc.amqpChannel.Consume(
-		wqc.queueName, // queue
-		"",            // consumer
-		false,         // auto-ack (we'll ack manually)
-		false,         // exclusive
-		false,         // no-local
-		false,         // no-wait
-		nil,           // args
+	
+	// Start consuming from the queue
+	deliveries, err := (*m.channel).Consume(
+		m.queueName,
+		"",    // consumer tag (empty for auto-generated)
+		false, // auto-ack (we'll handle acknowledgments manually)
+		false, // exclusive
+		false, // no-local
+		false, // no-wait
+		nil,   // arguments
 	)
 	if err != nil {
+		fmt.Printf("Queue '%s' Consumer: Failed to start consuming: %v\n", m.queueName, err)
 		return MessageMiddlewareMessageError
 	}
+	
+	// Set the consume channel
+	m.consumeChannel = (*ConsumeChannel)(&deliveries)
 
-	wqc.consumeChannel = msgs
-
-	// Start goroutine to handle messages
+	// Start the processing loop in a goroutine
 	go func() {
-		done := make(chan error, 1)
-		for {
-			select {
-			case msg, ok := <-msgs:
-				if !ok {
-					// Channel closed, connection lost
-					done <- fmt.Errorf("connection lost")
-					return
-				}
-				onMessageCallback(msgs, done)
-				msg.Ack(false) // Acknowledge the message
-			case err := <-done:
-				if err != nil {
-					// Handle error
-					return
-				}
-			}
-		}
+		done := make(chan error, 1) 
+		fmt.Printf("Queue '%s' Consumer: Starting consumer.\n", m.queueName)
+
+		// Call the onMessageCallback with the consume channel
+		onMessageCallback(m.consumeChannel, done)
 	}()
 
-	return 0 // No error
+	return 0
 }
 
-// StopConsuming stops consuming messages from the work queue
-func (wqc *WorkerQueueConsumer) StopConsuming(m *WorkerQueueConsumer) MessageMiddlewareError {
-	if wqc.amqpChannel == nil {
+// StopConsuming implements the consumer shutdown logic.
+func (q *MessageMiddlewareQueue) StopConsuming(
+	m *MessageMiddlewareQueue,
+) MessageMiddlewareError {
+	if m.channel == nil {
 		return MessageMiddlewareDisconnectedError
 	}
 
-	err := wqc.amqpChannel.Cancel("", false)
+	if m.consumeChannel == nil {
+		fmt.Printf("Queue '%s' Consumer: Not consuming, StopConsuming has no effect.\n", m.queueName)
+		return 0 
+	}
+	
+	// Cancel the consumer
+	err := (*m.channel).Cancel("", false) // Empty string cancels all consumers on this channel
 	if err != nil {
+		fmt.Printf("Queue '%s' Consumer: Failed to cancel consumer: %v\n", m.queueName, err)
 		return MessageMiddlewareMessageError
 	}
 
-	return 0 // No error
+	// Close the consume channel
+	if m.consumeChannel != nil {
+		close(*m.consumeChannel)
+	}
+	m.consumeChannel = nil 
+	fmt.Printf("Queue '%s' Consumer: Halted.\n", m.queueName)
+
+	return 0
 }
 
-// Send is not applicable for consumers
-func (wqc *WorkerQueueConsumer) Send(m *WorkerQueueConsumer, message []byte) MessageMiddlewareError {
-	return MessageMiddlewareMessageError
-}
+// Close disconnects the channel.
+func (q *MessageMiddlewareQueue) Close(
+	m *MessageMiddlewareQueue,
+) MessageMiddlewareError {
+	if m.channel == nil {
+		return 0 // Already closed
+	}
 
-// Close closes the connection and channel
-func (wqc *WorkerQueueConsumer) Close(m *WorkerQueueConsumer) MessageMiddlewareError {
-	var err error
-	if wqc.amqpChannel != nil {
-		err = wqc.amqpChannel.Close()
-		if err != nil {
-			return MessageMiddlewareCloseError
+	// Stop consuming first if we're consuming
+	if m.consumeChannel != nil {
+		stopErr := q.StopConsuming(m)
+		if stopErr != 0 {
+			fmt.Printf("Queue '%s': Error stopping consumption during close: %v\n", m.queueName, stopErr)
 		}
 	}
-	if wqc.connection != nil {
-		err = wqc.connection.Close()
-		if err != nil {
-			return MessageMiddlewareCloseError
-		}
-	}
-	return 0 // No error
-}
 
-// Delete deletes the queue
-func (wqc *WorkerQueueConsumer) Delete(m *WorkerQueueConsumer) MessageMiddlewareError {
-	if wqc.amqpChannel == nil {
-		return MessageMiddlewareDeleteError
-	}
-
-	_, err := wqc.amqpChannel.QueueDelete(
-		wqc.queueName, // name
-		false,         // if-unused
-		false,         // if-empty
-		false,         // no-wait
-	)
+	// Close the AMQP channel
+	err := (*m.channel).Close()
 	if err != nil {
-		return MessageMiddlewareDeleteError
+		fmt.Printf("Queue '%s': Close error: %v\n", m.queueName, err)
+		return MessageMiddlewareCloseError
 	}
 
-	return 0 // No error
+	m.channel = nil 
+	fmt.Printf("Queue '%s': Channel closed.\n", m.queueName)
+
+	return 0
 }
