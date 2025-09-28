@@ -2,7 +2,8 @@ package chunk
 
 import (
 	"encoding/binary"
-	"tp-distribuidos-2c2025/protocol/common"
+
+	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
 
 type Chunk struct {

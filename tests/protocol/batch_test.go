@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	batch "tp-distribuidos-2c2025/protocol/batch"
-	common "tp-distribuidos-2c2025/protocol/common"
+	batch "github.com/tp-distribuidos-2c2025/protocol/batch"
+	common "github.com/tp-distribuidos-2c2025/protocol/common"
 )
 
 func TestNewBatch(t *testing.T) {

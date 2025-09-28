@@ -6,8 +6,8 @@ import (
 	"net"
 	"time"
 
-	"tp-distribuidos-2c2025/protocol/batch"
-	"tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 )
 
 // TCPServer handles direct client connections

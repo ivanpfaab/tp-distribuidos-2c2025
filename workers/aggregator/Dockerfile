@@ -5,18 +5,19 @@ WORKDIR /app
 
 # Copy go mod and go sum files from root
 COPY go.mod go.sum ./
-
-# Copy protocol directory
-COPY protocol/ ./protocol/
+COPY shared ./shared
+COPY protocol ./protocol
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY server/ .
+COPY workers/aggregator/ ./workers/aggregator/
 
 # Build the application
+WORKDIR /app/workers/aggregator
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+RUN chmod +x ./main
 
 # Final stage
 FROM alpine:latest
@@ -24,13 +25,11 @@ FROM alpine:latest
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
-WORKDIR /root/
+WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/main .
-
-# Expose port
-EXPOSE 8080
+COPY --from=builder /app/workers/aggregator/ .
+RUN chmod +x ./main
 
 # Run the application
 CMD ["./main"]

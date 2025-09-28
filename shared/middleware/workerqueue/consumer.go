@@ -1,8 +1,8 @@
 package workerqueue
 
 import (
-	"tp-distribuidos-2c2025/shared/middleware"
-	testing_utils "tp-distribuidos-2c2025/shared/testing"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 )
 
 // QueueConsumer wraps the middleware.MessageMiddlewareQueue with consumer methods

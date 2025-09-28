@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"batch"
+	"github.com/tp-distribuidos-2c2025/protocol/batch"
 )
 
 // TCPClient handles direct connection to the server
