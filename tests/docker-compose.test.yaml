@@ -1,0 +1,42 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: test-rabbitmq
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  test-runner:
+    build:
+      context: ..
+      dockerfile: ./tests/Dockerfile
+    container_name: test-runner
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - test-network
+    environment:
+      RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
+      LOG_LEVEL: "info"  # Set log level for cleaner output
+      GOMAXPROCS: "1"    # Single-threaded execution for better output buffering
+    command: ["go", "test", "-v", "./..."]
+    stdin_open: true
+    tty: true
+
+networks:
+  test-network:
+    driver: bridge
