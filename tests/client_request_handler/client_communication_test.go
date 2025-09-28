@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	batch "tp-distribuidos-2c2025/protocol/batch"
-	common "tp-distribuidos-2c2025/protocol/common"
+	"tp-distribuidos-2c2025/protocol/deserializer"
 	testing_utils "tp-distribuidos-2c2025/shared/testing"
 )
 
 // TestTCPCommunication tests batch message serialization and deserialization
 func TestTCPCommunication(t *testing.T) {
 	testing_utils.InitLogger()
-	testing_utils.LogTest("Testing TCP Communication - Batch Message Serialization and Deserialization")
+	testing_utils.LogTest("Testing communication between client and server using TCP and Batch messages")
 
 	t.Run("Batch Message Serialization", testBatchMessageSerialization)
 	t.Run("Batch Message Deserialization", testBatchMessageDeserialization)
@@ -44,14 +44,14 @@ func testBatchMessageDeserialization(t *testing.T) {
 
 	testing_utils.LogStep("Deserializing batch message")
 	// Deserialize the common header
-	deserializedInterface, err := common.Deserialize(serializedData)
+	deserializedInterface, err := deserializer.Deserialize(serializedData)
 	if err != nil {
 		t.Fatalf("Failed to deserialize common header: %v", err)
 	}
 
-	deserializedBatch, ok := deserializedInterface.(*common.Batch)
+	deserializedBatch, ok := deserializedInterface.(*batch.Batch)
 	if !ok {
-		t.Fatalf("Deserialized message is not a *common.Batch, got %T", deserializedInterface)
+		t.Fatalf("Deserialized message is not a *batch.Batch, got %T", deserializedInterface)
 	}
 
 	testing_utils.LogStep("Validating deserialized batch data")
@@ -102,14 +102,14 @@ func testBatchMessageSerialization(t *testing.T) {
 
 	testing_utils.LogStep("Deserializing batch message")
 	// Deserialize the common header
-	deserializedInterface, err := common.Deserialize(serializedData)
+	deserializedInterface, err := deserializer.Deserialize(serializedData)
 	if err != nil {
 		t.Fatalf("Failed to deserialize common header: %v", err)
 	}
 
-	deserializedBatch, ok := deserializedInterface.(*common.Batch)
+	deserializedBatch, ok := deserializedInterface.(*batch.Batch)
 	if !ok {
-		t.Fatalf("Deserialized message is not a *common.Batch, got %T", deserializedInterface)
+		t.Fatalf("Deserialized message is not a *batch.Batch, got %T", deserializedInterface)
 	}
 
 	testing_utils.LogStep("Validating serialized batch data")
@@ -159,14 +159,14 @@ func testBatchMessageRoundTrip(t *testing.T) {
 	}
 
 	// Deserialize the common header
-	deserializedInterface, err := common.Deserialize(serializedData)
+	deserializedInterface, err := deserializer.Deserialize(serializedData)
 	if err != nil {
 		t.Fatalf("Failed to deserialize common header: %v", err)
 	}
 
-	deserializedBatch, ok := deserializedInterface.(*common.Batch)
+	deserializedBatch, ok := deserializedInterface.(*batch.Batch)
 	if !ok {
-		t.Fatalf("Deserialized message is not a *common.Batch, got %T", deserializedInterface)
+		t.Fatalf("Deserialized message is not a *batch.Batch, got %T", deserializedInterface)
 	}
 
 	testing_utils.LogStep("Validating round trip data integrity")
@@ -234,15 +234,15 @@ func testMultipleBatchMessages(t *testing.T) {
 
 		testing_utils.LogStep("Deserializing batch message %d", i+1)
 		// Test deserialization
-		deserializedInterface, err := common.Deserialize(serializedData)
+		deserializedInterface, err := deserializer.Deserialize(serializedData)
 		if err != nil {
 			t.Errorf("Failed to deserialize batch message %d: %v", i+1, err)
 			continue
 		}
 
-		deserializedBatch, ok := deserializedInterface.(*common.Batch)
+		deserializedBatch, ok := deserializedInterface.(*batch.Batch)
 		if !ok {
-			t.Errorf("Deserialized message %d is not a *common.Batch, got %T", i+1, deserializedInterface)
+			t.Errorf("Deserialized message %d is not a *batch.Batch, got %T", i+1, deserializedInterface)
 			continue
 		}
 

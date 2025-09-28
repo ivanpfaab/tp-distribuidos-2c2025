@@ -6,7 +6,8 @@ import (
 	"net"
 	"time"
 
-	"common"
+	"tp-distribuidos-2c2025/protocol/batch"
+	"tp-distribuidos-2c2025/protocol/deserializer"
 )
 
 // TCPServer handles direct client connections
@@ -88,13 +89,13 @@ func (s *TCPServer) handleConnection(conn net.Conn) {
 // processBatchMessage processes a batch message and returns a response
 func (s *TCPServer) processBatchMessage(data []byte) ([]byte, error) {
 	// Deserialize the message
-	message, err := common.Deserialize(data)
+	message, err := deserializer.Deserialize(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize message: %w", err)
 	}
 
 	// Check if it's a Batch message (only type we handle)
-	batchMsg, ok := message.(*common.Batch)
+	batchMsg, ok := message.(*batch.Batch)
 	if !ok {
 		return nil, fmt.Errorf("expected batch message, got %T", message)
 	}
