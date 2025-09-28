@@ -67,19 +67,13 @@ func TestExchangeOneToMany(t *testing.T) {
 		// Fanout exchange counters
 		consumerbroadcast1_count = 0
 		consumerbroadcast2_count = 0
-		consumerbroadcast3_count = 0    | --- PASS: TestNewBatchMessage (0.00s)
-		test-runner    | === RUN   TestSerializeBatchMessage
-		test-runner    | === RUN   TestSerializeBatchMessage/valid_batch_message
-		test-runner    | === RUN   TestSerializeBatchMessage/valid_batch_message_with_false_EOF
-		test-runner    | === RUN   TestSerializeBatchMessage/client_id_too_long
-		test-runner    | === RUN   TestSerializeBatchMessage/file_id_too_long
-		test-runner    | --- PASS: TestSerializeBatchMessage (0.00s)
-		test-runner    |     --- PASS: TestSerializeBatchMessage/valid_batch_message (0.00s)
-		test-runner    |     --- PASS: TestSerializeBatchMessage/valid_batch_message_with_false_EOF (0.00s)
-		test-runner    |     --- PASS: TestSerializeBatchMessage/client_id_too_long (0.00s)
-		test-runner    |     --- PASS: TestSerializeBatchMessage/file_id_too_long (0.00s)
-		test-runner    | === RUN   TestSerializeBatchMessageStructure key2
-	expected_key3_total := 3    // 3 messages for key3
+		consumerbroadcast3_count = 0
+	)
+
+	// Expected message counts
+	expected_key1_total := 4    // 4 messages for key1 (i%3 == 0: 0,3,6,9)
+	expected_key2_total := 3    // 3 messages for key2 (i%3 == 1: 1,4,7)
+	expected_key3_total := 3    // 3 messages for key3 (i%3 == 2: 2,5,8)
 	expected_fanout_total := 10 // 10 fanout messages
 
 	onMessageCallback_consumer1_key1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
