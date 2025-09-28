@@ -63,6 +63,9 @@ type QueryOrchestrator struct {
 	joinProducer       *exchange.ExchangeMiddleware
 	groupByProducer    *exchange.ExchangeMiddleware
 
+	// Target router for determining where to send chunks
+	targetRouter *TargetRouter
+
 	// Configuration
 	config *middleware.ConnectionConfig
 }
@@ -70,7 +73,8 @@ type QueryOrchestrator struct {
 // NewQueryOrchestrator creates a new Query Orchestrator instance
 func NewQueryOrchestrator(config *middleware.ConnectionConfig) *QueryOrchestrator {
 	return &QueryOrchestrator{
-		config: config,
+		config:       config,
+		targetRouter: NewTargetRouter(),
 	}
 }
 
@@ -152,7 +156,7 @@ func (qo *QueryOrchestrator) declareExchanges() middleware.MessageMiddlewareErro
 // ProcessChunk routes a chunk message to the appropriate node based on QueryType and Step
 func (qo *QueryOrchestrator) ProcessChunk(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
 	// Determine target based on QueryType and Step
-	target := qo.determineTarget(chunkMsg.QueryType, chunkMsg.Step)
+	target := qo.targetRouter.DetermineTarget(chunkMsg.QueryType, chunkMsg.Step)
 
 	fmt.Println("Target: ", target)
 
@@ -176,37 +180,6 @@ func (qo *QueryOrchestrator) ProcessChunk(chunkMsg *chunk.ChunkMessage) middlewa
 	default:
 		return middleware.MessageMiddlewareMessageError
 	}
-}
-
-// determineTarget returns the target node based on QueryType and Step
-func (qo *QueryOrchestrator) determineTarget(queryType uint8, step int) string {
-	// Routing logic based on QueryType and Step combinations
-
-	fmt.Println("QueryType: ", queryType)
-	fmt.Println("Step: ", step)
-
-	switch queryType {
-	case 1:
-		switch step {
-		case 1:
-			return "filter"
-		case 2:
-			return "aggregator"
-		case 3:
-			return "join"
-		case 4:
-			return "groupby"
-		}
-		// Add more QueryType cases as needed
-		// case 2:
-		//     switch step {
-		//     case 1:
-		//         return "some-other-node"
-		//     }
-	}
-
-	// Default case - could be an error or default routing
-	return "unknown"
 }
 
 // Close closes all connections
