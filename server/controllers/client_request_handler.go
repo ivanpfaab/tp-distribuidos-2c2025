@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"tp-distribuidos-2c2025/protocol/common"
 	"tp-distribuidos-2c2025/protocol/deserializer"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -30,7 +31,7 @@ func (h *ClientRequestHandler) HandleRequest(delivery amqp.Delivery, publishFunc
 	}
 
 	// Check if it's a Batch message (only type we handle)
-	batchMsg, ok := message.(*common.Batch)
+	batchMsg, ok := message.(*common.BatchMessageType)
 	if !ok {
 		log.Printf("Client Request Handler: Received non-batch message type: %T", message)
 		delivery.Nack(false, false) // Reject and don't requeue

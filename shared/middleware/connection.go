@@ -91,12 +91,12 @@ func CreateMiddlewareChannel(config *ConnectionConfig) (MiddlewareChannel, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	ch, err := CreateChannel(conn)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
-	
+
 	return ch, nil
 }
