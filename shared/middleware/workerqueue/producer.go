@@ -39,12 +39,12 @@ func (m *QueueMiddleware) DeclareQueue(
 	exclusive bool,
 	noWait bool,
 ) middleware.MessageMiddlewareError {
-	if m.Channel == nil {
+	if m.MessageMiddlewareQueue.Channel == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 	
-	_, err := (*m.Channel).QueueDeclare(
-		m.QueueName,
+	_, err := (*m.MessageMiddlewareQueue.Channel).QueueDeclare(
+		m.MessageMiddlewareQueue.QueueName,
 		durable,
 		autoDelete,
 		exclusive,
@@ -52,11 +52,11 @@ func (m *QueueMiddleware) DeclareQueue(
 		nil, // arguments
 	)
 	if err != nil {
-		middleware.LogError("Queue Producer", "Failed to declare queue '%s': %v", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Failed to declare queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 	
-	middleware.LogDebug("Queue Producer", "Queue '%s' declared (durable: %t)", m.QueueName, durable)
+	middleware.LogDebug("Queue Producer", "Queue '%s' declared (durable: %t)", m.MessageMiddlewareQueue.QueueName, durable)
 	return 0
 }
 
@@ -65,13 +65,13 @@ func (m *QueueMiddleware) DeclareQueue(
 func (m *QueueMiddleware) Send(
 	message []byte,
 ) middleware.MessageMiddlewareError {
-	if m.Channel == nil {
+	if m.MessageMiddlewareQueue.Channel == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
-	err := (*m.Channel).Publish(
+	err := (*m.MessageMiddlewareQueue.Channel).Publish(
 		"",          // exchange (empty for default queue)
-		m.QueueName, // routing key
+		m.MessageMiddlewareQueue.QueueName, // routing key
 		false,       // mandatory
 		false,       // immediate
 		amqp.Publishing{
@@ -81,53 +81,53 @@ func (m *QueueMiddleware) Send(
 	)
 
 	if err != nil {
-		middleware.LogError("Queue Producer", "Send error for queue '%s': %v", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Send error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
-	middleware.LogDebug("Queue Producer", "Message sent to queue '%s'", m.QueueName)
+	middleware.LogDebug("Queue Producer", "Message sent to queue '%s'", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }
 
 // Delete forces the remote deletion of the queue.
 func (m *QueueMiddleware) Delete() middleware.MessageMiddlewareError {
-	if m.Channel == nil {
+	if m.MessageMiddlewareQueue.Channel == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
 	// Delete the queue
-	_, err := (*m.Channel).QueueDelete(
-		m.QueueName,
+	_, err := (*m.MessageMiddlewareQueue.Channel).QueueDelete(
+		m.MessageMiddlewareQueue.QueueName,
 		false, // ifUnused - set to false to force deletion even if in use
 		false, // ifEmpty - set to false to force deletion even if not empty
 		false, // noWait
 	)
 
 	if err != nil {
-		middleware.LogError("Queue Producer", "Delete error for queue '%s': %v", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Delete error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareDeleteError
 	}
 	
-	middleware.LogDebug("Queue Producer", "Queue '%s' deleted", m.QueueName)
+	middleware.LogDebug("Queue Producer", "Queue '%s' deleted", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }
 
 // Close disconnects the channel.
 func (m *QueueMiddleware) Close() middleware.MessageMiddlewareError {
-	if m.Channel == nil {
+	if m.MessageMiddlewareQueue.Channel == nil {
 		return 0 // Already closed
 	}
 
 	// Close the AMQP channel
-	err := (*m.Channel).Close()
+	err := (*m.MessageMiddlewareQueue.Channel).Close()
 	if err != nil {
-		middleware.LogError("Queue Producer", "Close error for queue '%s': %v", m.QueueName, err)
+		middleware.LogError("Queue Producer", "Close error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareCloseError
 	}
 
-	m.Channel = nil 
-	middleware.LogDebug("Queue Producer", "Channel closed for queue '%s'", m.QueueName)
+	m.MessageMiddlewareQueue.Channel = nil 
+	middleware.LogDebug("Queue Producer", "Channel closed for queue '%s'", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }

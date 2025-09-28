@@ -18,8 +18,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    logging:
-      driver: "none"  # Completely suppress RabbitMQ logs
 
   test-runner:
     build:
@@ -34,7 +32,10 @@ services:
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
       LOG_LEVEL: "info"  # Set log level for cleaner output
+      GOMAXPROCS: "1"    # Single-threaded execution for better output buffering
     command: ["go", "test", "-v", "./..."]
+    stdin_open: true
+    tty: true
 
 networks:
   test-network:
