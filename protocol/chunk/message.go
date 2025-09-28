@@ -105,3 +105,67 @@ func SerializeChunkMessage(msg *ChunkMessage) ([]byte, error) {
 	
 	return buf, nil
 }
+
+func DeserializeChunkMessage(data []byte) (*ChunkMessage, error) {
+	offset := 0
+
+	if len(data) < HeaderLengthSize+TotalLengthSize+MsgTypeIDSize+ClientIDSize+QueryTypeSize+TableIDSize+ChunkSizeSize+ChunkNumberSize+IsLastChunkSize+StepSize {
+		return nil, fmt.Errorf("data too short to be a valid ChunkMessage")
+	}
+
+	//TODO: Check the header to guarantee the integrity of the message
+	//headerLength := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += HeaderLengthSize
+
+	totalLength := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += TotalLengthSize
+
+	if len(data) != totalLength {
+		return nil, fmt.Errorf("data length (%d) does not match totalLength field (%d)", len(data), totalLength)
+	}
+
+	msgTypeID := uint8(data[offset])
+	offset += MsgTypeIDSize
+
+	clientIDBytes := data[offset : offset+ClientIDSize]
+	clientID := string(clientIDBytes)
+	offset += ClientIDSize
+
+	queryType := data[offset]
+	offset += QueryTypeSize
+
+	tableID := int(data[offset])
+	offset += TableIDSize
+
+	chunkSize := int(binary.BigEndian.Uint64(data[offset:]))
+	offset += ChunkSizeSize
+
+	chunkNumber := int(binary.BigEndian.Uint64(data[offset:]))
+	offset += ChunkNumberSize
+
+	isLastChunk := false
+	if data[offset] == 1 {
+		isLastChunk = true
+	}
+	offset += IsLastChunkSize
+
+	step := int(data[offset])
+	offset += StepSize
+
+	chunkData := ""
+	if offset < len(data) {
+		chunkData = string(data[offset:])
+	}
+
+	return &ChunkMessage{
+		MsgTypeID:   int(msgTypeID),
+		ClientID:    clientID,
+		QueryType:   queryType,
+		TableID:     tableID,
+		ChunkSize:   chunkSize,
+		ChunkNumber: chunkNumber,
+		IsLastChunk: isLastChunk,
+		Step:        step,
+		ChunkData:   chunkData,
+	}, nil
+}
