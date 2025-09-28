@@ -1,9 +1,9 @@
 package batch
 
 import (
-	"common"
 	"encoding/binary"
 	"fmt"
+	common "tp-distribuidos-2c2025/protocol/common"
 )
 
 const (

@@ -1,8 +1,10 @@
 package workerqueue
 
 import (
-	amqp "github.com/rabbitmq/amqp091-go"
 	"tp-distribuidos-2c2025/shared/middleware"
+	testing_utils "tp-distribuidos-2c2025/shared/testing"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // QueueMiddleware wraps the middleware.MessageMiddlewareQueue with additional methods
@@ -15,7 +17,7 @@ func NewMessageMiddlewareQueue(queueName string, config *middleware.ConnectionCo
 	// Create channel
 	channel, err := middleware.CreateMiddlewareChannel(config)
 	if err != nil {
-		middleware.LogError("Queue Producer", "Failed to create channel for queue '%s': %v", queueName, err)
+		testing_utils.LogError("Queue Producer", "Failed to create channel for queue '%s': %v", queueName, err)
 		return nil
 	}
 
@@ -42,7 +44,7 @@ func (m *QueueMiddleware) DeclareQueue(
 	if m.MessageMiddlewareQueue.Channel == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
-	
+
 	_, err := (*m.MessageMiddlewareQueue.Channel).QueueDeclare(
 		m.MessageMiddlewareQueue.QueueName,
 		durable,
@@ -52,14 +54,13 @@ func (m *QueueMiddleware) DeclareQueue(
 		nil, // arguments
 	)
 	if err != nil {
-		middleware.LogError("Queue Producer", "Failed to declare queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
+		testing_utils.LogError("Queue Producer", "Failed to declare queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
-	
-	middleware.LogDebug("Queue Producer", "Queue '%s' declared (durable: %t)", m.MessageMiddlewareQueue.QueueName, durable)
+
+	testing_utils.LogDebug("Queue Producer", "Queue '%s' declared (durable: %t)", m.MessageMiddlewareQueue.QueueName, durable)
 	return 0
 }
-
 
 // Send implements the producer logic for MessageMiddlewareQueue.
 func (m *QueueMiddleware) Send(
@@ -70,10 +71,10 @@ func (m *QueueMiddleware) Send(
 	}
 
 	err := (*m.MessageMiddlewareQueue.Channel).Publish(
-		"",          // exchange (empty for default queue)
+		"",                                 // exchange (empty for default queue)
 		m.MessageMiddlewareQueue.QueueName, // routing key
-		false,       // mandatory
-		false,       // immediate
+		false,                              // mandatory
+		false,                              // immediate
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Body:        message,
@@ -81,10 +82,10 @@ func (m *QueueMiddleware) Send(
 	)
 
 	if err != nil {
-		middleware.LogError("Queue Producer", "Send error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
+		testing_utils.LogError("Queue Producer", "Send error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
-	middleware.LogDebug("Queue Producer", "Message sent to queue '%s'", m.MessageMiddlewareQueue.QueueName)
+	testing_utils.LogDebug("Queue Producer", "Message sent to queue '%s'", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }
@@ -104,11 +105,11 @@ func (m *QueueMiddleware) Delete() middleware.MessageMiddlewareError {
 	)
 
 	if err != nil {
-		middleware.LogError("Queue Producer", "Delete error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
+		testing_utils.LogError("Queue Producer", "Delete error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareDeleteError
 	}
-	
-	middleware.LogDebug("Queue Producer", "Queue '%s' deleted", m.MessageMiddlewareQueue.QueueName)
+
+	testing_utils.LogDebug("Queue Producer", "Queue '%s' deleted", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }
@@ -122,12 +123,12 @@ func (m *QueueMiddleware) Close() middleware.MessageMiddlewareError {
 	// Close the AMQP channel
 	err := (*m.MessageMiddlewareQueue.Channel).Close()
 	if err != nil {
-		middleware.LogError("Queue Producer", "Close error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
+		testing_utils.LogError("Queue Producer", "Close error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareCloseError
 	}
 
-	m.MessageMiddlewareQueue.Channel = nil 
-	middleware.LogDebug("Queue Producer", "Channel closed for queue '%s'", m.MessageMiddlewareQueue.QueueName)
+	m.MessageMiddlewareQueue.Channel = nil
+	testing_utils.LogDebug("Queue Producer", "Channel closed for queue '%s'", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }

@@ -2,6 +2,7 @@ package workerqueue
 
 import (
 	"tp-distribuidos-2c2025/shared/middleware"
+	testing_utils "tp-distribuidos-2c2025/shared/testing"
 )
 
 // QueueConsumer wraps the middleware.MessageMiddlewareQueue with consumer methods
@@ -17,7 +18,7 @@ func NewQueueConsumer(
 	// Create channel
 	channel, err := middleware.CreateMiddlewareChannel(config)
 	if err != nil {
-		middleware.LogError("Queue Consumer", "Failed to create channel for queue '%s': %v", queueName, err)
+		testing_utils.LogError("Queue Consumer", "Failed to create channel for queue '%s': %v", queueName, err)
 		return nil
 	}
 
@@ -48,7 +49,7 @@ func (m *QueueConsumer) StartConsuming(
 		nil,   // arguments
 	)
 	if err != nil {
-		middleware.LogError("Queue Consumer", "Failed to start consuming for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
+		testing_utils.LogError("Queue Consumer", "Failed to start consuming for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
@@ -58,7 +59,7 @@ func (m *QueueConsumer) StartConsuming(
 	// Start the processing loop in a goroutine
 	go func() {
 		done := make(chan error, 1)
-		middleware.LogDebug("Queue Consumer", "Starting consumer for queue '%s'", m.MessageMiddlewareQueue.QueueName)
+		testing_utils.LogDebug("Queue Consumer", "Starting consumer for queue '%s'", m.MessageMiddlewareQueue.QueueName)
 
 		// Call the onMessageCallback with the consume channel
 		onMessageCallback(m.MessageMiddlewareQueue.ConsumeChannel, done)
@@ -74,20 +75,20 @@ func (m *QueueConsumer) StopConsuming() middleware.MessageMiddlewareError {
 	}
 
 	if m.MessageMiddlewareQueue.ConsumeChannel == nil {
-		middleware.LogDebug("Queue Consumer", "Not consuming for queue '%s', StopConsuming has no effect", m.MessageMiddlewareQueue.QueueName)
+		testing_utils.LogDebug("Queue Consumer", "Not consuming for queue '%s', StopConsuming has no effect", m.MessageMiddlewareQueue.QueueName)
 		return 0
 	}
 
 	// Cancel the consumer
 	err := (*m.MessageMiddlewareQueue.Channel).Cancel("", false) // Empty string cancels all consumers on this channel
 	if err != nil {
-		middleware.LogError("Queue Consumer", "Failed to cancel consumer for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
+		testing_utils.LogError("Queue Consumer", "Failed to cancel consumer for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Clear the consume channel reference
 	m.MessageMiddlewareQueue.ConsumeChannel = nil
-	middleware.LogDebug("Queue Consumer", "Consumer halted for queue '%s'", m.MessageMiddlewareQueue.QueueName)
+	testing_utils.LogDebug("Queue Consumer", "Consumer halted for queue '%s'", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }
@@ -102,19 +103,19 @@ func (m *QueueConsumer) Close() middleware.MessageMiddlewareError {
 	if m.MessageMiddlewareQueue.ConsumeChannel != nil {
 		stopErr := m.StopConsuming()
 		if stopErr != 0 {
-			middleware.LogError("Queue Consumer", "Error stopping consumption during close for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, stopErr)
+			testing_utils.LogError("Queue Consumer", "Error stopping consumption during close for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, stopErr)
 		}
 	}
 
 	// Close the AMQP channel
 	err := (*m.MessageMiddlewareQueue.Channel).Close()
 	if err != nil {
-		middleware.LogError("Queue Consumer", "Close error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
+		testing_utils.LogError("Queue Consumer", "Close error for queue '%s': %v", m.MessageMiddlewareQueue.QueueName, err)
 		return middleware.MessageMiddlewareCloseError
 	}
 
 	m.MessageMiddlewareQueue.Channel = nil
-	middleware.LogDebug("Queue Consumer", "Channel closed for queue '%s'", m.MessageMiddlewareQueue.QueueName)
+	testing_utils.LogDebug("Queue Consumer", "Channel closed for queue '%s'", m.MessageMiddlewareQueue.QueueName)
 
 	return 0
 }
