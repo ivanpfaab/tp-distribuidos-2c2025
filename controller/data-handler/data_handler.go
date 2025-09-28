@@ -5,9 +5,10 @@ import (
 	"os"
 	"strconv"
 	"time"
-	"tp-distribuidos-2c2025/protocol/chunk"
-	"tp-distribuidos-2c2025/shared/middleware"
-	"tp-distribuidos-2c2025/shared/middleware/workerqueue"
+
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 func main() {

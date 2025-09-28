@@ -3,9 +3,8 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod files
-COPY go.mod ./
-COPY controller/query-orchestrator/go.mod ./controller/query-orchestrator/
+# Copy go mod and go sum files from root
+COPY go.mod go.sum ./
 
 # Copy shared module first (needed for go mod download)
 COPY shared ./shared

@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"tp-distribuidos-2c2025/protocol/chunk"
-	"tp-distribuidos-2c2025/shared/middleware"
-	"tp-distribuidos-2c2025/shared/middleware/exchange"
+
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 )
 
 func main() {
@@ -156,7 +157,7 @@ func (qo *QueryOrchestrator) declareExchanges() middleware.MessageMiddlewareErro
 // ProcessChunk routes a chunk message to the appropriate node based on QueryType and Step
 func (qo *QueryOrchestrator) ProcessChunk(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
 	// Determine target based on QueryType and Step
-	target := qo.targetRouter.DetermineTarget(chunkMsg.QueryType, chunkMsg.Step)
+	target := qo.targetRouter.DetermineTarget(chunkMsg.Chunk.QueryType, chunkMsg.Chunk.Step)
 
 	fmt.Println("Target: ", target)
 
