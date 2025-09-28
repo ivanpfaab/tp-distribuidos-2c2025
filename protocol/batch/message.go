@@ -1,9 +1,9 @@
 package batch
 
 import (
-	"common"
 	"encoding/binary"
 	"fmt"
+	"tp-distribuidos-2c2025/protocol/common"
 )
 
 const (
@@ -81,4 +81,3 @@ func SerializeBatchMessage(msg *BatchMessage) ([]byte, error) {
 
 	return buf, nil
 }
-
