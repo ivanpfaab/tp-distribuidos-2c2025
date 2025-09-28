@@ -72,9 +72,9 @@ func TestExchangeOneToMany(t *testing.T) {
 	)
 
 	// Expected message counts
-	expected_key1_total := 4    // 4 messages for key1
-	expected_key2_total := 3    // 3 messages for key2
-	expected_key3_total := 3    // 3 messages for key3
+	expected_key1_total := 4    // 4 messages for key1 (i%3 == 0: 0,3,6,9)
+	expected_key2_total := 3    // 3 messages for key2 (i%3 == 1: 1,4,7)
+	expected_key3_total := 3    // 3 messages for key3 (i%3 == 2: 2,5,8)
 	expected_fanout_total := 10 // 10 fanout messages
 
 	onMessageCallback_consumer1_key1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
