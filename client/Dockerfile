@@ -5,9 +5,7 @@ WORKDIR /app
 
 # Copy go mod files
 COPY client/go.mod ./
-
-# Copy shared module first (needed for go mod download)
-COPY shared ./shared
+COPY client/go.sum ./
 
 # Download dependencies
 RUN go mod download
