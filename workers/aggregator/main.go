@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"tp-distribuidos-2c2025/protocol/chunk"
-	"tp-distribuidos-2c2025/shared/middleware"
-	"tp-distribuidos-2c2025/shared/middleware/exchange"
+
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 )
 
 func main() {
@@ -62,7 +63,7 @@ func aggregatorCallback(consumeChannel middleware.ConsumeChannel, done chan erro
 		fmt.Printf("Aggregator Worker: Received message: %s\n", string(delivery.Body))
 
 		// Deserialize the chunk message
-		chunkMsg, err := chunk.DeserializeChunkMessage(delivery.Body)
+		chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 		if err != nil {
 			fmt.Printf("Aggregator Worker: Failed to deserialize chunk message: %v\n", err)
 			delivery.Nack(false, true) // Reject and requeue

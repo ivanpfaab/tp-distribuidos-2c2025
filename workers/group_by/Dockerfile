@@ -3,9 +3,8 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod files
-COPY go.mod ./
-COPY workers/group_by/go.mod ./workers/group_by/
+# Copy go mod and go sum files from root
+COPY go.mod go.sum ./
 COPY shared ./shared
 COPY protocol ./protocol
 
