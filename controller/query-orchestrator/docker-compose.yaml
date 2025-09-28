@@ -1,0 +1,95 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-orchestrator
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    networks:
+      - orchestrator-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  query-orchestrator:
+    build:
+      context: ../..
+      dockerfile: ./controller/query-orchestrator/Dockerfile
+    container_name: query-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - orchestrator-network
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  # Mock consumers for testing - these will just log received messages
+  filter-consumer:
+    image: alpine:latest
+    container_name: filter-consumer
+    depends_on:
+      - query-orchestrator
+    networks:
+      - orchestrator-network
+    command: >
+      sh -c "
+        apk add --no-cache curl &&
+        sleep 10 &&
+        echo 'Filter consumer ready - listening for messages on filter-exchange'
+      "
+
+  aggregator-consumer:
+    image: alpine:latest
+    container_name: aggregator-consumer
+    depends_on:
+      - query-orchestrator
+    networks:
+      - orchestrator-network
+    command: >
+      sh -c "
+        apk add --no-cache curl &&
+        sleep 10 &&
+        echo 'Aggregator consumer ready - listening for messages on aggregator-exchange'
+      "
+
+  join-consumer:
+    image: alpine:latest
+    container_name: join-consumer
+    depends_on:
+      - query-orchestrator
+    networks:
+      - orchestrator-network
+    command: >
+      sh -c "
+        apk add --no-cache curl &&
+        sleep 10 &&
+        echo 'Join consumer ready - listening for messages on join-exchange'
+      "
+
+  groupby-consumer:
+    image: alpine:latest
+    container_name: groupby-consumer
+    depends_on:
+      - query-orchestrator
+    networks:
+      - orchestrator-network
+    command: >
+      sh -c "
+        apk add --no-cache curl &&
+        sleep 10 &&
+        echo 'GroupBy consumer ready - listening for messages on groupby-exchange'
+      "
+
+networks:
+  orchestrator-network:
+    driver: bridge
