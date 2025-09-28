@@ -3,6 +3,7 @@ package exchange
 import (
 	"fmt"
 	"tp-distribuidos-2c2025/shared/middleware"
+	testing_utils "tp-distribuidos-2c2025/shared/testing"
 )
 
 // ExchangeConsumer wraps the middleware.MessageMiddlewareExchange with consumer methods
@@ -19,7 +20,7 @@ func NewExchangeConsumer(
 	// Create channel
 	channel, err := middleware.CreateMiddlewareChannel(config)
 	if err != nil {
-		middleware.LogError("Exchange Consumer", "Failed to create channel for '%s': %v", exchangeName, err)
+		testing_utils.LogError("Exchange Consumer", "Failed to create channel for '%s': %v", exchangeName, err)
 		return nil
 	}
 
@@ -41,7 +42,7 @@ func (m *ExchangeConsumer) StartConsuming(
 	}
 
 	queueName := ""
-	middleware.LogDebug("Exchange Consumer", "Starting consumer for exchange '%s' with route keys '%v'", m.ExchangeName, m.RouteKeys)
+	testing_utils.LogDebug("Exchange Consumer", "Starting consumer for exchange '%s' with route keys '%v'", m.ExchangeName, m.RouteKeys)
 	if len(m.RouteKeys) == 1 {
 		queueName = fmt.Sprintf("queue-%s", m.RouteKeys[0])
 	} else {
@@ -58,15 +59,15 @@ func (m *ExchangeConsumer) StartConsuming(
 		nil,       // arguments
 	)
 	if err != nil {
-		middleware.LogError("Exchange Consumer", "Failed to declare queue for exchange '%s': %v", m.ExchangeName, err)
+		testing_utils.LogError("Exchange Consumer", "Failed to declare queue for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
 	// TODO: Handle multiple keys
 	// Bind the queue to the exchange with all routing keys
-	middleware.LogDebug("Exchange Consumer", "Binding queue '%s' to exchange '%s' with key '%s'", queue.Name, m.ExchangeName, m.RouteKeys[0])
+	testing_utils.LogDebug("Exchange Consumer", "Binding queue '%s' to exchange '%s' with key '%s'", queue.Name, m.ExchangeName, m.RouteKeys[0])
 
-	middleware.LogDebug("Exchange Consumer", "Consumer with '%v' keys ", len(m.RouteKeys))
+	testing_utils.LogDebug("Exchange Consumer", "Consumer with '%v' keys ", len(m.RouteKeys))
 	//for _, routingKey := range m.RouteKeys {
 	err = (*m.AmqpChannel).QueueBind(
 		queueName,
@@ -76,7 +77,7 @@ func (m *ExchangeConsumer) StartConsuming(
 		nil,   // arguments
 	)
 	//	if err != nil {
-	// 		middleware.LogError("Exchange Consumer", "Failed to bind queue for exchange '%s' with key '%s': %v", m.ExchangeName, routingKey, err)
+	// 		testing_utils.LogError("Exchange Consumer", "Failed to bind queue for exchange '%s' with key '%s': %v", m.ExchangeName, routingKey, err)
 	// 		return middleware.MessageMiddlewareMessageError
 	// 	}
 	// }
@@ -92,7 +93,7 @@ func (m *ExchangeConsumer) StartConsuming(
 		nil,   // arguments
 	)
 	if err != nil {
-		middleware.LogError("Exchange Consumer", "Failed to start consuming for exchange '%s': %v", m.ExchangeName, err)
+		testing_utils.LogError("Exchange Consumer", "Failed to start consuming for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
@@ -102,7 +103,7 @@ func (m *ExchangeConsumer) StartConsuming(
 	// Start the processing loop in a goroutine
 	go func() {
 		done := make(chan error, 1)
-		middleware.LogDebug("Exchange Consumer", "Starting consumer for exchange '%s' on queue '%s'", m.ExchangeName, queue.Name)
+		testing_utils.LogDebug("Exchange Consumer", "Starting consumer for exchange '%s' on queue '%s'", m.ExchangeName, queue.Name)
 
 		// Call the onMessageCallback with the consume channel
 		onMessageCallback(m.ConsumeChannel, done)
@@ -118,21 +119,21 @@ func (m *ExchangeConsumer) StopConsuming() middleware.MessageMiddlewareError {
 	}
 
 	if m.ConsumeChannel == nil {
-		middleware.LogDebug("Exchange Consumer", "Not consuming for exchange '%s', StopConsuming has no effect", m.ExchangeName)
+		testing_utils.LogDebug("Exchange Consumer", "Not consuming for exchange '%s', StopConsuming has no effect", m.ExchangeName)
 		return 0
 	}
 
 	// Cancel the consumer
 	err := (*m.AmqpChannel).Cancel("", false) // Empty string cancels all consumers on this channel
 	if err != nil {
-		middleware.LogError("Exchange Consumer", "Failed to cancel consumer for exchange '%s': %v", m.ExchangeName, err)
+		testing_utils.LogError("Exchange Consumer", "Failed to cancel consumer for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Clear the consume channel reference
 	m.ConsumeChannel = nil
 
-	middleware.LogDebug("Exchange Consumer", "Consumer halted for exchange '%s'", m.ExchangeName)
+	testing_utils.LogDebug("Exchange Consumer", "Consumer halted for exchange '%s'", m.ExchangeName)
 
 	return 0
 }
@@ -147,19 +148,19 @@ func (m *ExchangeConsumer) Close() middleware.MessageMiddlewareError {
 	if m.ConsumeChannel != nil {
 		stopErr := m.StopConsuming()
 		if stopErr != 0 {
-			middleware.LogError("Exchange Consumer", "Error stopping consumption during close for exchange '%s': %v", m.ExchangeName, stopErr)
+			testing_utils.LogError("Exchange Consumer", "Error stopping consumption during close for exchange '%s': %v", m.ExchangeName, stopErr)
 		}
 	}
 
 	// Close the AMQP channel
 	err := (*m.AmqpChannel).Close()
 	if err != nil {
-		middleware.LogError("Exchange Consumer", "Close error for exchange '%s': %v", m.ExchangeName, err)
+		testing_utils.LogError("Exchange Consumer", "Close error for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareCloseError
 	}
 
 	m.AmqpChannel = nil
-	middleware.LogDebug("Exchange Consumer", "Channel closed for exchange '%s'", m.ExchangeName)
+	testing_utils.LogDebug("Exchange Consumer", "Channel closed for exchange '%s'", m.ExchangeName)
 
 	return 0
 }

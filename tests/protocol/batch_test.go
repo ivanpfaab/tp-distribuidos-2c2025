@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	batch "tp-distribuidos-2c2025/protocol/batch"
+	common "tp-distribuidos-2c2025/protocol/common"
 )
 
 func TestNewBatch(t *testing.T) {
@@ -39,66 +40,78 @@ func TestNewBatchMessage(t *testing.T) {
 	b := batch.NewBatch(clientID, fileID, isEOF, batchNumber, batchSize, batchData)
 	msg := batch.NewBatchMessage(b)
 
-	assert.Equal(t, uint16(0), msg.HeaderLength) // Will be calculated during serialization
-	assert.Equal(t, int32(0), msg.TotalLength)   // Will be calculated during serialization
-	assert.Equal(t, batch.BatchMessageType, msg.MsgTypeID)
-	assert.Equal(t, clientID, msg.ClientID)
-	assert.Equal(t, fileID, msg.FileID)
-	assert.Equal(t, isEOF, msg.IsEOF)
-	assert.Equal(t, batchNumber, msg.BatchNumber)
-	assert.Equal(t, batchSize, msg.BatchSize)
-	assert.Equal(t, batchData, msg.BatchData)
+	assert.Equal(t, uint16(0), msg.Header.HeaderLength) // Will be calculated during serialization
+	assert.Equal(t, int32(0), msg.Header.TotalLength)   // Will be calculated during serialization
+	assert.Equal(t, batch.MessageType, msg.Header.MsgTypeID)
+	assert.Equal(t, clientID, msg.Batch.ClientID)
+	assert.Equal(t, fileID, msg.Batch.FileID)
+	assert.Equal(t, isEOF, msg.Batch.IsEOF)
+	assert.Equal(t, batchNumber, msg.Batch.BatchNumber)
+	assert.Equal(t, batchSize, msg.Batch.BatchSize)
+	assert.Equal(t, batchData, msg.Batch.BatchData)
 }
 
 func TestSerializeBatchMessage(t *testing.T) {
 	tests := []struct {
-		name     string
-		msg      *batch.BatchMessage
-		wantErr  bool
-		errMsg   string
+		name    string
+		msg     *batch.BatchMessage
+		wantErr bool
+		errMsg  string
 	}{
 		{
 			name: "valid batch message",
 			msg: &batch.BatchMessage{
-				HeaderLength: 0,
-				TotalLength:  0,
-				MsgTypeID:    batch.BatchMessageType,
-				ClientID:     "1234",
-				FileID:       "file",
-				IsEOF:        true,
-				BatchNumber:  5,
-				BatchSize:    100,
-				BatchData:    "test data",
+				Header: common.Header{
+					HeaderLength: 0,
+					TotalLength:  0,
+					MsgTypeID:    batch.MessageType,
+				},
+				Batch: batch.Batch{
+					ClientID:    "1234",
+					FileID:      "file",
+					IsEOF:       true,
+					BatchNumber: 5,
+					BatchSize:   100,
+					BatchData:   "test data",
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid batch message with false EOF",
 			msg: &batch.BatchMessage{
-				HeaderLength: 0,
-				TotalLength:  0,
-				MsgTypeID:    batch.BatchMessageType,
-				ClientID:     "1234",
-				FileID:       "file",
-				IsEOF:        false,
-				BatchNumber:  1,
-				BatchSize:    50,
-				BatchData:    "more data",
+				Header: common.Header{
+					HeaderLength: 0,
+					TotalLength:  0,
+					MsgTypeID:    batch.MessageType,
+				},
+				Batch: batch.Batch{
+					ClientID:    "1234",
+					FileID:      "file",
+					IsEOF:       false,
+					BatchNumber: 1,
+					BatchSize:   50,
+					BatchData:   "more data",
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "client_id too long",
 			msg: &batch.BatchMessage{
-				HeaderLength: 0,
-				TotalLength:  0,
-				MsgTypeID:    batch.BatchMessageType,
-				ClientID:     "12345", // 5 bytes, max is 4
-				FileID:       "file",
-				IsEOF:        true,
-				BatchNumber:  5,
-				BatchSize:    100,
-				BatchData:    "test data",
+				Header: common.Header{
+					HeaderLength: 0,
+					TotalLength:  0,
+					MsgTypeID:    batch.MessageType,
+				},
+				Batch: batch.Batch{
+					ClientID:    "12345", // 5 bytes, max is 4
+					FileID:      "file",
+					IsEOF:       true,
+					BatchNumber: 5,
+					BatchSize:   100,
+					BatchData:   "test data",
+				},
 			},
 			wantErr: true,
 			errMsg:  "client_id too long",
@@ -106,15 +119,19 @@ func TestSerializeBatchMessage(t *testing.T) {
 		{
 			name: "file_id too long",
 			msg: &batch.BatchMessage{
-				HeaderLength: 0,
-				TotalLength:  0,
-				MsgTypeID:    batch.BatchMessageType,
-				ClientID:     "1234",
-				FileID:       "file1", // 5 bytes, max is 4
-				IsEOF:        true,
-				BatchNumber:  5,
-				BatchSize:    100,
-				BatchData:    "test data",
+				Header: common.Header{
+					HeaderLength: 0,
+					TotalLength:  0,
+					MsgTypeID:    batch.MessageType,
+				},
+				Batch: batch.Batch{
+					ClientID:    "1234",
+					FileID:      "file1", // 5 bytes, max is 4
+					IsEOF:       true,
+					BatchNumber: 5,
+					BatchSize:   100,
+					BatchData:   "test data",
+				},
 			},
 			wantErr: true,
 			errMsg:  "file_id too long",
@@ -140,15 +157,19 @@ func TestSerializeBatchMessage(t *testing.T) {
 
 func TestSerializeBatchMessageStructure(t *testing.T) {
 	msg := &batch.BatchMessage{
-		HeaderLength: 0,
-		TotalLength:  0,
-		MsgTypeID:    batch.BatchMessageType,
-		ClientID:     "1234",
-		FileID:       "file",
-		IsEOF:        true,
-		BatchNumber:  5,
-		BatchSize:    100,
-		BatchData:    "test data",
+		Header: common.Header{
+			HeaderLength: 0,
+			TotalLength:  0,
+			MsgTypeID:    batch.MessageType,
+		},
+		Batch: batch.Batch{
+			ClientID:    "1234",
+			FileID:      "file",
+			IsEOF:       true,
+			BatchNumber: 5,
+			BatchSize:   100,
+			BatchData:   "test data",
+		},
 	}
 
 	data, err := batch.SerializeBatchMessage(msg)
@@ -159,19 +180,19 @@ func TestSerializeBatchMessageStructure(t *testing.T) {
 
 	// Check header_length (2 bytes)
 	headerLength := binary.BigEndian.Uint16(data[offset:])
-	expectedHeaderLength := batch.HeaderLengthSize + batch.TotalLengthSize + batch.MsgTypeIDSize + batch.ClientIDSize + batch.FileIDSize + batch.IsEOFSize + batch.BatchNumberSize + batch.BatchSizeSize
+	expectedHeaderLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + batch.ClientIDSize + batch.FileIDSize + batch.IsEOFSize + batch.BatchNumberSize + batch.BatchSizeSize
 	assert.Equal(t, uint16(expectedHeaderLength), headerLength)
-	offset += batch.HeaderLengthSize
+	offset += common.HeaderLengthSize
 
 	// Check total_length (4 bytes)
 	totalLength := binary.BigEndian.Uint32(data[offset:])
-	expectedTotalLength := expectedHeaderLength + len(msg.BatchData)
+	expectedTotalLength := expectedHeaderLength + len(msg.Batch.BatchData)
 	assert.Equal(t, uint32(expectedTotalLength), totalLength)
-	offset += batch.TotalLengthSize
+	offset += common.TotalLengthSize
 
 	// Check msg_type_id (1 byte)
-	assert.Equal(t, byte(batch.BatchMessageType), data[offset])
-	offset += batch.MsgTypeIDSize
+	assert.Equal(t, byte(batch.MessageType), data[offset])
+	offset += common.MsgTypeIDSize
 
 	// Check client_id (4 bytes)
 	assert.Equal(t, []byte("1234"), data[offset:offset+batch.ClientIDSize])
@@ -201,15 +222,19 @@ func TestSerializeBatchMessageStructure(t *testing.T) {
 
 func TestSerializeBatchMessageWithEmptyData(t *testing.T) {
 	msg := &batch.BatchMessage{
-		HeaderLength: 0,
-		TotalLength:  0,
-		MsgTypeID:    batch.BatchMessageType,
-		ClientID:     "1234",
-		FileID:       "file",
-		IsEOF:        false,
-		BatchNumber:  1,
-		BatchSize:    0,
-		BatchData:    "", // Empty data
+		Header: common.Header{
+			HeaderLength: 0,
+			TotalLength:  0,
+			MsgTypeID:    batch.MessageType,
+		},
+		Batch: batch.Batch{
+			ClientID:    "1234",
+			FileID:      "file",
+			IsEOF:       false,
+			BatchNumber: 1,
+			BatchSize:   0,
+			BatchData:   "", // Empty data
+		},
 	}
 
 	data, err := batch.SerializeBatchMessage(msg)
@@ -217,6 +242,6 @@ func TestSerializeBatchMessageWithEmptyData(t *testing.T) {
 
 	// Should still serialize successfully with empty data
 	assert.NotNil(t, data)
-	expectedLength := batch.HeaderLengthSize + batch.TotalLengthSize + batch.MsgTypeIDSize + batch.ClientIDSize + batch.FileIDSize + batch.IsEOFSize + batch.BatchNumberSize + batch.BatchSizeSize
+	expectedLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + batch.ClientIDSize + batch.FileIDSize + batch.IsEOFSize + batch.BatchNumberSize + batch.BatchSizeSize
 	assert.Equal(t, expectedLength, len(data))
 }

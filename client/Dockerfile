@@ -6,8 +6,8 @@ WORKDIR /app
 # Copy go mod files
 COPY client/go.mod ./
 
-# Copy shared module first (needed for go mod download)
-COPY shared ./shared
+# Copy protocol directory
+COPY protocol/ ./protocol/
 
 # Download dependencies
 RUN go mod download
