@@ -5,6 +5,8 @@ import (
 	"log"
 
 	"shared/rabbitmq"
+
+	"github.com/streadway/amqp"
 )
 
 func failOnError(err error, msg string) {
@@ -13,8 +15,7 @@ func failOnError(err error, msg string) {
 	}
 }
 
-func main() {
-	// Connect to RabbitMQ using the shared module
+func connectRabbitMQandDeclareQueues() (*rabbitmq.Connection, amqp.Queue, amqp.Queue) {
 	config := rabbitmq.DefaultConfig()
 	conn, err := rabbitmq.NewConnection(config)
 	failOnError(err, "Failed to connect to RabbitMQ")
@@ -27,34 +28,44 @@ func main() {
 	// Declare the response queue
 	responseQueue, err := conn.DeclareQueue("echo_responses")
 	failOnError(err, "Failed to declare response queue")
+	return conn, requestQueue, responseQueue
+}
 
-	// Set up consumer for requests
-	msgs, err := conn.ConsumeMessages(requestQueue.Name)
-	failOnError(err, "Failed to register consumer")
+func processMessages(conn *rabbitmq.Connection, requestQueue amqp.Queue, responseQueue amqp.Queue) {
+	go func() {
+		// Process messages
+		// Set up consumer for requests
+		msgs, err := conn.ConsumeMessages(requestQueue.Name)
+		failOnError(err, "Failed to register consumer")
 
-	fmt.Printf("Echo server listening for messages on queue: %s\n", requestQueue.Name)
+		for d := range msgs {
+			message := string(d.Body)
+			fmt.Printf("Received: %s\n", message)
 
-	// Process messages
-	for d := range msgs {
-		message := string(d.Body)
-		fmt.Printf("Received: %s\n", message)
+			// Echo the message back to the client
+			response := fmt.Sprintf("Echo: %s", message)
 
-		// Echo the message back to the client
-		response := fmt.Sprintf("Echo: %s", message)
+			// Get the reply-to queue from the message properties
+			replyTo := d.ReplyTo
+			if replyTo == "" {
+				// If no reply-to specified, use the response queue
+				replyTo = responseQueue.Name
+			}
 
-		// Get the reply-to queue from the message properties
-		replyTo := d.ReplyTo
-		if replyTo == "" {
-			// If no reply-to specified, use the response queue
-			replyTo = responseQueue.Name
+			// Publish response
+			err = conn.PublishMessage(replyTo, response, "")
+			if err != nil {
+				log.Printf("Failed to publish response: %v", err)
+			} else {
+				fmt.Printf("Sent response: %s\n", response)
+			}
 		}
 
-		// Publish response
-		err = conn.PublishMessage(replyTo, response, "")
-		if err != nil {
-			log.Printf("Failed to publish response: %v", err)
-		} else {
-			fmt.Printf("Sent response: %s\n", response)
-		}
-	}
+	}()
+}
+
+func main() {
+
+	conn, requestQueue, responseQueue := connectRabbitMQandDeclareQueues()
+	processMessages(conn, requestQueue, responseQueue)
 }

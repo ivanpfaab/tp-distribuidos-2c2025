@@ -7,4 +7,4 @@ require (
 	shared/rabbitmq v0.0.0
 )
 
-replace shared/rabbitmq => ./shared/rabbitmq
+replace shared/rabbitmq => ../shared/rabbitmq

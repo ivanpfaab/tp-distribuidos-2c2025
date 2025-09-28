@@ -1,100 +1,103 @@
 package main
 
 import (
-	"bufio"
 	"encoding/csv"
 	"flag"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
+	"shared/rabbitmq"
 	"strings"
-	"time"
+
+	"github.com/streadway/amqp"
 )
 
-func writeAll(w net.Conn, data []byte) error {
-	for len(data) > 0 {
-		n, err := w.Write(data)
-		if err != nil {
-			data = data[n:]
-			if _, ok := err.(net.Error); ok {
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
-			return err
-		}
-		data = data[n:]
-	}
-	return nil
-}
-
-// startServerReader launches a goroutine that prints responses from the server.
-func startServerReader(conn net.Conn) {
+// startResponseReader launches a goroutine that prints responses from the server.
+func startResponseReader(conn *rabbitmq.Connection, responseQueue amqp.Queue) {
 	go func() {
-		sc := bufio.NewScanner(conn)
-		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-		for sc.Scan() {
-			fmt.Printf("Server: %s\n", sc.Text())
+		// Set up consumer for responses
+		msgs, err := conn.ConsumeMessages(responseQueue.Name)
+		if err != nil {
+			log.Fatalf("Failed to register consumer: %v", err)
 		}
-		if err := sc.Err(); err != nil && err != io.EOF {
-			log.Printf("Error reading from server: %v", err)
+		for d := range msgs {
+			response := string(d.Body)
+			fmt.Printf("Server response: %s\n", response)
 		}
 	}()
 }
 
 // sendBatches reads CSV records, groups them into batches, and sends them.
-func sendBatches(conn net.Conn, r *csv.Reader, batchSize int) (int, int, error) {
-	r.FieldsPerRecord = -1 // allow variable columns
-
+func readCSAndSendBatches(conn *rabbitmq.Connection, requestQueue amqp.Queue, responseQueue amqp.Queue, r *csv.Reader, batchSize int) (int, int, error) {
+	recordsSent := 0
+	batchesSent := 0
 	var batch []string
-	recordNum := 0
-	batchNum := 0
 
 	for {
-		rec, err := r.Read()
+		record, err := r.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return recordNum, batchNum, fmt.Errorf("CSV read error on record %d: %v", recordNum+1, err)
+			return recordsSent, batchesSent, fmt.Errorf("error reading CSV: %v", err)
 		}
-		recordNum++
 
-		line := strings.Join(rec, ",")
-		batch = append(batch, line)
-
-		if len(batch) == batchSize {
-			batchNum++
-			payload := strings.Join(batch, "\n") + "\n"
-			if err := writeAll(conn, []byte(payload)); err != nil {
-				return recordNum, batchNum, fmt.Errorf("failed to send batch %d: %w", batchNum, err)
+		batch = append(batch, strings.Join(record, ","))
+		if len(batch) >= batchSize {
+			err = conn.PublishMessage(requestQueue.Name, strings.Join(batch, "\n"), responseQueue.Name)
+			if err != nil {
+				return recordsSent, batchesSent, fmt.Errorf("error publishing message: %v", err)
 			}
-			fmt.Printf("Sent batch %d with %d records\n", batchNum, len(batch))
-			batch = batch[:0]
+			recordsSent += len(batch)
+			batchesSent++
+			batch = batch[:0] // Reset batch
 		}
 	}
-
-	// Send final partial batch
+	// Send any remaining records in the last batch
 	if len(batch) > 0 {
-		batchNum++
-		payload := strings.Join(batch, "\n") + "\n"
-		if err := writeAll(conn, []byte(payload)); err != nil {
-			return recordNum, batchNum, fmt.Errorf("failed to send final batch %d: %w", batchNum, err)
+		err := conn.PublishMessage(requestQueue.Name, strings.Join(batch, "\n"), responseQueue.Name)
+		if err != nil {
+			return recordsSent, batchesSent, fmt.Errorf("error publishing message: %v", err)
 		}
-		fmt.Printf("Sent final batch %d with %d records\n", batchNum, len(batch))
+		recordsSent += len(batch)
+		batchesSent++
+	}
+	return recordsSent, batchesSent, nil
+
+}
+
+func connectRabbitMQandDeclareQueues() (*rabbitmq.Connection, amqp.Queue, amqp.Queue) {
+
+	// Connect to RabbitMQ using the shared module
+	config := rabbitmq.DefaultConfig()
+	conn, err := rabbitmq.NewConnection(config)
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+	}
+	defer conn.Close()
+
+	// Declare the request queue
+	requestQueue, err := conn.DeclareQueue("echo_requests")
+	if err != nil {
+		log.Fatalf("Failed to declare request queue: %v", err)
 	}
 
-	return recordNum, batchNum, nil
+	// Declare the response queue
+	responseQueue, err := conn.DeclareQueue("echo_responses")
+	if err != nil {
+		log.Fatalf("Failed to declare response queue: %v", err)
+	}
+
+	return conn, requestQueue, responseQueue
 }
 
 func main() {
 	batchSize := flag.Int("batch", 10, "Number of CSV records per batch")
-	addr := flag.String("addr", "server:8080", "Server address host:port")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
-		log.Fatal("Usage: ./client [-batch N] [-addr host:port] <input.csv>")
+		log.Fatal("Usage: ./client [-batch N] <input.csv>")
 	}
 	inputFile := flag.Arg(0)
 
@@ -104,21 +107,17 @@ func main() {
 	}
 	defer f.Close()
 
-	conn, err := net.Dial("tcp", *addr)
-	if err != nil {
-		log.Fatalf("Failed to connect to server: %v", err)
-	}
-	defer conn.Close()
-
-	fmt.Printf("Connected to %s\n", *addr)
+	fmt.Printf("Connected to RabbitMQ\n")
 	fmt.Printf("Reading CSV: %s | batch size: %d\n", inputFile, *batchSize)
 
+	conn, requestQueue, responseQueue := connectRabbitMQandDeclareQueues()
+
 	// Start goroutine for server responses
-	startServerReader(conn)
+	startResponseReader(conn, responseQueue)
 
 	// Read CSV and send batches
 	r := csv.NewReader(f)
-	records, batches, err := sendBatches(conn, r, *batchSize)
+	records, batches, err := readCSAndSendBatches(conn, requestQueue, responseQueue, r, *batchSize)
 	if err != nil {
 		log.Fatalf("Transmission error: %v", err)
 	}
