@@ -7,6 +7,9 @@ WORKDIR /app
 COPY server/go.mod ./
 COPY server/go.sum ./
 
+# Copy protocol directory
+COPY protocol/ ./protocol/
+
 # Download dependencies
 RUN go mod download
 

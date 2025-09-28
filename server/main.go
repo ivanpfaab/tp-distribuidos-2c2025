@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -54,11 +55,12 @@ func main() {
 
 	// Create publish function for the handler
 	publishFunc := func(queueName, message, routingKey string) error {
-		return ch.Publish(
-			"",        // exchange
-			queueName, // routing key
-			false,     // mandatory
-			false,     // immediate
+		return ch.PublishWithContext(
+			context.Background(), // context
+			"",                   // exchange
+			queueName,            // routing key
+			false,                // mandatory
+			false,                // immediate
 			amqp.Publishing{
 				ContentType: "text/plain",
 				Body:        []byte(message),

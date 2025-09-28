@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"batch"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -106,6 +108,24 @@ func main() {
 
 		fmt.Printf("Sending line %d: %s\n", lineCount, message)
 
+		// Create batch message
+		batchData := &batch.Batch{
+			ClientID:    "client-123",
+			FileID:      "file-456",
+			IsEOF:       strings.ToLower(message) == "exit",
+			BatchNumber: lineCount,
+			BatchSize:   len(message),
+			BatchData:   message,
+		}
+
+		// Create batch message and serialize
+		batchMsg := batch.NewBatchMessage(batchData)
+		serializedData, err := batch.SerializeBatchMessage(batchMsg)
+		if err != nil {
+			log.Printf("Failed to serialize batch message: %v", err)
+			break
+		}
+
 		// Send message to request queue
 		err = ch.Publish(
 			"",                // exchange
@@ -113,8 +133,8 @@ func main() {
 			false,             // mandatory
 			false,             // immediate
 			amqp.Publishing{
-				ContentType: "text/plain",
-				Body:        []byte(message),
+				ContentType: "application/octet-stream",
+				Body:        serializedData,
 				ReplyTo:     responseQueue.Name,
 			},
 		)

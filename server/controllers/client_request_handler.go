@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 
+	"common"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -19,27 +21,44 @@ func NewClientRequestHandler() *ClientRequestHandler {
 
 // HandleRequest processes a client request and sends an acknowledgment response
 func (h *ClientRequestHandler) HandleRequest(delivery amqp.Delivery, publishFunc func(string, string, string) error) error {
-	// Extract the message content
-	message := string(delivery.Body)
+	// Deserialize the message
+	message, err := common.Deserialize(delivery.Body)
+	if err != nil {
+		log.Printf("Client Request Handler: Failed to deserialize message: %v", err)
+		delivery.Nack(false, false) // Reject and don't requeue
+		return fmt.Errorf("failed to deserialize message: %w", err)
+	}
 
-	// Log the received request
-	log.Printf("Client Request Handler: Received request: %s", message)
+	// Check if it's a Batch message (only type we handle)
+	batchMsg, ok := message.(*common.Batch)
+	if !ok {
+		log.Printf("Client Request Handler: Received non-batch message type: %T", message)
+		delivery.Nack(false, false) // Reject and don't requeue
+		return fmt.Errorf("expected batch message, got %T", message)
+	}
+
+	// Log the received batch
+	log.Printf("Client Request Handler: Received batch - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
+		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.BatchData)
 
 	// Create acknowledgment response
-	response := fmt.Sprintf("ACK: Request received - %s", message)
+	response := fmt.Sprintf("ACK: Batch received - ClientID: %s, FileID: %s, BatchNumber: %d",
+		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
 
 	// Get the reply-to queue from the message properties
 	replyTo := delivery.ReplyTo
 	if replyTo == "" {
 		log.Printf("Client Request Handler: No reply-to queue specified, cannot send response")
+		delivery.Nack(false, false) // Reject and don't requeue
 		return fmt.Errorf("no reply-to queue specified")
 	}
 
 	// Send acknowledgment response back to client
-	err := publishFunc(replyTo, response, "")
+	err = publishFunc(replyTo, response, "")
 	if err != nil {
 		log.Printf("Client Request Handler: Failed to send acknowledgment: %v", err)
-		return fmt.Errorf("failed to send acknowledgment: %v", err)
+		delivery.Nack(false, true) // Reject and requeue
+		return fmt.Errorf("failed to send acknowledgment: %w", err)
 	}
 
 	log.Printf("Client Request Handler: Sent acknowledgment: %s", response)
@@ -48,7 +67,7 @@ func (h *ClientRequestHandler) HandleRequest(delivery amqp.Delivery, publishFunc
 	err = delivery.Ack(false)
 	if err != nil {
 		log.Printf("Client Request Handler: Failed to acknowledge message: %v", err)
-		return fmt.Errorf("failed to acknowledge message: %v", err)
+		return fmt.Errorf("failed to acknowledge message: %w", err)
 	}
 
 	return nil
