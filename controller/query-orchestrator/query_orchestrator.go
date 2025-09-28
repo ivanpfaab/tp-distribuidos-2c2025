@@ -78,22 +78,22 @@ func (qo *QueryOrchestrator) Initialize() middleware.MessageMiddlewareError {
 // declareExchanges declares all the exchanges on RabbitMQ
 func (qo *QueryOrchestrator) declareExchanges() middleware.MessageMiddlewareError {
 	// Declare Filter exchange
-	if err := qo.filterProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	if err := qo.filterProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
 		return err
 	}
 
 	// Declare Aggregator exchange
-	if err := qo.aggregatorProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	if err := qo.aggregatorProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
 		return err
 	}
 
 	// Declare Join exchange
-	if err := qo.joinProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	if err := qo.joinProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
 		return err
 	}
 
 	// Declare Group By exchange
-	if err := qo.groupByProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	if err := qo.groupByProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
 		return err
 	}
 

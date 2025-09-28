@@ -91,3 +91,4 @@ func SerializeBatchMessage(msg *BatchMessage) ([]byte, error) {
 	
 	return buf, nil	
 }
+

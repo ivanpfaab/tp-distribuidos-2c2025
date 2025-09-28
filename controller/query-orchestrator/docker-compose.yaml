@@ -33,62 +33,66 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
 
-  # Mock consumers for testing - these will just log received messages
-  filter-consumer:
-    image: alpine:latest
-    container_name: filter-consumer
+  # Worker services
+  filter-worker:
+    build:
+      context: ../..
+      dockerfile: ./workers/filter/Dockerfile
+    container_name: filter-worker
     depends_on:
       - query-orchestrator
     networks:
       - orchestrator-network
-    command: >
-      sh -c "
-        apk add --no-cache curl &&
-        sleep 10 &&
-        echo 'Filter consumer ready - listening for messages on filter-exchange'
-      "
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
 
-  aggregator-consumer:
-    image: alpine:latest
-    container_name: aggregator-consumer
+  aggregator-worker:
+    build:
+      context: ../..
+      dockerfile: ./workers/aggregator/Dockerfile
+    container_name: aggregator-worker
     depends_on:
       - query-orchestrator
     networks:
       - orchestrator-network
-    command: >
-      sh -c "
-        apk add --no-cache curl &&
-        sleep 10 &&
-        echo 'Aggregator consumer ready - listening for messages on aggregator-exchange'
-      "
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
 
-  join-consumer:
-    image: alpine:latest
-    container_name: join-consumer
+  join-worker:
+    build:
+      context: ../..
+      dockerfile: ./workers/join/Dockerfile
+    container_name: join-worker
     depends_on:
       - query-orchestrator
     networks:
       - orchestrator-network
-    command: >
-      sh -c "
-        apk add --no-cache curl &&
-        sleep 10 &&
-        echo 'Join consumer ready - listening for messages on join-exchange'
-      "
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
 
-  groupby-consumer:
-    image: alpine:latest
-    container_name: groupby-consumer
+  groupby-worker:
+    build:
+      context: ../..
+      dockerfile: ./workers/group_by/Dockerfile
+    container_name: groupby-worker
     depends_on:
       - query-orchestrator
     networks:
       - orchestrator-network
-    command: >
-      sh -c "
-        apk add --no-cache curl &&
-        sleep 10 &&
-        echo 'GroupBy consumer ready - listening for messages on groupby-exchange'
-      "
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
 
 networks:
   orchestrator-network:
