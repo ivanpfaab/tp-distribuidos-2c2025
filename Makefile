@@ -104,6 +104,44 @@ clean: remove-all ## Remove containers and images
 clean-all: clean ## Remove all containers, images, and volumes
 	docker-compose down -v --rmi all
 
+# Comprehensive cleanup commands
+.PHONY: cleanup
+cleanup: ## Clean up project-specific containers, images, and networks
+	@echo "Cleaning up project-specific resources..."
+	@echo "Stopping and removing containers..."
+	@docker stop echo-server echo-client rabbitmq-server 2>/dev/null || true
+	@docker rm echo-server echo-client rabbitmq-server 2>/dev/null || true
+	@echo "Removing project images..."
+	@docker rmi tp-distribuidos-2c2025_server tp-distribuidos-2c2025_client 2>/dev/null || true
+	@echo "Removing project networks..."
+	@docker network rm tp-distribuidos-2c2025_echo-network 2>/dev/null || true
+	@echo "Project cleanup completed!"
+
+.PHONY: cleanup-ports
+cleanup-ports: ## Kill processes using project ports (8080, 8081, 5672, 15672)
+	@echo "Cleaning up ports..."
+	@echo "Checking port 8080..."
+	@lsof -ti:8080 | xargs -r kill -9 2>/dev/null || echo "Port 8080 is free"
+	@echo "Checking port 8081..."
+	@lsof -ti:8081 | xargs -r kill -9 2>/dev/null || echo "Port 8081 is free"
+	@echo "Checking port 5672 (RabbitMQ)..."
+	@lsof -ti:5672 | xargs -r kill -9 2>/dev/null || echo "Port 5672 is free"
+	@echo "Checking port 15672 (RabbitMQ Management)..."
+	@lsof -ti:15672 | xargs -r kill -9 2>/dev/null || echo "Port 15672 is free"
+	@echo "Port cleanup completed!"
+
+.PHONY: deep-cleanup
+deep-cleanup: ## Clean up project-specific containers, images, and networks
+	@echo "Cleaning up project-specific resources..."
+	@echo "Stopping and removing containers..."
+	@docker stop echo-server echo-client rabbitmq-server test-echo-server test-runner 2>/dev/null || true
+	@docker rm echo-server echo-client rabbitmq-server test-echo-server test-runner 2>/dev/null || true
+	@echo "Removing project images..."
+	@docker rmi tp-distribuidos-2c2025_server tp-distribuidos-2c2025_client test-echo-server test-runner 2>/dev/null || true
+	@echo "Removing project networks..."
+	@docker network rm tp-distribuidos-2c2025_echo-network 2>/dev/null || true
+	@echo "Project cleanup completed!"
+
 # Development commands
 .PHONY: dev-server
 dev-server: ## Run server locally for development

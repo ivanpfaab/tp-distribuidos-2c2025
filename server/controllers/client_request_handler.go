@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"common"
+	"tp-distribuidos-2c2025/protocol/deserializer"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -22,7 +22,7 @@ func NewClientRequestHandler() *ClientRequestHandler {
 // HandleRequest processes a client request and sends an acknowledgment response
 func (h *ClientRequestHandler) HandleRequest(delivery amqp.Delivery, publishFunc func(string, string, string) error) error {
 	// Deserialize the message
-	message, err := common.Deserialize(delivery.Body)
+	message, err := deserializer.Deserialize(delivery.Body)
 	if err != nil {
 		log.Printf("Client Request Handler: Failed to deserialize message: %v", err)
 		delivery.Nack(false, false) // Reject and don't requeue

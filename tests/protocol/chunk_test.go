@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chunk "tp-distribuidos-2c2025/protocol/chunk"
-	"tp-distribuidos-2c2025/protocol/common"
+	common "tp-distribuidos-2c2025/protocol/common"
 )
 
 func TestNewChunk(t *testing.T) {
@@ -48,7 +48,7 @@ func TestNewChunkMessage(t *testing.T) {
 
 	assert.Equal(t, uint16(0), msg.Header.HeaderLength) // Will be calculated during serialization
 	assert.Equal(t, int32(0), msg.Header.TotalLength)   // Will be calculated during serialization
-	assert.Equal(t, common.ChunkMessageType, msg.Header.MsgTypeID)
+	assert.Equal(t, chunk.MessageType, msg.Header.MsgTypeID)
 	assert.Equal(t, clientID, msg.Chunk.ClientID)
 	assert.Equal(t, queryType, msg.Chunk.QueryType)
 	assert.Equal(t, chunkNumber, msg.Chunk.ChunkNumber)
@@ -72,7 +72,7 @@ func TestSerializeChunkMessage(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.ChunkMessageType,
+					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "1234",
@@ -93,7 +93,7 @@ func TestSerializeChunkMessage(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.ChunkMessageType,
+					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "1234",
@@ -114,7 +114,7 @@ func TestSerializeChunkMessage(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.ChunkMessageType,
+					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "12345", // 5 bytes, max is 4
@@ -154,7 +154,7 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 		Header: common.Header{
 			HeaderLength: 0,
 			TotalLength:  0,
-			MsgTypeID:    common.ChunkMessageType,
+			MsgTypeID:    chunk.MessageType,
 		},
 		Chunk: chunk.Chunk{
 			ClientID:    "1234",
@@ -187,7 +187,7 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 	offset += common.TotalLengthSize
 
 	// Check msg_type_id (1 byte)
-	assert.Equal(t, byte(common.ChunkMessageType), data[offset])
+	assert.Equal(t, byte(chunk.MessageType), data[offset])
 	offset += common.MsgTypeIDSize
 
 	// Check client_id (4 bytes)
@@ -229,7 +229,7 @@ func TestSerializeChunkMessageWithEmptyData(t *testing.T) {
 		Header: common.Header{
 			HeaderLength: 0,
 			TotalLength:  0,
-			MsgTypeID:    common.ChunkMessageType,
+			MsgTypeID:    chunk.MessageType,
 		},
 		Chunk: chunk.Chunk{
 			ClientID:    "1234",
@@ -262,7 +262,7 @@ func TestQueryTypes(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.ChunkMessageType,
+					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "1234",
@@ -289,7 +289,7 @@ func TestChunkMessageWithLargeNumbers(t *testing.T) {
 		Header: common.Header{
 			HeaderLength: 0,
 			TotalLength:  0,
-			MsgTypeID:    common.ChunkMessageType,
+			MsgTypeID:    chunk.MessageType,
 		},
 		Chunk: chunk.Chunk{
 			ClientID:    "1234",

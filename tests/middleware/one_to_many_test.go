@@ -7,12 +7,13 @@ import (
 	"tp-distribuidos-2c2025/shared/middleware"
 	"tp-distribuidos-2c2025/shared/middleware/exchange"
 	"tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	testing_utils "tp-distribuidos-2c2025/shared/testing"
 )
 
 // TestExchangeOneToMany tests 1 producer multiple consumers using exchange
 func TestExchangeOneToMany(t *testing.T) {
-	middleware.InitLogger()
-	middleware.LogTest("Testing Exchange One-to-Many pattern")
+	testing_utils.InitLogger()
+	testing_utils.LogTest("Testing Exchange One-to-Many pattern")
 
 	// Init connection
 	config := &middleware.ConnectionConfig{
@@ -22,10 +23,10 @@ func TestExchangeOneToMany(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
-	middleware.LogStep("Connected to RabbitMQ")
+	testing_utils.LogStep("Connected to RabbitMQ")
 
 	// Init middleware
-	middleware.LogStep("Creating exchange producer and consumers")
+	testing_utils.LogStep("Creating exchange producer and consumers")
 	producerBroadcast := exchange.NewMessageMiddlewareExchange("fanout-exchange", []string{}, config)
 	producer := exchange.NewMessageMiddlewareExchange("topic-exchange", []string{"key1"}, config)
 	consumer1_key1 := exchange.NewExchangeConsumer("topic-exchange", []string{"key1"}, config)
@@ -43,7 +44,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	}
 
 	// Declare exchange
-	middleware.LogStep("Declaring exchanges")
+	testing_utils.LogStep("Declaring exchanges")
 	errCode := producerBroadcast.DeclareExchange("fanout", true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare fanout exchange: %v", errCode)
@@ -79,7 +80,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer1_key1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 1 Key 1 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 1 Key 1 received message: %s", string(message))
 			consumer1_key1_count++
 			delivery.Ack(false)
 		}
@@ -88,7 +89,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer1_key2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 1 Key 2 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 1 Key 2 received message: %s", string(message))
 			consumer1_key2_count++
 			delivery.Ack(false)
 		}
@@ -97,7 +98,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer1_key3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 1 Key 3 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 1 Key 3 received message: %s", string(message))
 			consumer1_key3_count++
 			delivery.Ack(false)
 		}
@@ -106,7 +107,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer2_key1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 2 Key 1 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 2 Key 1 received message: %s", string(message))
 			consumer2_key1_count++
 			delivery.Ack(false)
 		}
@@ -115,7 +116,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer2_key2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 2 Key 2 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 2 Key 2 received message: %s", string(message))
 			consumer2_key2_count++
 			delivery.Ack(false)
 		}
@@ -124,7 +125,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer2_key3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 2 Key 3 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 2 Key 3 received message: %s", string(message))
 			consumer2_key3_count++
 			delivery.Ack(false)
 		}
@@ -133,7 +134,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumerbroadcast1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer broadcast 1 received message: %s", string(message))
+			testing_utils.LogStep("Consumer broadcast 1 received message: %s", string(message))
 			consumerbroadcast1_count++
 			delivery.Ack(false)
 		}
@@ -142,7 +143,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumerbroadcast2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer broadcast 2 received message: %s", string(message))
+			testing_utils.LogStep("Consumer broadcast 2 received message: %s", string(message))
 			consumerbroadcast2_count++
 			delivery.Ack(false)
 		}
@@ -151,14 +152,14 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumerbroadcast3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer broadcast 3 received message: %s", string(message))
+			testing_utils.LogStep("Consumer broadcast 3 received message: %s", string(message))
 			consumerbroadcast3_count++
 			delivery.Ack(false)
 		}
 	}
 
 	// Start all consumers
-	middleware.LogStep("Starting all consumers")
+	testing_utils.LogStep("Starting all consumers")
 	consumer1_key1.StartConsuming(onMessageCallback_consumer1_key1)
 	consumer1_key2.StartConsuming(onMessageCallback_consumer1_key2)
 	consumer1_key3.StartConsuming(onMessageCallback_consumer1_key3)
@@ -173,7 +174,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Send message
-	middleware.LogStep("Sending 10 messages")
+	testing_utils.LogStep("Sending 10 messages")
 	for i := 0; i < 10; i++ {
 		message := []byte(fmt.Sprintf("Hello from fanout exchange %d", i))
 		errCode = producerBroadcast.Send(message, []string{})
@@ -203,11 +204,11 @@ func TestExchangeOneToMany(t *testing.T) {
 	}
 
 	// Wait for messages to be processed
-	middleware.LogStep("Waiting for messages to be processed (5 seconds)")
+	testing_utils.LogStep("Waiting for messages to be processed (5 seconds)")
 	time.Sleep(5 * time.Second)
 
 	// Close connections
-	middleware.LogStep("Closing connections")
+	testing_utils.LogStep("Closing connections")
 	producerBroadcast.Close()
 	producer.Close()
 	consumer1_key1.Close()
@@ -221,7 +222,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	consumerbroadcast3.Close()
 
 	// Validate results
-	middleware.LogStep("Validating message distribution")
+	testing_utils.LogStep("Validating message distribution")
 
 	// Calculate totals for each key
 	key1_total := consumer1_key1_count + consumer2_key1_count
@@ -233,12 +234,12 @@ func TestExchangeOneToMany(t *testing.T) {
 	fanout_different_key_total := consumerbroadcast3_count
 
 	// Test topic exchange load balancing
-	middleware.LogStep("Testing topic exchange load balancing")
-	middleware.LogStep("Key1: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+	testing_utils.LogStep("Testing topic exchange load balancing")
+	testing_utils.LogStep("Key1: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
 		consumer1_key1_count, consumer2_key1_count, key1_total, expected_key1_total)
-	middleware.LogStep("Key2: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+	testing_utils.LogStep("Key2: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
 		consumer1_key2_count, consumer2_key2_count, key2_total, expected_key2_total)
-	middleware.LogStep("Key3: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+	testing_utils.LogStep("Key3: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
 		consumer1_key3_count, consumer2_key3_count, key3_total, expected_key3_total)
 
 	// Validate topic exchange results
@@ -253,10 +254,10 @@ func TestExchangeOneToMany(t *testing.T) {
 	}
 
 	// Test fanout exchange behavior
-	middleware.LogStep("Testing fanout exchange behavior")
-	middleware.LogStep("Fanout 'key' queue: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+	testing_utils.LogStep("Testing fanout exchange behavior")
+	testing_utils.LogStep("Fanout 'key' queue: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
 		consumerbroadcast1_count, consumerbroadcast2_count, fanout_key_total, expected_fanout_total)
-	middleware.LogStep("Fanout 'different_key' queue: Consumer3=%d (expected=%d)",
+	testing_utils.LogStep("Fanout 'different_key' queue: Consumer3=%d (expected=%d)",
 		fanout_different_key_total, expected_fanout_total)
 
 	// Validate fanout exchange results
@@ -268,7 +269,7 @@ func TestExchangeOneToMany(t *testing.T) {
 	}
 
 	// Test load balancing within each key (consumers should compete for messages)
-	middleware.LogStep("Testing load balancing within keys")
+	testing_utils.LogStep("Testing load balancing within keys")
 	if consumer1_key1_count == 0 && consumer2_key1_count == 0 {
 		t.Error("No consumers received key1 messages")
 	}
@@ -287,17 +288,17 @@ func TestExchangeOneToMany(t *testing.T) {
 	// Success message
 	if key1_total == expected_key1_total && key2_total == expected_key2_total && key3_total == expected_key3_total &&
 		fanout_key_total == expected_fanout_total && fanout_different_key_total == expected_fanout_total {
-		middleware.LogSuccess("All exchange middleware functionality validated successfully!")
-		middleware.LogSuccess("Topic exchange routing works correctly")
-		middleware.LogSuccess("Fanout exchange broadcasting works correctly")
-		middleware.LogSuccess("Load balancing between consumers works correctly")
+		testing_utils.LogSuccess("All exchange middleware functionality validated successfully!")
+		testing_utils.LogSuccess("Topic exchange routing works correctly")
+		testing_utils.LogSuccess("Fanout exchange broadcasting works correctly")
+		testing_utils.LogSuccess("Load balancing between consumers works correctly")
 	}
 }
 
 // TestWorkerQueueOneToMany tests 1 producer multiple consumers using worker queue
 func TestWorkerQueueOneToMany(t *testing.T) {
-	middleware.InitLogger()
-	middleware.LogTest("Testing Worker Queue One-to-Many pattern")
+	testing_utils.InitLogger()
+	testing_utils.LogTest("Testing Worker Queue One-to-Many pattern")
 
 	// Init connection
 	config := &middleware.ConnectionConfig{
@@ -307,10 +308,10 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
-	middleware.LogStep("Connected to RabbitMQ")
+	testing_utils.LogStep("Connected to RabbitMQ")
 
 	// Init middleware
-	middleware.LogStep("Creating queue producer and consumers")
+	testing_utils.LogStep("Creating queue producer and consumers")
 	producer := workerqueue.NewMessageMiddlewareQueue("test-queue-1tomany", config)
 	consumer1 := workerqueue.NewQueueConsumer("test-queue-1tomany", config)
 	consumer2 := workerqueue.NewQueueConsumer("test-queue-1tomany", config)
@@ -321,7 +322,7 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	}
 
 	// Declare queue
-	middleware.LogStep("Declaring queue")
+	testing_utils.LogStep("Declaring queue")
 	errCode := producer.DeclareQueue(true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare queue: %v", errCode)
@@ -335,7 +336,7 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	onMessageCallback1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 1 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 1 received message: %s", string(message))
 			received1 = true
 			delivery.Ack(false)
 		}
@@ -344,7 +345,7 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	onMessageCallback2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 2 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 2 received message: %s", string(message))
 			received2 = true
 			delivery.Ack(false)
 		}
@@ -353,20 +354,20 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	onMessageCallback3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 3 received message: %s", string(message))
+			testing_utils.LogStep("Consumer 3 received message: %s", string(message))
 			received3 = true
 			delivery.Ack(false)
 		}
 	}
 
 	// Start all consumers
-	middleware.LogStep("Starting all consumers")
+	testing_utils.LogStep("Starting all consumers")
 	consumer1.StartConsuming(onMessageCallback1)
 	consumer2.StartConsuming(onMessageCallback2)
 	consumer3.StartConsuming(onMessageCallback3)
 
 	// Send 3 messages (one for each consumer)
-	middleware.LogStep("Sending 3 messages")
+	testing_utils.LogStep("Sending 3 messages")
 	messages := [][]byte{
 		[]byte("Message 1 for worker queue 1tomany"),
 		[]byte("Message 2 for worker queue 1tomany"),
@@ -388,11 +389,11 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	}
 
 	// Wait for messages
-	middleware.LogStep("Waiting for messages (3 seconds)")
+	testing_utils.LogStep("Waiting for messages (3 seconds)")
 	time.Sleep(20 * time.Second)
 
 	// Close
-	middleware.LogStep("Closing connections")
+	testing_utils.LogStep("Closing connections")
 	producer.Close()
 	consumer1.Close()
 	consumer2.Close()
@@ -410,6 +411,6 @@ func TestWorkerQueueOneToMany(t *testing.T) {
 	}
 
 	if received1 && received2 && received3 {
-		middleware.LogSuccess("All consumers received messages successfully")
+		testing_utils.LogSuccess("All consumers received messages successfully")
 	}
 }

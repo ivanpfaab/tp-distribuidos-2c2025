@@ -6,12 +6,13 @@ import (
 	"tp-distribuidos-2c2025/shared/middleware"
 	"tp-distribuidos-2c2025/shared/middleware/exchange"
 	"tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	testing_utils "tp-distribuidos-2c2025/shared/testing"
 )
 
 // TestExchangeOneToOne tests 1 producer 1 consumer using exchange
 func TestExchangeOneToOne(t *testing.T) {
-	middleware.InitLogger()
-	middleware.LogTest("Testing Exchange One-to-One pattern")
+	testing_utils.InitLogger()
+	testing_utils.LogTest("Testing Exchange One-to-One pattern")
 
 	// Init connection
 	config := &middleware.ConnectionConfig{
@@ -21,10 +22,10 @@ func TestExchangeOneToOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
-	middleware.LogStep("Connected to RabbitMQ")
+	testing_utils.LogStep("Connected to RabbitMQ")
 
 	// Init middleware
-	middleware.LogStep("Creating exchange producer and consumer")
+	testing_utils.LogStep("Creating exchange producer and consumer")
 	producer := exchange.NewMessageMiddlewareExchange("test-exchange-1to1", []string{"test.key"}, config)
 	consumer := exchange.NewExchangeConsumer("test-exchange-1to1", []string{"test.key"}, config)
 
@@ -33,7 +34,7 @@ func TestExchangeOneToOne(t *testing.T) {
 	}
 
 	// Declare exchange
-	middleware.LogStep("Declaring exchange")
+	testing_utils.LogStep("Declaring exchange")
 	errCode := producer.DeclareExchange("topic", true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare exchange: %v", errCode)
@@ -48,13 +49,13 @@ func TestExchangeOneToOne(t *testing.T) {
 		delivery := <-*consumeChannel
 		if string(delivery.Body) == string(message) {
 			received = true
-			middleware.LogStep("Consumer received message: %s", string(delivery.Body))
+			testing_utils.LogStep("Consumer received message: %s", string(delivery.Body))
 		}
 		delivery.Ack(false)
 		close(done)
 	}
 
-	middleware.LogStep("Starting consumer")
+	testing_utils.LogStep("Starting consumer")
 	errCode = consumer.StartConsuming(onMessageCallback)
 	if errCode != 0 {
 		t.Fatalf("Failed to start consuming: %v", errCode)
@@ -64,32 +65,32 @@ func TestExchangeOneToOne(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Send message
-	middleware.LogStep("Sending message")
+	testing_utils.LogStep("Sending message")
 	errCode = producer.Send(message, []string{"test.key"})
 	if errCode != 0 {
 		t.Fatalf("Failed to send message: %v", errCode)
 	}
 
 	// Wait for message
-	middleware.LogStep("Waiting for message (10 seconds)")
+	testing_utils.LogStep("Waiting for message (10 seconds)")
 	time.Sleep(10 * time.Second)
 
 	// Close
-	middleware.LogStep("Closing connections")
+	testing_utils.LogStep("Closing connections")
 	producer.Close()
 	consumer.Close()
 
 	if !received {
 		t.Error("Message was not received")
 	} else {
-		middleware.LogSuccess("Message received successfully")
+		testing_utils.LogSuccess("Message received successfully")
 	}
 }
 
 // TestWorkerQueueOneToOne tests 1 producer 1 consumer using worker queue
 func TestWorkerQueueOneToOne(t *testing.T) {
-	middleware.InitLogger()
-	middleware.LogTest("Testing Worker Queue One-to-One pattern")
+	testing_utils.InitLogger()
+	testing_utils.LogTest("Testing Worker Queue One-to-One pattern")
 
 	// Init connection
 	config := &middleware.ConnectionConfig{
@@ -99,10 +100,10 @@ func TestWorkerQueueOneToOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
-	middleware.LogStep("Connected to RabbitMQ")
+	testing_utils.LogStep("Connected to RabbitMQ")
 
 	// Init middleware
-	middleware.LogStep("Creating queue producer and consumer")
+	testing_utils.LogStep("Creating queue producer and consumer")
 	producer := workerqueue.NewMessageMiddlewareQueue("test-queue-1to1", config)
 	consumer := workerqueue.NewQueueConsumer("test-queue-1to1", config)
 
@@ -111,14 +112,14 @@ func TestWorkerQueueOneToOne(t *testing.T) {
 	}
 
 	// Declare queue
-	middleware.LogStep("Declaring queue")
+	testing_utils.LogStep("Declaring queue")
 	errCode := producer.DeclareQueue(true, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare queue: %v", errCode)
 	}
 
 	// Send message
-	middleware.LogStep("Sending message")
+	testing_utils.LogStep("Sending message")
 	message := []byte("Hello from worker queue 1to1")
 	errCode = producer.Send(message)
 	if errCode != 0 {
@@ -131,30 +132,30 @@ func TestWorkerQueueOneToOne(t *testing.T) {
 		delivery := <-*consumeChannel
 		if string(delivery.Body) == string(message) {
 			received = true
-			middleware.LogStep("Consumer received message: %s", string(delivery.Body))
+			testing_utils.LogStep("Consumer received message: %s", string(delivery.Body))
 		}
 		delivery.Ack(false)
 		close(done)
 	}
 
-	middleware.LogStep("Starting consumer")
+	testing_utils.LogStep("Starting consumer")
 	errCode = consumer.StartConsuming(onMessageCallback)
 	if errCode != 0 {
 		t.Fatalf("Failed to start consuming: %v", errCode)
 	}
 
 	// Wait for message
-	middleware.LogStep("Waiting for message (2 seconds)")
+	testing_utils.LogStep("Waiting for message (2 seconds)")
 	time.Sleep(2 * time.Second)
 
 	// Close
-	middleware.LogStep("Closing connections")
+	testing_utils.LogStep("Closing connections")
 	producer.Close()
 	consumer.Close()
 
 	if !received {
 		t.Error("Message was not received")
 	} else {
-		middleware.LogSuccess("Message received successfully")
+		testing_utils.LogSuccess("Message received successfully")
 	}
 }

@@ -22,11 +22,15 @@ services:
       context: .
       dockerfile: ./server/Dockerfile
     container_name: echo-server
+    ports:
+      - "8081:8080"   # TCP port for client connections
     depends_on:
       rabbitmq:
         condition: service_healthy
     networks:
       - echo-network
+    environment:
+      - SERVER_PORT=8080
 
   client:
     build:
@@ -34,15 +38,13 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: echo-client
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       server:
         condition: service_started
     networks:
       - echo-network
     volumes:
       - ./input.txt:/app/input.txt
-    command: ["./main", "/app/input.txt"]
+    command: ["./main", "/app/input.txt", "echo-server:8080"]
 
 networks:
   echo-network:

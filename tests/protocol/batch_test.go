@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	batch "tp-distribuidos-2c2025/protocol/batch"
-	"tp-distribuidos-2c2025/protocol/common"
+	common "tp-distribuidos-2c2025/protocol/common"
 )
 
 func TestNewBatch(t *testing.T) {
@@ -42,7 +42,7 @@ func TestNewBatchMessage(t *testing.T) {
 
 	assert.Equal(t, uint16(0), msg.Header.HeaderLength) // Will be calculated during serialization
 	assert.Equal(t, int32(0), msg.Header.TotalLength)   // Will be calculated during serialization
-	assert.Equal(t, common.BatchMessageType, msg.Header.MsgTypeID)
+	assert.Equal(t, batch.MessageType, msg.Header.MsgTypeID)
 	assert.Equal(t, clientID, msg.Batch.ClientID)
 	assert.Equal(t, fileID, msg.Batch.FileID)
 	assert.Equal(t, isEOF, msg.Batch.IsEOF)
@@ -64,7 +64,7 @@ func TestSerializeBatchMessage(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.BatchMessageType,
+					MsgTypeID:    batch.MessageType,
 				},
 				Batch: batch.Batch{
 					ClientID:    "1234",
@@ -83,7 +83,7 @@ func TestSerializeBatchMessage(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.BatchMessageType,
+					MsgTypeID:    batch.MessageType,
 				},
 				Batch: batch.Batch{
 					ClientID:    "1234",
@@ -102,7 +102,7 @@ func TestSerializeBatchMessage(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.BatchMessageType,
+					MsgTypeID:    batch.MessageType,
 				},
 				Batch: batch.Batch{
 					ClientID:    "12345", // 5 bytes, max is 4
@@ -122,7 +122,7 @@ func TestSerializeBatchMessage(t *testing.T) {
 				Header: common.Header{
 					HeaderLength: 0,
 					TotalLength:  0,
-					MsgTypeID:    common.BatchMessageType,
+					MsgTypeID:    batch.MessageType,
 				},
 				Batch: batch.Batch{
 					ClientID:    "1234",
@@ -160,7 +160,7 @@ func TestSerializeBatchMessageStructure(t *testing.T) {
 		Header: common.Header{
 			HeaderLength: 0,
 			TotalLength:  0,
-			MsgTypeID:    common.BatchMessageType,
+			MsgTypeID:    batch.MessageType,
 		},
 		Batch: batch.Batch{
 			ClientID:    "1234",
@@ -191,7 +191,7 @@ func TestSerializeBatchMessageStructure(t *testing.T) {
 	offset += common.TotalLengthSize
 
 	// Check msg_type_id (1 byte)
-	assert.Equal(t, byte(common.BatchMessageType), data[offset])
+	assert.Equal(t, byte(batch.MessageType), data[offset])
 	offset += common.MsgTypeIDSize
 
 	// Check client_id (4 bytes)
@@ -225,7 +225,7 @@ func TestSerializeBatchMessageWithEmptyData(t *testing.T) {
 		Header: common.Header{
 			HeaderLength: 0,
 			TotalLength:  0,
-			MsgTypeID:    common.BatchMessageType,
+			MsgTypeID:    batch.MessageType,
 		},
 		Batch: batch.Batch{
 			ClientID:    "1234",
