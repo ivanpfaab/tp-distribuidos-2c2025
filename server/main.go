@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
-	"shared/rabbitmq"
+	"echo-server/controllers"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func failOnError(err error, msg string) {
@@ -14,47 +17,64 @@ func failOnError(err error, msg string) {
 }
 
 func main() {
-	// Connect to RabbitMQ using the shared module
-	config := rabbitmq.DefaultConfig()
-	conn, err := rabbitmq.NewConnection(config)
+	// Connect to RabbitMQ
+	conn, err := amqp.Dial("amqp://admin:password@rabbitmq:5672/")
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
+	// Create a channel
+	ch, err := conn.Channel()
+	failOnError(err, "Failed to open a channel")
+	defer ch.Close()
+
 	// Declare the request queue
-	requestQueue, err := conn.DeclareQueue("echo_requests")
+	requestQueue, err := ch.QueueDeclare(
+		"echo_requests", // name
+		true,            // durable
+		false,           // delete when unused
+		false,           // exclusive
+		false,           // no-wait
+		nil,             // arguments
+	)
 	failOnError(err, "Failed to declare request queue")
 
-	// Declare the response queue
-	responseQueue, err := conn.DeclareQueue("echo_responses")
-	failOnError(err, "Failed to declare response queue")
-
 	// Set up consumer for requests
-	msgs, err := conn.ConsumeMessages(requestQueue.Name)
+	msgs, err := ch.Consume(
+		requestQueue.Name, // queue
+		"",                // consumer
+		false,             // auto-ack
+		false,             // exclusive
+		false,             // no-local
+		false,             // no-wait
+		nil,               // args
+	)
 	failOnError(err, "Failed to register consumer")
 
-	fmt.Printf("Echo server listening for messages on queue: %s\n", requestQueue.Name)
+	// Create client request handler
+	requestHandler := controllers.NewClientRequestHandler()
 
-	// Process messages
+	// Create publish function for the handler
+	publishFunc := func(queueName, message, routingKey string) error {
+		return ch.PublishWithContext(
+			context.Background(), // context
+			"",                   // exchange
+			queueName,            // routing key
+			false,                // mandatory
+			false,                // immediate
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(message),
+			},
+		)
+	}
+
+	fmt.Printf("Server with Client Request Handler listening for messages on queue: %s\n", requestQueue.Name)
+
+	// Process messages using the client request handler
 	for d := range msgs {
-		message := string(d.Body)
-		fmt.Printf("Received: %s\n", message)
-
-		// Echo the message back to the client
-		response := fmt.Sprintf("Echo: %s", message)
-
-		// Get the reply-to queue from the message properties
-		replyTo := d.ReplyTo
-		if replyTo == "" {
-			// If no reply-to specified, use the response queue
-			replyTo = responseQueue.Name
-		}
-
-		// Publish response
-		err = conn.PublishMessage(replyTo, response, "")
+		err := requestHandler.HandleRequest(d, publishFunc)
 		if err != nil {
-			log.Printf("Failed to publish response: %v", err)
-		} else {
-			fmt.Printf("Sent response: %s\n", response)
+			log.Printf("Failed to handle request: %v", err)
 		}
 	}
 }

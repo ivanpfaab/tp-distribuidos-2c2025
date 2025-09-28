@@ -3,8 +3,8 @@ module echo-server
 go 1.21
 
 require (
-	github.com/streadway/amqp v1.1.0
-	shared/rabbitmq v0.0.0
+	common v0.0.0
+	github.com/rabbitmq/amqp091-go v1.9.0
 )
 
-replace shared/rabbitmq => ./shared/rabbitmq
+replace common => ./protocol/common

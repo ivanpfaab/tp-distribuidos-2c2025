@@ -3,8 +3,12 @@ module echo-client
 go 1.21
 
 require (
-	github.com/streadway/amqp v1.1.0
-	shared/rabbitmq v0.0.0
+	batch v0.0.0
+	github.com/rabbitmq/amqp091-go v1.9.0
 )
 
-replace shared/rabbitmq => ./shared/rabbitmq
+require common v0.0.0 // indirect
+
+replace batch => ./protocol/batch
+
+replace common => ./protocol/common

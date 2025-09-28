@@ -22,8 +22,6 @@ services:
       context: .
       dockerfile: ./server/Dockerfile
     container_name: echo-server
-    ports:
-      - "8080:8080"
     depends_on:
       rabbitmq:
         condition: service_healthy

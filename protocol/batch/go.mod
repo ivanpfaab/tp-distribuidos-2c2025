@@ -1,3 +1,7 @@
-module tp-distribuidos-2c2025/protocol/batch
+module batch
 
 go 1.21
+
+require common v0.0.0
+
+replace common => ../common
