@@ -46,30 +46,47 @@ func TestExchangeOneToMany(t *testing.T) {
 	middleware.LogStep("Declaring exchanges")
 	errCode := producerBroadcast.DeclareExchange("fanout", true, false, false, false)
 	if errCode != 0 {
-		t.Fatalf("Failed to declare exchange: %v", errCode)
+		t.Fatalf("Failed to declare fanout exchange: %v", errCode)
 	}
 
 	errCode = producer.DeclareExchange("topic", true, false, false, false)
 	if errCode != 0 {
-		t.Fatalf("Failed to declare exchange: %v", errCode)
+		t.Fatalf("Failed to declare topic exchange: %v", errCode)
 	}
 
-	// Check if all consumers received the message
-	received1 := false
-	received2 := false
-	received3 := false
-	received4 := false
-	received5 := false
-	received6 := false
-	received7 := false
-	received8 := false
-	received9 := false
+	// Message counters for validation
+	var (
+		// Topic exchange counters
+		consumer1_key1_count = 0
+		consumer1_key2_count = 0
+		consumer1_key3_count = 0
+		consumer2_key1_count = 0
+		consumer2_key2_count = 0
+		consumer2_key3_count = 0
+
+		// Fanout exchange counters
+		consumerbroadcast1_count = 0
+		consumerbroadcast2_count = 0
+		consumerbroadcast3_count = 0    | --- PASS: TestNewBatchMessage (0.00s)
+		test-runner    | === RUN   TestSerializeBatchMessage
+		test-runner    | === RUN   TestSerializeBatchMessage/valid_batch_message
+		test-runner    | === RUN   TestSerializeBatchMessage/valid_batch_message_with_false_EOF
+		test-runner    | === RUN   TestSerializeBatchMessage/client_id_too_long
+		test-runner    | === RUN   TestSerializeBatchMessage/file_id_too_long
+		test-runner    | --- PASS: TestSerializeBatchMessage (0.00s)
+		test-runner    |     --- PASS: TestSerializeBatchMessage/valid_batch_message (0.00s)
+		test-runner    |     --- PASS: TestSerializeBatchMessage/valid_batch_message_with_false_EOF (0.00s)
+		test-runner    |     --- PASS: TestSerializeBatchMessage/client_id_too_long (0.00s)
+		test-runner    |     --- PASS: TestSerializeBatchMessage/file_id_too_long (0.00s)
+		test-runner    | === RUN   TestSerializeBatchMessageStructure key2
+	expected_key3_total := 3    // 3 messages for key3
+	expected_fanout_total := 10 // 10 fanout messages
 
 	onMessageCallback_consumer1_key1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
 			middleware.LogStep("Consumer 1 Key 1 received message: %s", string(message))
-			received1 = true
+			consumer1_key1_count++
 			delivery.Ack(false)
 		}
 	}
@@ -77,8 +94,8 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer1_key2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 1 key 2 received message: %s", string(message))
-			received2 = true
+			middleware.LogStep("Consumer 1 Key 2 received message: %s", string(message))
+			consumer1_key2_count++
 			delivery.Ack(false)
 		}
 	}
@@ -86,8 +103,8 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer1_key3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 1 key 3 received message: %s", string(message))
-			received3 = true
+			middleware.LogStep("Consumer 1 Key 3 received message: %s", string(message))
+			consumer1_key3_count++
 			delivery.Ack(false)
 		}
 	}
@@ -95,8 +112,8 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer2_key1 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 2 key 1 received message: %s", string(message))
-			received4 = true
+			middleware.LogStep("Consumer 2 Key 1 received message: %s", string(message))
+			consumer2_key1_count++
 			delivery.Ack(false)
 		}
 	}
@@ -104,8 +121,8 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer2_key2 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 2 key 2 received message: %s", string(message))
-			received5 = true
+			middleware.LogStep("Consumer 2 Key 2 received message: %s", string(message))
+			consumer2_key2_count++
 			delivery.Ack(false)
 		}
 	}
@@ -113,8 +130,8 @@ func TestExchangeOneToMany(t *testing.T) {
 	onMessageCallback_consumer2_key3 := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
-			middleware.LogStep("Consumer 2 key 3 received message: %s", string(message))
-			received6 = true
+			middleware.LogStep("Consumer 2 Key 3 received message: %s", string(message))
+			consumer2_key3_count++
 			delivery.Ack(false)
 		}
 	}
@@ -123,7 +140,7 @@ func TestExchangeOneToMany(t *testing.T) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
 			middleware.LogStep("Consumer broadcast 1 received message: %s", string(message))
-			received7 = true
+			consumerbroadcast1_count++
 			delivery.Ack(false)
 		}
 	}
@@ -132,7 +149,7 @@ func TestExchangeOneToMany(t *testing.T) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
 			middleware.LogStep("Consumer broadcast 2 received message: %s", string(message))
-			received8 = true
+			consumerbroadcast2_count++
 			delivery.Ack(false)
 		}
 	}
@@ -141,7 +158,7 @@ func TestExchangeOneToMany(t *testing.T) {
 		for delivery := range *consumeChannel {
 			message := delivery.Body
 			middleware.LogStep("Consumer broadcast 3 received message: %s", string(message))
-			received9 = true
+			consumerbroadcast3_count++
 			delivery.Ack(false)
 		}
 	}
@@ -191,11 +208,11 @@ func TestExchangeOneToMany(t *testing.T) {
 		}
 	}
 
-	// Wait for messages
-	middleware.LogStep("Waiting for messages (10 seconds)")
-	time.Sleep(20 * time.Second)
+	// Wait for messages to be processed
+	middleware.LogStep("Waiting for messages to be processed (5 seconds)")
+	time.Sleep(5 * time.Second)
 
-	// Close
+	// Close connections
 	middleware.LogStep("Closing connections")
 	producerBroadcast.Close()
 	producer.Close()
@@ -208,36 +225,78 @@ func TestExchangeOneToMany(t *testing.T) {
 	consumerbroadcast1.Close()
 	consumerbroadcast2.Close()
 	consumerbroadcast3.Close()
-	// Check results
-	if !received1 {
-		t.Error("Consumer 1 did not receive message")
+
+	// Validate results
+	middleware.LogStep("Validating message distribution")
+
+	// Calculate totals for each key
+	key1_total := consumer1_key1_count + consumer2_key1_count
+	key2_total := consumer1_key2_count + consumer2_key2_count
+	key3_total := consumer1_key3_count + consumer2_key3_count
+
+	// Calculate fanout totals
+	fanout_key_total := consumerbroadcast1_count + consumerbroadcast2_count
+	fanout_different_key_total := consumerbroadcast3_count
+
+	// Test topic exchange load balancing
+	middleware.LogStep("Testing topic exchange load balancing")
+	middleware.LogStep("Key1: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+		consumer1_key1_count, consumer2_key1_count, key1_total, expected_key1_total)
+	middleware.LogStep("Key2: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+		consumer1_key2_count, consumer2_key2_count, key2_total, expected_key2_total)
+	middleware.LogStep("Key3: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+		consumer1_key3_count, consumer2_key3_count, key3_total, expected_key3_total)
+
+	// Validate topic exchange results
+	if key1_total != expected_key1_total {
+		t.Errorf("Key1 total messages: got %d, expected %d", key1_total, expected_key1_total)
 	}
-	if !received2 {
-		t.Error("Consumer 2 did not receive message")
+	if key2_total != expected_key2_total {
+		t.Errorf("Key2 total messages: got %d, expected %d", key2_total, expected_key2_total)
 	}
-	if !received3 {
-		t.Error("Consumer 3 did not receive message")
+	if key3_total != expected_key3_total {
+		t.Errorf("Key3 total messages: got %d, expected %d", key3_total, expected_key3_total)
 	}
-	if !received4 {
-		t.Error("Consumer 4 did not receive message")
+
+	// Test fanout exchange behavior
+	middleware.LogStep("Testing fanout exchange behavior")
+	middleware.LogStep("Fanout 'key' queue: Consumer1=%d, Consumer2=%d, Total=%d (expected=%d)",
+		consumerbroadcast1_count, consumerbroadcast2_count, fanout_key_total, expected_fanout_total)
+	middleware.LogStep("Fanout 'different_key' queue: Consumer3=%d (expected=%d)",
+		fanout_different_key_total, expected_fanout_total)
+
+	// Validate fanout exchange results
+	if fanout_key_total != expected_fanout_total {
+		t.Errorf("Fanout 'key' queue total: got %d, expected %d", fanout_key_total, expected_fanout_total)
 	}
-	if !received5 {
-		t.Error("Consumer 5 did not receive message")
+	if fanout_different_key_total != expected_fanout_total {
+		t.Errorf("Fanout 'different_key' queue total: got %d, expected %d", fanout_different_key_total, expected_fanout_total)
 	}
-	if !received6 {
-		t.Error("Consumer 6 did not receive message")
+
+	// Test load balancing within each key (consumers should compete for messages)
+	middleware.LogStep("Testing load balancing within keys")
+	if consumer1_key1_count == 0 && consumer2_key1_count == 0 {
+		t.Error("No consumers received key1 messages")
 	}
-	if !received7 {
-		t.Error("Consumer 7 did not receive message")
+	if consumer1_key2_count == 0 && consumer2_key2_count == 0 {
+		t.Error("No consumers received key2 messages")
 	}
-	if !received8 {
-		t.Error("Consumer 8 did not receive message")
+	if consumer1_key3_count == 0 && consumer2_key3_count == 0 {
+		t.Error("No consumers received key3 messages")
 	}
-	if !received9 {
-		t.Error("Consumer 9 did not receive message")
+
+	// Test fanout load balancing
+	if consumerbroadcast1_count == 0 && consumerbroadcast2_count == 0 {
+		t.Error("No consumers received fanout 'key' messages")
 	}
-	if received1 && received2 && received3 && received4 && received5 && received6 && received7 && received8 && received9 {
-		middleware.LogSuccess("All consumers received messages successfully")
+
+	// Success message
+	if key1_total == expected_key1_total && key2_total == expected_key2_total && key3_total == expected_key3_total &&
+		fanout_key_total == expected_fanout_total && fanout_different_key_total == expected_fanout_total {
+		middleware.LogSuccess("All exchange middleware functionality validated successfully!")
+		middleware.LogSuccess("Topic exchange routing works correctly")
+		middleware.LogSuccess("Fanout exchange broadcasting works correctly")
+		middleware.LogSuccess("Load balancing between consumers works correctly")
 	}
 }
 

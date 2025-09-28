@@ -17,6 +17,14 @@ const (
 	QUIET
 )
 
+const (
+	Reset  = "\033[0m"
+	Red    = "\033[31m"
+	Green  = "\033[32m"
+	Yellow = "\033[33m"
+	Blue   = "\033[34m"
+)
+
 var currentLogLevel LogLevel = INFO
 
 // SetLogLevel sets the current logging level
@@ -64,30 +72,30 @@ func LogInfo(component, message string, args ...interface{}) {
 // LogWarn logs a warning message
 func LogWarn(component, message string, args ...interface{}) {
 	if shouldLog(WARN) {
-		fmt.Printf("[WARN] %s: %s\n", component, fmt.Sprintf(message, args...))
+		fmt.Printf("%s[WARN] %s: %s%s\n", Yellow, component, fmt.Sprintf(message, args...), Reset)
 	}
 }
 
 // LogError logs an error message
 func LogError(component, message string, args ...interface{}) {
 	if shouldLog(ERROR) {
-		fmt.Printf("[ERROR] %s: %s\n", component, fmt.Sprintf(message, args...))
+		fmt.Printf("%s[ERROR] %s: %s%s\n", Red, component, fmt.Sprintf(message, args...), Reset)
 	}
 }
 
 // LogTest logs a test-specific message (always shown)
 func LogTest(message string, args ...interface{}) {
-	fmt.Printf("🧪 %s\n", fmt.Sprintf(message, args...))
+	fmt.Printf("%s[TEST] %s%s\n", Blue, fmt.Sprintf(message, args...), Reset)
 }
 
 // LogSuccess logs a success message (always shown)
 func LogSuccess(message string, args ...interface{}) {
-	fmt.Printf("✅ %s\n", fmt.Sprintf(message, args...))
+	fmt.Printf("%s[SUCCESS] %s%s\n", Green, fmt.Sprintf(message, args...), Reset)
 }
 
 // LogFailure logs a failure message (always shown)
 func LogFailure(message string, args ...interface{}) {
-	fmt.Printf("❌ %s\n", fmt.Sprintf(message, args...))
+	fmt.Printf("%s[FAILURE] %s%s\n", Red, fmt.Sprintf(message, args...), Reset)
 }
 
 // LogStep logs a test step message (always shown)
