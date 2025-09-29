@@ -6,8 +6,10 @@ import (
 	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 func main() {
@@ -45,12 +47,21 @@ func main() {
 	fmt.Println("Query Orchestrator initialized successfully!")
 	fmt.Println("Exchanges created: filter-exchange, aggregator-exchange, join-exchange, groupby-exchange")
 
+	// Start consuming messages from data handler
 	fmt.Println("Query Orchestrator is ready to process chunks!")
 	fmt.Println("Start the worker nodes to begin processing:")
 	fmt.Println("  - Filter worker: go run workers/filter/main.go")
 	fmt.Println("  - Aggregator worker: go run workers/aggregator/main.go")
 	fmt.Println("  - Join worker: go run workers/join/main.go")
 	fmt.Println("  - GroupBy worker: go run workers/group_by/main.go")
+
+	// Start consuming messages from the data handler queue
+	fmt.Println("Starting consumer for step0-data-queue...")
+	if err := orchestrator.dataHandlerConsumer.StartConsuming(orchestrator.queryOrchestratorCallback); err != 0 {
+		fmt.Printf("Failed to start consuming messages: %v\n", err)
+		return
+	}
+	fmt.Println("Consumer started successfully!")
 
 	// Keep the orchestrator running
 	select {}
@@ -66,6 +77,8 @@ type QueryOrchestrator struct {
 
 	// Target router for determining where to send chunks
 	targetRouter *TargetRouter
+
+	dataHandlerConsumer *workerqueue.QueueConsumer
 
 	// Configuration
 	config *middleware.ConnectionConfig
@@ -121,8 +134,23 @@ func (qo *QueryOrchestrator) Initialize() middleware.MessageMiddlewareError {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
+	// Initialize Data Handler consumer
+	qo.dataHandlerConsumer = workerqueue.NewQueueConsumer(
+		"step0-data-queue",
+		qo.config,
+	)
+
+	if qo.dataHandlerConsumer == nil {
+		return middleware.MessageMiddlewareDisconnectedError
+	}
+
 	// Declare all exchanges
 	if err := qo.declareExchanges(); err != 0 {
+		return err
+	}
+
+	// Declare the data handler queue
+	if err := qo.declareDataHandlerQueue(); err != 0 {
 		return err
 	}
 
@@ -154,8 +182,31 @@ func (qo *QueryOrchestrator) declareExchanges() middleware.MessageMiddlewareErro
 	return 0
 }
 
+// declareDataHandlerQueue declares the data handler queue on RabbitMQ
+func (qo *QueryOrchestrator) declareDataHandlerQueue() middleware.MessageMiddlewareError {
+	// Create a temporary producer to declare the queue
+	queueProducer := workerqueue.NewMessageMiddlewareQueue(
+		"step0-data-queue",
+		qo.config,
+	)
+	if queueProducer == nil {
+		return middleware.MessageMiddlewareDisconnectedError
+	}
+	defer queueProducer.Close()
+
+	// Declare the queue (same parameters as data handler)
+	if err := queueProducer.DeclareQueue(true, false, false, false); err != 0 {
+		return err
+	}
+
+	fmt.Println("Data handler queue 'step0-data-queue' declared successfully")
+	return 0
+}
+
 // ProcessChunk routes a chunk message to the appropriate node based on QueryType and Step
 func (qo *QueryOrchestrator) ProcessChunk(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
+	fmt.Println("Processing chunk message: ", chunkMsg)
+
 	// Determine target based on QueryType and Step
 	target := qo.targetRouter.DetermineTarget(chunkMsg.Chunk.QueryType, chunkMsg.Chunk.Step)
 
@@ -181,6 +232,47 @@ func (qo *QueryOrchestrator) ProcessChunk(chunkMsg *chunk.ChunkMessage) middlewa
 	default:
 		return middleware.MessageMiddlewareMessageError
 	}
+}
+
+// queryOrchestratorCallback processes incoming chunk messages from the data handler
+func (qo *QueryOrchestrator) queryOrchestratorCallback(consumeChannel middleware.ConsumeChannel, done chan error) {
+	fmt.Println("Query Orchestrator: Callback function called!")
+	fmt.Println("Query Orchestrator: Starting to listen for messages...")
+	for delivery := range *consumeChannel {
+		fmt.Printf("Query Orchestrator: Received message: %s\n", string(delivery.Body))
+
+		// Deserialize the chunk message
+		_, err := deserializer.Deserialize(delivery.Body)
+		if err != nil {
+			fmt.Printf("Query Orchestrator: Failed to deserialize chunk message: %v\n", err)
+			delivery.Nack(false, true) // Reject and requeue
+			continue
+		}
+		/*
+			// Cast to ChunkMessage type
+			chunkMessage, ok := chunkMsg.(*chunk.ChunkMessage)
+			if !ok {
+				fmt.Printf("Query Orchestrator: Expected ChunkMessage, got %T\n", chunkMsg)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			fmt.Printf("Query Orchestrator: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
+				chunkMessage.Chunk.QueryType, chunkMessage.Chunk.Step, chunkMessage.Chunk.ClientID, chunkMessage.Chunk.ChunkNumber)
+
+			// Process the chunk (route to appropriate worker)
+
+				if err := qo.ProcessChunk(chunkMessage); err != 0 {
+					fmt.Printf("Query Orchestrator: Failed to process chunk: %v\n", err)
+					delivery.Nack(false, true) // Reject and requeue
+					continue
+				}
+		*/
+
+		// Acknowledge the message
+		delivery.Ack(false)
+	}
+	done <- nil
 }
 
 // Close closes all connections

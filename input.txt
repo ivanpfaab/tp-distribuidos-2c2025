@@ -1,0 +1,21 @@
+name,age,city,occupation
+John Doe,25,New York,Engineer
+Jane Smith,30,Los Angeles,Designer
+Bob Johnson,35,Chicago,Manager
+Alice Brown,28,Houston,Developer
+Charlie Wilson,32,Phoenix,Analyst
+David Lee,29,Philadelphia,Consultant
+Emma Davis,27,San Antonio,Designer
+Frank Miller,31,San Diego,Engineer
+Grace Taylor,26,Dallas,Marketing
+Henry Anderson,33,San Jose,Developer
+Isabella Thomas,24,Austin,Designer
+Jack White,36,Jacksonville,Manager
+Kate Harris,29,Fort Worth,Analyst
+Liam Martin,31,Columbus,Engineer
+Mia Garcia,28,Charlotte,Developer
+Noah Martinez,34,Seattle,Consultant
+Olivia Robinson,27,Denver,Designer
+Parker Clark,30,Washington,Manager
+Quinn Rodriguez,25,Boston,Analyst
+Riley Lewis,32,El Paso,Engineer
