@@ -14,7 +14,7 @@ COPY protocol ./protocol
 RUN go mod download
 
 # Copy source code
-COPY controller/query-orchestrator/ ./controller/query-orchestrator/
+COPY server/controller/query-orchestrator/ ./controller/query-orchestrator/
 
 # Build the application
 WORKDIR /app/controller/query-orchestrator

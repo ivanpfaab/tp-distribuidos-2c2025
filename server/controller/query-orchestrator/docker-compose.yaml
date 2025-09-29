@@ -19,8 +19,8 @@ services:
 
   query-orchestrator:
     build:
-      context: ../..
-      dockerfile: ./controller/query-orchestrator/Dockerfile
+      context: ../../..
+      dockerfile: ./server/controller/query-orchestrator/Dockerfile
     container_name: query-orchestrator
     depends_on:
       rabbitmq:
@@ -36,7 +36,7 @@ services:
   # Worker services
   filter-worker:
     build:
-      context: ../..
+      context: ../../..
       dockerfile: ./workers/filter/Dockerfile
     container_name: filter-worker
     depends_on:
@@ -51,7 +51,7 @@ services:
 
   aggregator-worker:
     build:
-      context: ../..
+      context: ../../..
       dockerfile: ./workers/aggregator/Dockerfile
     container_name: aggregator-worker
     depends_on:
@@ -66,7 +66,7 @@ services:
 
   join-worker:
     build:
-      context: ../..
+      context: ../../..
       dockerfile: ./workers/join/Dockerfile
     container_name: join-worker
     depends_on:
@@ -81,7 +81,7 @@ services:
 
   groupby-worker:
     build:
-      context: ../..
+      context: ../../..
       dockerfile: ./workers/group_by/Dockerfile
     container_name: groupby-worker
     depends_on:
