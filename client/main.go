@@ -8,7 +8,7 @@ import (
 func main() {
 	// Check if input file is provided
 	if len(os.Args) < 2 {
-		log.Fatal("Usage: ./client <input_file.txt> [server_address]")
+		log.Fatal("Usage: ./client <input_file.csv> [server_address]")
 	}
 
 	inputFile := os.Args[1]
