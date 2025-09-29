@@ -33,6 +33,10 @@ services:
       - test-network
     environment:
       - SERVER_PORT=8080
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
 
   test-runner:
     build:

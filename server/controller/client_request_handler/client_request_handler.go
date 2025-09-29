@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
@@ -34,6 +35,12 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 
 	// Start the data handler in a goroutine
 	go dataHandler.Start()
+
+	// Wait for data handler to be ready
+	// TODO: is this sleep permitted???
+	for !dataHandler.IsReady() {
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	// Keep the connection alive and process messages
 	buffer := make([]byte, 4096)

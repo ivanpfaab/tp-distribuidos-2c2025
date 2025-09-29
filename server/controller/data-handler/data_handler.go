@@ -122,6 +122,11 @@ func (dh *DataHandler) Start() {
 	select {}
 }
 
+// IsReady checks if the data handler is ready to process batches
+func (dh *DataHandler) IsReady() bool {
+	return dh.queueProducer != nil
+}
+
 // SendChunk sends a chunk message to the query orchestrator
 func (dh *DataHandler) SendChunk(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
 	// Serialize the chunk message
