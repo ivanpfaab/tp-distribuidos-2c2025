@@ -1,22 +1,4 @@
 services:
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: rabbitmq-server
-    ports:
-      - "5672:5672"   # AMQP port
-      - "15672:15672" # Management UI port
-    environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: password
-    networks:
-      - echo-network
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
   server:
     build:
       context: .
@@ -24,14 +6,12 @@ services:
     container_name: echo-server
     ports:
       - "8081:8080"   # TCP port for client connections
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
     networks:
       - echo-network
+      - shared-network
     environment:
       - SERVER_PORT=8080
-      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_HOST=rabbitmq-orchestrator
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=admin
       - RABBITMQ_PASS=password
@@ -53,3 +33,5 @@ services:
 networks:
   echo-network:
     driver: bridge
+  shared-network:
+    external: true

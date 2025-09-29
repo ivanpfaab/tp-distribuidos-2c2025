@@ -10,6 +10,7 @@ services:
       RABBITMQ_DEFAULT_PASS: password
     networks:
       - orchestrator-network
+      - shared-network
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -97,3 +98,5 @@ services:
 networks:
   orchestrator-network:
     driver: bridge
+  shared-network:
+    external: true
