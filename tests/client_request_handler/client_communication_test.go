@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	batch "tp-distribuidos-2c2025/protocol/batch"
-	"tp-distribuidos-2c2025/protocol/deserializer"
-	testing_utils "tp-distribuidos-2c2025/shared/testing"
+	batch "github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 )
 
 // TestTCPCommunication tests batch message serialization and deserialization

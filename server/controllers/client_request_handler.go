@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"tp-distribuidos-2c2025/protocol/batch"
-	"tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )

@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"testing"
 	"time"
-	"tp-distribuidos-2c2025/shared/middleware"
-	"tp-distribuidos-2c2025/shared/middleware/exchange"
-	"tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	testing_utils "tp-distribuidos-2c2025/shared/testing"
+
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 )
 
 // TestExchangeOneToMany tests 1 producer multiple consumers using exchange

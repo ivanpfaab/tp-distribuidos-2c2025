@@ -2,14 +2,15 @@ package main
 
 import (
 	"bufio"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"strings"
-	"time"
 
-	"batch"
+	"github.com/tp-distribuidos-2c2025/protocol/batch"
 )
 
 // TCPClient handles direct connection to the server
@@ -48,23 +49,6 @@ func (c *TCPClient) SendBatchMessage(batchData *batch.Batch) error {
 	return nil
 }
 
-// ReadResponse reads a response from the server
-func (c *TCPClient) ReadResponse() (string, error) {
-	// Set read timeout
-	c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-
-	// Read response
-	buffer := make([]byte, 1024)
-	n, err := c.conn.Read(buffer)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	response := string(buffer[:n])
-	log.Printf("Received response: %s", response)
-	return response, nil
-}
-
 // Close closes the connection
 func (c *TCPClient) Close() error {
 	if c.conn != nil {
@@ -73,15 +57,95 @@ func (c *TCPClient) Close() error {
 	return nil
 }
 
+// sendBatches reads CSV records, groups them into batches, and sends them.
+func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int) (int, int, error) {
+	r.FieldsPerRecord = -1 // allow variable columns
+
+	var batch []string
+	recordNum := 0
+	batchNum := 0
+
+	for {
+		rec, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return recordNum, batchNum, fmt.Errorf("CSV read error on record %d: %v", recordNum+1, err)
+		}
+		recordNum++
+
+		line := strings.Join(rec, ",")
+		batch = append(batch, line)
+
+		if len(batch) == batchSize {
+			batchNum++
+			payload := strings.Join(batch, "\n") + "\n"
+			// Create batch message
+			batchData := &batch.Batch{
+				ClientID:    "1234", // Exactly 4 bytes
+				FileID:      "5678", // Exactly 4 bytes
+				IsEOF:       strings.ToLower(payload) == "exit",
+				BatchNumber: batchNum,
+				BatchSize:   len(payload),
+				BatchData:   payload,
+			}
+
+			// Send message to server
+			err := c.SendBatchMessage(batchData)
+			if err != nil {
+				log.Printf("Failed to send message: %v", err)
+				break
+			}
+			fmt.Printf("Sent batch %d with %d records\n", batchNum, len(batch))
+			batch = batch[:0]
+		}
+	}
+
+	// Send final partial batch
+	if len(batch) > 0 {
+		batchNum++
+		payload := strings.Join(batch, "\n") + "\n"
+		// Create batch message
+		batchData := &batch.Batch{
+			ClientID:    "1234", // Exactly 4 bytes
+			FileID:      "5678", // Exactly 4 bytes
+			IsEOF:       strings.ToLower(payload) == "exit",
+			BatchNumber: batchNum,
+			BatchSize:   len(payload),
+			BatchData:   payload,
+		}
+		err := c.SendBatchMessage(batchData)
+		if err != nil {
+			return recordNum, batchNum, fmt.Errorf("failed to send final batch %d: %w", batchNum, err)
+		}
+		fmt.Printf("Sent final batch %d with %d records\n", batchNum, len(batch))
+	}
+
+	return recordNum, batchNum, nil
+}
+
+func (c *TCPClient) StartServerReader() {
+	go func() {
+		sc := bufio.NewScanner(c.conn)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			fmt.Printf("(Client) Server: %s\n", sc.Text())
+		}
+		if err := sc.Err(); err != nil && err != io.EOF {
+			log.Printf("(Client) Error reading from server: %v", err)
+		}
+	}()
+}
+
 // runClient runs the client with the given input file
 func runClient(inputFile string, serverAddr string) error {
 	// Open the input file
-	file, err := os.Open(inputFile)
+	f, err := os.Open(inputFile)
 	if err != nil {
-		return fmt.Errorf("failed to open input file: %v", err)
+		log.Fatalf("Failed to open CSV: %v", err)
 	}
-	defer file.Close()
-
+	defer f.Close()
 	// Connect to server
 	client, err := NewTCPClient(serverAddr)
 	if err != nil {
@@ -92,62 +156,16 @@ func runClient(inputFile string, serverAddr string) error {
 	fmt.Printf("Connected to server at %s\n", serverAddr)
 	fmt.Printf("Reading messages from file: %s\n", inputFile)
 
+	// Start goroutine for server responses
+	client.StartServerReader()
+
 	// Read lines from file and send to server
-	scanner := bufio.NewScanner(file)
-	lineCount := 0
-
-	for scanner.Scan() {
-		lineCount++
-		message := strings.TrimSpace(scanner.Text())
-
-		// Skip empty lines
-		if message == "" {
-			continue
-		}
-
-		fmt.Printf("Sending line %d: %s\n", lineCount, message)
-
-		// Create batch message
-		batchData := &batch.Batch{
-			ClientID:    "1234", // Exactly 4 bytes
-			FileID:      "5678", // Exactly 4 bytes
-			IsEOF:       strings.ToLower(message) == "exit",
-			BatchNumber: lineCount,
-			BatchSize:   len(message),
-			BatchData:   message,
-		}
-
-		// Send message to server
-		err = client.SendBatchMessage(batchData)
-		if err != nil {
-			log.Printf("Failed to send message: %v", err)
-			break
-		}
-
-		// Read response from server
-		response, err := client.ReadResponse()
-		if err != nil {
-			log.Printf("Failed to read response: %v", err)
-			break
-		}
-
-		fmt.Printf("Server response: %s\n", response)
-
-		// Small delay between messages
-		time.Sleep(100 * time.Millisecond)
-
-		// Check for exit command
-		if strings.ToLower(message) == "exit" {
-			fmt.Println("Exit command found, stopping...")
-			break
-		}
+	r := csv.NewReader(f)
+	sentRecords, sentBatches, err := client.sendBatches(r, 5)
+	if err != nil {
+		return fmt.Errorf("error sending batches: %w", err)
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Printf("Error reading file: %v", err)
-	}
-
-	fmt.Printf("Finished sending %d lines from file\n", lineCount)
-	fmt.Println("Client completed successfully!")
+	fmt.Printf("Finished sending. Total records: %d, Total batches: %d\n", sentRecords, sentBatches)
 	return nil
 }
