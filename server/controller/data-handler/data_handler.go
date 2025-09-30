@@ -113,13 +113,12 @@ func (dh *DataHandler) Start() {
 		log.Printf("Data Handler: Failed to initialize: %v", err)
 		return
 	}
-	defer dh.Close()
 
 	log.Printf("Data Handler: Ready to process batches for connection %s", dh.Conn.RemoteAddr())
 
-	// Keep the data handler running for this connection
-	// The actual batch processing will be done by calling ProcessBatchMessage directly
-	select {}
+	// The data handler is now ready and will be used by the client request handler
+	// The connection will be managed by the client request handler
+	// Don't close here - let the client request handler manage the lifecycle
 }
 
 // IsReady checks if the data handler is ready to process batches

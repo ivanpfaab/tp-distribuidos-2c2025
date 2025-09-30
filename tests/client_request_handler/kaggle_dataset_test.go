@@ -793,7 +793,9 @@ func TestDatasetPerformance(t *testing.T) {
 		for _, batchSize := range batchSizes {
 			t.Run(fmt.Sprintf("Records_%d_BatchSize_%d", recordCount, batchSize), func(t *testing.T) {
 				transactions := generateSimulatedTransactions(recordCount)
-				processDataset(t, transactions, fmt.Sprintf("P%d", recordCount), batchSize, 1000)
+				// Generate 4-byte FileID: P001, P002, P003, etc.
+				fileID := fmt.Sprintf("P%03d", recordCount/1000)
+				processDataset(t, transactions, fileID, batchSize, 1000)
 			})
 		}
 	}
