@@ -24,4 +24,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Client error: %v", err)
 	}
+
+	select {}
+
 }

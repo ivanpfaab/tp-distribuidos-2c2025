@@ -64,6 +64,15 @@ func testGenerateAndProcessDataset(t *testing.T) {
 	processDataset(t, transactions, fileID, batchSize, chunkSize)
 }
 
+// TestConnection holds the connection and queue for processing multiple files
+type TestConnection struct {
+	conn           net.Conn
+	consumer       *workerqueue.QueueConsumer
+	receivedChunks chan *chunk.Chunk
+	chunkCount     int
+	expectedChunks int
+}
+
 // testProcessRealDatasetFile processes all real dataset files if available
 func testProcessRealDatasetFile(t *testing.T) {
 	testing_utils.LogStep("Attempting to process all real dataset files")
@@ -102,7 +111,14 @@ func testProcessRealDatasetFile(t *testing.T) {
 
 	testing_utils.LogStep("Found %d CSV files: %v", len(csvFiles), csvFiles)
 
-	// Process each CSV file
+	// Setup single connection and queue for all files
+	testConn, err := setupTestConnection(t)
+	if err != nil {
+		t.Fatalf("Failed to setup test connection: %v", err)
+	}
+	defer testConn.cleanup()
+
+	// Process each CSV file through the same connection
 	totalRecords := 0
 	for i, csvFile := range csvFiles {
 		fileID := fmt.Sprintf("F%03d", i+1) // F001, F002, etc.
@@ -123,11 +139,245 @@ func testProcessRealDatasetFile(t *testing.T) {
 		testing_utils.LogStep("Loaded %d records from %s", len(transactions), csvFile)
 		totalRecords += len(transactions)
 
-		// Process this file's data
-		processDataset(t, transactions, fileID, 1000, 1000)
+		// Process this file's data through the existing connection
+		processDatasetWithConnection(t, testConn, transactions, fileID, 1000, 1000)
 	}
 
 	testing_utils.LogSuccess("Processed all dataset files - Total records: %d", totalRecords)
+}
+
+// setupTestConnection creates a single connection and queue for processing all files
+func setupTestConnection(t *testing.T) (*TestConnection, error) {
+	testing_utils.LogStep("Setting up test connection and queue")
+
+	// Create RabbitMQ consumer for monitoring chunks
+	config := &middleware.ConnectionConfig{
+		Host:     "rabbitmq",
+		Port:     5672,
+		Username: "admin",
+		Password: "password",
+	}
+
+	consumer := workerqueue.NewQueueConsumer("query-orchestrator-queue", config)
+	if consumer == nil {
+		return nil, fmt.Errorf("failed to create RabbitMQ consumer")
+	}
+
+	// Channel to collect received chunks
+	receivedChunks := make(chan *chunk.Chunk, 1000)
+
+	// Start consuming chunks in a goroutine
+	go func() {
+		onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
+			for delivery := range *consumeChannel {
+				// Deserialize the chunk message
+				message, err := deserializer.Deserialize(delivery.Body)
+				if err != nil {
+					testing_utils.LogStep("Failed to deserialize chunk: %v", err)
+					delivery.Ack(false)
+					continue
+				}
+
+				// Check if it's a Chunk message
+				chunkMsg, ok := message.(*chunk.Chunk)
+				if !ok {
+					testing_utils.LogStep("Received non-chunk message: %T", message)
+					delivery.Ack(false)
+					continue
+				}
+
+				// Process all chunks
+				receivedChunks <- chunkMsg
+				testing_utils.LogStep("Received chunk: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
+					chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.Step, chunkMsg.IsLastChunk)
+
+				// Acknowledge the message
+				delivery.Ack(false)
+			}
+			done <- nil
+		}
+
+		if err := consumer.StartConsuming(onMessageCallback); err != 0 {
+			testing_utils.LogStep("Failed to start consuming: %v", err)
+		}
+	}()
+
+	// Wait for consumer to start
+	testing_utils.LogStep("Waiting for consumer to start...")
+	time.Sleep(2 * time.Second)
+
+	// Connect to server
+	testing_utils.LogStep("Connecting to server")
+	conn, err := net.Dial("tcp", "server:8080")
+	if err != nil {
+		consumer.Close()
+		return nil, fmt.Errorf("test server not available: %v", err)
+	}
+
+	// Set read/write timeouts
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+
+	return &TestConnection{
+		conn:           conn,
+		consumer:       consumer,
+		receivedChunks: receivedChunks,
+		chunkCount:     0,
+		expectedChunks: 0,
+	}, nil
+}
+
+// cleanup closes the connection and consumer
+func (tc *TestConnection) cleanup() {
+	if tc.conn != nil {
+		tc.conn.Close()
+	}
+	if tc.consumer != nil {
+		tc.consumer.Close()
+	}
+	close(tc.receivedChunks)
+}
+
+// processDatasetWithConnection processes a dataset using an existing connection and queue
+func processDatasetWithConnection(t *testing.T, testConn *TestConnection, transactions []CoffeeShopTransaction, fileID string, batchSize, chunkSize int) {
+	testing_utils.LogStep("Processing dataset with existing connection - %d transactions, batch size: %d, chunk size: %d",
+		len(transactions), batchSize, chunkSize)
+
+	// Start timing
+	startTime := time.Now()
+	testing_utils.LogStep("Starting dataset processing at %s", startTime.Format("2006-01-02 15:04:05"))
+
+	// Process transactions in batches
+	totalBatches := (len(transactions) + batchSize - 1) / batchSize
+	testConn.expectedChunks += totalBatches
+
+	testing_utils.LogStep("Processing %d transactions in %d batches", len(transactions), totalBatches)
+
+	for batchNum := 0; batchNum < totalBatches; batchNum++ {
+		startIdx := batchNum * batchSize
+		endIdx := startIdx + batchSize
+		if endIdx > len(transactions) {
+			endIdx = len(transactions)
+		}
+
+		batchTransactions := transactions[startIdx:endIdx]
+		isLastBatch := batchNum == totalBatches-1
+
+		// Convert batch to CSV string
+		batchData := convertTransactionsToCSV(batchTransactions)
+
+		testing_utils.LogStep("Sending batch %d/%d (%d transactions) - Size: %d bytes",
+			batchNum+1, totalBatches, len(batchTransactions), len(batchData))
+
+		// Create batch message
+		testBatch := &batch.Batch{
+			ClientID:    "KAG", // Kaggle dataset client (max 4 bytes)
+			FileID:      fileID,
+			IsEOF:       isLastBatch,
+			BatchNumber: batchNum + 1,
+			BatchSize:   len(batchData),
+			BatchData:   batchData,
+		}
+
+		// Serialize and send
+		batchMsg := batch.NewBatchMessage(testBatch)
+		serializedData, err := batch.SerializeBatchMessage(batchMsg)
+		if err != nil {
+			t.Fatalf("Failed to serialize batch %d: %v", batchNum+1, err)
+		}
+
+		// Send batch
+		_, err = testConn.conn.Write(serializedData)
+		if err != nil {
+			t.Fatalf("Failed to send batch %d: %v", batchNum+1, err)
+		}
+
+		// Read acknowledgment
+		response := make([]byte, 1024)
+		// Update read deadline for each batch
+		testConn.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		testConn.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		n, err := testConn.conn.Read(response)
+		if err != nil {
+			testing_utils.LogStep("Failed to read response for batch %d: %v", batchNum+1, err)
+			// Try to reconnect if connection was lost
+			testing_utils.LogStep("Attempting to reconnect...")
+			testConn.conn.Close()
+			conn, err := net.Dial("tcp", "server:8080")
+			if err != nil {
+				testing_utils.LogStep("Failed to reconnect: %v", err)
+				continue
+			}
+			testConn.conn = conn
+			testConn.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			testConn.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+			testing_utils.LogStep("Reconnected successfully")
+			continue
+		}
+
+		responseStr := string(response[:n])
+		testing_utils.LogStep("Batch %d/%d processed: %s", batchNum+1, totalBatches, responseStr)
+
+		// Progress update every 10 batches
+		if (batchNum+1)%10 == 0 || isLastBatch {
+			elapsed := time.Since(startTime)
+			rate := float64(batchNum+1) / elapsed.Seconds()
+			testing_utils.LogStep("Progress: %d/%d batches (%.1f%%) - Rate: %.2f batches/sec - Elapsed: %v",
+				batchNum+1, totalBatches, float64(batchNum+1)/float64(totalBatches)*100, rate, elapsed)
+		}
+
+		// Small delay between batches
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Wait for all chunks to be processed
+	testing_utils.LogStep("Waiting for all chunks to be processed for file %s", fileID)
+
+	// Wait for chunks with timeout
+	timeout := time.After(60 * time.Second)
+	chunksReceived := 0
+	expectedChunksForFile := totalBatches
+
+	for chunksReceived < expectedChunksForFile {
+		select {
+		case chunk, ok := <-testConn.receivedChunks:
+			if !ok {
+				testing_utils.LogStep("Chunk channel closed")
+				break
+			}
+			
+			chunksReceived++
+			testConn.chunkCount++
+			testing_utils.LogStep("Received chunk %d/%d for file %s: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
+				chunksReceived, expectedChunksForFile, fileID, chunk.ClientID, chunk.ChunkNumber, chunk.Step, chunk.IsLastChunk)
+
+			// Verify chunk properties
+			if chunk.Step != 0 {
+				t.Errorf("Expected chunk step to be 0, got %d", chunk.Step)
+			}
+			if chunk.QueryType != 1 {
+				t.Errorf("Expected query type to be 1, got %d", chunk.QueryType)
+			}
+			if chunk.TableID != 1 {
+				t.Errorf("Expected table ID to be 1, got %d", chunk.TableID)
+			}
+
+		case <-timeout:
+			testing_utils.LogStep("Timeout waiting for chunks for file %s. Received %d/%d", fileID, chunksReceived, expectedChunksForFile)
+			break
+		}
+	}
+
+	if chunksReceived >= expectedChunksForFile {
+		testing_utils.LogSuccess("All expected chunks received for file %s!", fileID)
+	}
+
+	// Calculate final statistics
+	totalTime := time.Since(startTime)
+	processingRate := float64(len(transactions)) / totalTime.Seconds()
+
+	testing_utils.LogSuccess("File %s processing completed - Records: %d, Time: %v, Rate: %.2f records/sec",
+		fileID, len(transactions), totalTime, processingRate)
 }
 
 // generateSimulatedTransactions creates simulated coffee shop transaction data

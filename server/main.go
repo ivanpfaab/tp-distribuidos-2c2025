@@ -20,4 +20,6 @@ func main() {
 	if err := server.Start(port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+
+	select {}
 }
