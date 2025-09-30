@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -43,18 +44,31 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 	}
 
 	// Keep the connection alive and process messages
-	buffer := make([]byte, 4096)
 	for {
-		// Read data from client
-		n, err := conn.Read(buffer)
+		// Read the complete message by first reading the header to get the total length
+		headerBuffer := make([]byte, 7) // HeaderLength + TotalLength + MsgTypeID
+		_, err := conn.Read(headerBuffer)
 		if err != nil {
 			log.Printf("Client Request Handler: Connection %s closed: %v", conn.RemoteAddr(), err)
 			break
 		}
 
+		// Parse total length from header (bytes 2-5, big endian)
+		totalLength := int(binary.BigEndian.Uint32(headerBuffer[2:6]))
+
+		// Read the remaining message data
+		remainingData := make([]byte, totalLength-7)
+		_, err = conn.Read(remainingData)
+		if err != nil {
+			log.Printf("Client Request Handler: Failed to read complete message from %s: %v", conn.RemoteAddr(), err)
+			break
+		}
+
+		// Combine header and data
+		completeMessage := append(headerBuffer, remainingData...)
+
 		// Process the batch message directly
-		data := buffer[:n]
-		response, err := h.processBatchMessage(data, dataHandler)
+		response, err := h.processBatchMessage(completeMessage, dataHandler)
 		if err != nil {
 			log.Printf("Client Request Handler: Failed to process message from %s: %v", conn.RemoteAddr(), err)
 			response = []byte("ERROR: " + err.Error())
