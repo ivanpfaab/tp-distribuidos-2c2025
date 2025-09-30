@@ -28,13 +28,13 @@ func main() {
 	}
 	defer queryOrchestrator.Close()
 
-	// Start consuming messages from the data handler queue
-	fmt.Println("Starting consumer for step0-data-queue...")
+	// Start consuming messages from both data handler and reply queues
+	fmt.Println("Starting consumers for step0-data-queue and orchestrator-reply-queue...")
 	if err := queryOrchestrator.StartConsuming(); err != 0 {
 		fmt.Printf("Failed to start consuming messages: %v\n", err)
 		return
 	}
-	fmt.Println("Consumer started successfully!")
+	fmt.Println("Both consumers started successfully!")
 
 	// Keep the orchestrator running
 	select {}
