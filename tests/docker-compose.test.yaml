@@ -50,6 +50,8 @@ services:
         condition: service_started
     networks:
       - test-network
+    volumes:
+      - ../data:/app/data:ro  # Mount dataset as read-only
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
       LOG_LEVEL: "info"  # Set log level for cleaner output

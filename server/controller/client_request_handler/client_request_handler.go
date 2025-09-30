@@ -37,27 +37,49 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 	// Start the data handler in a goroutine
 	go dataHandler.Start()
 
-	// Wait for data handler to be ready
-	// TODO: is this sleep permitted???
-	for !dataHandler.IsReady() {
-		time.Sleep(10 * time.Millisecond)
-	}
+	// Don't wait for data handler to be ready - start processing messages immediately
+	// The data handler will be ready by the time we need to process the first batch
 
 	// Keep the connection alive and process messages
 	for {
-		// Read the complete message by first reading the header to get the total length
-		headerBuffer := make([]byte, 7) // HeaderLength + TotalLength + MsgTypeID
+		// Set a read timeout for each message
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
+		// Read the complete header (7 bytes: HeaderLength + TotalLength + MsgTypeID)
+		headerBuffer := make([]byte, 7)
 		_, err := conn.Read(headerBuffer)
 		if err != nil {
 			log.Printf("Client Request Handler: Connection %s closed: %v", conn.RemoteAddr(), err)
 			break
 		}
 
-		// Parse total length from header (bytes 2-5, big endian)
+		// Parse header components
+		headerLength := int(binary.BigEndian.Uint16(headerBuffer[0:2]))
 		totalLength := int(binary.BigEndian.Uint32(headerBuffer[2:6]))
+		msgTypeID := int(headerBuffer[6])
+
+		// Log raw bytes for debugging
+		log.Printf("Client Request Handler: Raw header bytes - [%02x %02x %02x %02x %02x %02x %02x]",
+			headerBuffer[0], headerBuffer[1], headerBuffer[2], headerBuffer[3],
+			headerBuffer[4], headerBuffer[5], headerBuffer[6])
+
+		// Log header information for debugging
+		log.Printf("Client Request Handler: Header info - HeaderLength: %d, TotalLength: %d, MsgTypeID: %d",
+			headerLength, totalLength, msgTypeID)
+
+		// Basic validation to prevent panic
+		if totalLength < 7 || totalLength > 10*1024*1024 { // Reasonable bounds (10MB max)
+			log.Printf("Client Request Handler: Invalid total length %d, closing connection", totalLength)
+			break
+		}
+
+		// Calculate remaining data size
+		remainingDataSize := totalLength - 7 // totalLength - headerLength(2) - totalLength(4) - msgTypeID(1)
+		log.Printf("Client Request Handler: Reading remaining data - Size: %d bytes", remainingDataSize)
 
 		// Read the remaining message data
-		remainingData := make([]byte, totalLength-7)
+		remainingData := make([]byte, remainingDataSize)
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		_, err = conn.Read(remainingData)
 		if err != nil {
 			log.Printf("Client Request Handler: Failed to read complete message from %s: %v", conn.RemoteAddr(), err)
@@ -87,6 +109,11 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 
 // processBatchMessage processes a batch message and returns a response
 func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *datahandler.DataHandler) ([]byte, error) {
+	// Wait for data handler to be ready if it's not already
+	for !dataHandler.IsReady() {
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	// Deserialize the message
 	message, err := deserializer.Deserialize(data)
 	if err != nil {
