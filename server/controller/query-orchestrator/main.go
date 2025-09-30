@@ -204,22 +204,25 @@ func (qo *QueryOrchestrator) declareDataHandlerQueue() middleware.MessageMiddlew
 }
 
 // ProcessChunk routes a chunk message to the appropriate node based on QueryType and Step
-func (qo *QueryOrchestrator) ProcessChunk(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
-	fmt.Println("Processing chunk message: ", chunkMsg)
+func (qo *QueryOrchestrator) ProcessChunk(rawChunk *chunk.Chunk) middleware.MessageMiddlewareError {
+	fmt.Println("Processing chunk: ", rawChunk)
 
 	// Determine target based on QueryType and Step
-	target := qo.targetRouter.DetermineTarget(chunkMsg.Chunk.QueryType, chunkMsg.Chunk.Step)
+	target := qo.targetRouter.DetermineTarget(rawChunk.QueryType, rawChunk.Step)
 
 	fmt.Println("Target: ", target)
 
+	chunkMsg := chunk.NewChunkMessage(rawChunk)
+
 	// Serialize the chunk message
-	messageData, err := chunk.SerializeChunkMessage(chunkMsg)
+	_, err := chunk.SerializeChunkMessage(chunkMsg)
 	if err != nil {
 		return middleware.MessageMiddlewareMessageError
 	}
-	fmt.Println("MessageData: ", messageData)
+	//fmt.Println("MessageData: ", messageData)
 
 	// Route to appropriate producer
+	/*
 	switch target {
 	case "filter":
 		return qo.filterProducer.Send(messageData, []string{"filter"})
@@ -232,6 +235,8 @@ func (qo *QueryOrchestrator) ProcessChunk(chunkMsg *chunk.ChunkMessage) middlewa
 	default:
 		return middleware.MessageMiddlewareMessageError
 	}
+	*/
+	return 0
 }
 
 // queryOrchestratorCallback processes incoming chunk messages from the data handler
@@ -242,32 +247,21 @@ func (qo *QueryOrchestrator) queryOrchestratorCallback(consumeChannel middleware
 		fmt.Printf("Query Orchestrator: Received message: %s\n", string(delivery.Body))
 
 		// Deserialize the chunk message
-		_, err := deserializer.Deserialize(delivery.Body)
+		chunkFromMsg, err := deserializer.Deserialize(delivery.Body)
 		if err != nil {
 			fmt.Printf("Query Orchestrator: Failed to deserialize chunk message: %v\n", err)
 			delivery.Nack(false, true) // Reject and requeue
 			continue
 		}
-		/*
-			// Cast to ChunkMessage type
-			chunkMessage, ok := chunkMsg.(*chunk.ChunkMessage)
-			if !ok {
-				fmt.Printf("Query Orchestrator: Expected ChunkMessage, got %T\n", chunkMsg)
-				delivery.Nack(false, true) // Reject and requeue
-				continue
-			}
 
-			fmt.Printf("Query Orchestrator: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
-				chunkMessage.Chunk.QueryType, chunkMessage.Chunk.Step, chunkMessage.Chunk.ClientID, chunkMessage.Chunk.ChunkNumber)
+		advancedChunk := chunk.AdvanceChunkStep(chunkFromMsg.(*chunk.Chunk))
 
-			// Process the chunk (route to appropriate worker)
-
-				if err := qo.ProcessChunk(chunkMessage); err != 0 {
-					fmt.Printf("Query Orchestrator: Failed to process chunk: %v\n", err)
-					delivery.Nack(false, true) // Reject and requeue
-					continue
-				}
-		*/
+		// Process the chunk (route to appropriate worker)
+		if err := qo.ProcessChunk(advancedChunk); err != 0 {
+			fmt.Printf("Query Orchestrator: Failed to process chunk: %v\n", err)
+			delivery.Nack(false, true) // Reject and requeue
+			continue
+		}
 
 		// Acknowledge the message
 		delivery.Ack(false)
