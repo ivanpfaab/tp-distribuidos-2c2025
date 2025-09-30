@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	batchpkg "github.com/tp-distribuidos-2c2025/protocol/batch"
 )
@@ -165,6 +166,9 @@ func runClient(inputFile string, serverAddr string) error {
 	if err != nil {
 		return fmt.Errorf("error sending batches: %w", err)
 	}
+
+	sleep := time.After(10 * time.Second)
+	<-sleep
 
 	fmt.Printf("Finished sending. Total records: %d, Total batches: %d\n", sentRecords, sentBatches)
 	return nil
