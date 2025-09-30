@@ -27,8 +27,6 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 			return "filter"
 		case 3:
 			return "filter"
-		case 4:
-			return "aggregator"
 		}
 	case 2:
 		switch step {
