@@ -9,9 +9,8 @@ import (
 	"net"
 	"os"
 	"strings"
-	"time"
 
-	batchpkg "github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/protocol/batch"
 )
 
 // TCPClient handles direct connection to the server
@@ -30,10 +29,10 @@ func NewTCPClient(serverAddr string) (*TCPClient, error) {
 }
 
 // SendBatchMessage sends a batch message to the server
-func (c *TCPClient) SendBatchMessage(batchData *batchpkg.Batch) error {
+func (c *TCPClient) SendBatchMessage(batchData *batch.Batch) error {
 	// Create batch message and serialize
-	batchMsg := batchpkg.NewBatchMessage(batchData)
-	serializedData, err := batchpkg.SerializeBatchMessage(batchMsg)
+	batchMsg := batch.NewBatchMessage(batchData)
+	serializedData, err := batch.SerializeBatchMessage(batchMsg)
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch message: %w", err)
 	}
@@ -83,7 +82,7 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int) (int, int, error) 
 			batchNum++
 			payload := strings.Join(batch, "\n") + "\n"
 			// Create batch message
-			batchData := &batchpkg.Batch{
+			batchData := &batch.Batch{
 				ClientID:    "1234", // Exactly 4 bytes
 				FileID:      "5678", // Exactly 4 bytes
 				IsEOF:       strings.ToLower(payload) == "exit",
@@ -108,7 +107,7 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int) (int, int, error) 
 		batchNum++
 		payload := strings.Join(batch, "\n") + "\n"
 		// Create batch message
-		batchData := &batchpkg.Batch{
+		batchData := &batch.Batch{
 			ClientID:    "1234", // Exactly 4 bytes
 			FileID:      "5678", // Exactly 4 bytes
 			IsEOF:       strings.ToLower(payload) == "exit",
@@ -166,9 +165,6 @@ func runClient(inputFile string, serverAddr string) error {
 	if err != nil {
 		return fmt.Errorf("error sending batches: %w", err)
 	}
-
-	sleep := time.After(10 * time.Second)
-	<-sleep
 
 	fmt.Printf("Finished sending. Total records: %d, Total batches: %d\n", sentRecords, sentBatches)
 	return nil

@@ -75,8 +75,3 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 		ChunkData:   chunkData,
 	}, nil
 }
-
-func AdvanceChunkStep(chunk *Chunk) *Chunk {
-	chunk.Step++
-	return chunk
-}

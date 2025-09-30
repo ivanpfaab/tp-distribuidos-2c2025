@@ -43,7 +43,7 @@ func NewDataHandlerForConnection(conn net.Conn, config *middleware.ConnectionCon
 func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 	// Initialize queue producer for sending chunks to query orchestrator
 	dh.queueProducer = workerqueue.NewMessageMiddlewareQueue(
-		"step0-data-queue",
+		"query-orchestrator-queue",
 		dh.config,
 	)
 	if dh.queueProducer == nil {

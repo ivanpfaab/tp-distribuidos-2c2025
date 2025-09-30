@@ -13,11 +13,11 @@ COPY protocol ./protocol
 # Download dependencies
 RUN go mod download
 
-# Copy the entire server directory to maintain proper import paths
-COPY server/ ./server/
+# Copy source code
+COPY controller/query-orchestrator/ ./controller/query-orchestrator/
 
 # Build the application
-WORKDIR /app/server/controller/query-orchestrator
+WORKDIR /app/controller/query-orchestrator
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 RUN chmod +x ./main
 
@@ -30,7 +30,7 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/server/controller/query-orchestrator/ .
+COPY --from=builder /app/controller/query-orchestrator/ .
 RUN chmod +x ./main
 
 # Run the application
