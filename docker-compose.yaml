@@ -1,4 +1,24 @@
 services:
+  # Infrastructure
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-orchestrator
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Core application
   server:
     build:
       context: .
@@ -6,12 +26,14 @@ services:
     container_name: echo-server
     ports:
       - "8081:8080"   # TCP port for client connections
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     networks:
-      - echo-network
-      - shared-network
+      - app-network
     environment:
       - SERVER_PORT=8080
-      - RABBITMQ_HOST=rabbitmq-orchestrator
+      - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=admin
       - RABBITMQ_PASS=password
@@ -25,13 +47,111 @@ services:
       server:
         condition: service_started
     networks:
-      - echo-network
+      - app-network
     volumes:
       - ./input.txt:/app/input.txt
     command: ["./main", "/app/input.txt", "echo-server:8080"]
 
+  # Query orchestration
+  query-orchestrator:
+    build:
+      context: .
+      dockerfile: ./server/controller/query-orchestrator/Dockerfile
+    container_name: query-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  # Worker services
+  filter-worker:
+    build:
+      context: .
+      dockerfile: ./workers/filter/Dockerfile
+    container_name: filter-worker
+    depends_on:
+      - query-orchestrator
+    networks:
+      - app-network
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  aggregator-worker:
+    build:
+      context: .
+      dockerfile: ./workers/aggregator/Dockerfile
+    container_name: aggregator-worker
+    depends_on:
+      - query-orchestrator
+    networks:
+      - app-network
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  join-worker:
+    build:
+      context: .
+      dockerfile: ./workers/join/Dockerfile
+    container_name: join-worker
+    depends_on:
+      - query-orchestrator
+    networks:
+      - app-network
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  groupby-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/Dockerfile
+    container_name: groupby-worker
+    depends_on:
+      - query-orchestrator
+    networks:
+      - app-network
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  # Testing (optional, can be run with profile)
+  test-runner:
+    build:
+      context: .
+      dockerfile: ./tests/Dockerfile
+    container_name: test-runner
+    profiles: ["test"]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    networks:
+      - app-network
+    environment:
+      RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
+      LOG_LEVEL: "info"
+      GOMAXPROCS: "1"
+    command: ["go", "test", "-v", "./..."]
+    stdin_open: true
+    tty: true
+
 networks:
-  echo-network:
+  app-network:
     driver: bridge
-  shared-network:
-    external: true
