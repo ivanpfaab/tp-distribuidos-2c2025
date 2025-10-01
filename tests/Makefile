@@ -36,6 +36,13 @@ test-protocol:
 	@echo "Running protocol tests..."
 	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/protocol/...
 
+# Clean up
+clean:
+	@echo "Cleaning up..."
+	docker compose down -v
+	docker system prune -f
+
+
 # Help
 help:
 	@echo "Available targets:"

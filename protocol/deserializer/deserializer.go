@@ -2,9 +2,10 @@ package deserializer
 
 import (
 	"fmt"
-	"tp-distribuidos-2c2025/protocol/batch"
-	"tp-distribuidos-2c2025/protocol/chunk"
-	"tp-distribuidos-2c2025/protocol/common"
+
+	"github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
 
 // MessageHeader represents the common header structure for all message types

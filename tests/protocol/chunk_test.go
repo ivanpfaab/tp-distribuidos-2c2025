@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	chunk "tp-distribuidos-2c2025/protocol/chunk"
-	common "tp-distribuidos-2c2025/protocol/common"
+	chunk "github.com/tp-distribuidos-2c2025/protocol/chunk"
+	common "github.com/tp-distribuidos-2c2025/protocol/common"
 )
 
 func TestNewChunk(t *testing.T) {

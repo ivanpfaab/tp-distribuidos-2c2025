@@ -4,20 +4,46 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
+	"os"
+	"strconv"
 
-	"tp-distribuidos-2c2025/protocol/batch"
-	"tp-distribuidos-2c2025/protocol/deserializer"
+	client_request_handler "github.com/tp-distribuidos-2c2025/server/controller/client_request_handler"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
 // TCPServer handles direct client connections
 type TCPServer struct {
-	listener net.Listener
+	listener             net.Listener
+	clientRequestHandler *client_request_handler.ClientRequestHandler
 }
 
 // NewTCPServer creates a new TCP server
 func NewTCPServer(port string) *TCPServer {
-	return &TCPServer{}
+	// Get configuration from environment variables or use defaults
+	host := getEnv("RABBITMQ_HOST", "localhost")
+	portStr := getEnv("RABBITMQ_PORT", "5672")
+	portInt, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Printf("Invalid RabbitMQ port: %v", err)
+		portInt = 5672
+	}
+	username := getEnv("RABBITMQ_USER", "admin")
+	password := getEnv("RABBITMQ_PASS", "password")
+
+	// Create connection configuration
+	config := &middleware.ConnectionConfig{
+		Host:     host,
+		Port:     portInt,
+		Username: username,
+		Password: password,
+	}
+
+	// Create client request handler
+	clientRequestHandler := client_request_handler.NewClientRequestHandler(config)
+
+	return &TCPServer{
+		clientRequestHandler: clientRequestHandler,
+	}
 }
 
 // Start starts the TCP server
@@ -38,77 +64,9 @@ func (s *TCPServer) Start(port string) error {
 			continue
 		}
 
-		// Handle each connection in a goroutine
-		go s.handleConnection(conn)
+		// Handle each connection in a goroutine using the client request handler
+		go s.clientRequestHandler.HandleConnection(conn)
 	}
-}
-
-// handleConnection handles a single client connection
-func (s *TCPServer) handleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	log.Printf("New client connected: %s", conn.RemoteAddr())
-
-	// Create a buffer to read data
-	buffer := make([]byte, 4096)
-
-	for {
-		// Set read timeout
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-
-		// Read data from client
-		n, err := conn.Read(buffer)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				log.Printf("Client %s timed out", conn.RemoteAddr())
-			} else {
-				log.Printf("Client %s disconnected: %v", conn.RemoteAddr(), err)
-			}
-			break
-		}
-
-		// Process the received data
-		data := buffer[:n]
-		response, err := s.processBatchMessage(data)
-		if err != nil {
-			log.Printf("Failed to process message from %s: %v", conn.RemoteAddr(), err)
-			response = []byte("ERROR: " + err.Error())
-		}
-
-		// Send response back to client
-		_, err = conn.Write(response)
-		if err != nil {
-			log.Printf("Failed to send response to %s: %v", conn.RemoteAddr(), err)
-			break
-		}
-
-		log.Printf("Sent response to %s: %s", conn.RemoteAddr(), string(response))
-	}
-}
-
-// processBatchMessage processes a batch message and returns a response
-func (s *TCPServer) processBatchMessage(data []byte) ([]byte, error) {
-	// Deserialize the message
-	message, err := deserializer.Deserialize(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize message: %w", err)
-	}
-
-	// Check if it's a Batch message (only type we handle)
-	batchMsg, ok := message.(*batch.Batch)
-	if !ok {
-		return nil, fmt.Errorf("expected batch message, got %T", message)
-	}
-
-	// Log the received batch
-	log.Printf("Received batch - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
-		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.BatchData)
-
-	// Create acknowledgment response
-	response := fmt.Sprintf("ACK: Batch received - ClientID: %s, FileID: %s, BatchNumber: %d",
-		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
-
-	return []byte(response), nil
 }
 
 // Stop stops the TCP server
@@ -117,4 +75,12 @@ func (s *TCPServer) Stop() error {
 		return s.listener.Close()
 	}
 	return nil
+}
+
+// Helper function to get environment variable with default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

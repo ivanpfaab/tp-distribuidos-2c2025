@@ -2,7 +2,8 @@ package chunk
 
 import (
 	"encoding/binary"
-	"tp-distribuidos-2c2025/protocol/common"
+
+	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
 
 type Chunk struct {
@@ -73,4 +74,9 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 		Step:        step,
 		ChunkData:   chunkData,
 	}, nil
+}
+
+func AdvanceChunkStep(chunk *Chunk) *Chunk {
+	chunk.Step++
+	return chunk
 }
