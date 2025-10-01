@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"encoding/csv"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -89,39 +88,22 @@ func sendBatches(conn net.Conn, r *csv.Reader, batchSize int) (int, int, error) 
 }
 
 func main() {
-	batchSize := flag.Int("batch", 10, "Number of CSV records per batch")
-	addr := flag.String("addr", "server:8080", "Server address host:port")
-	flag.Parse()
-
-	if flag.NArg() < 1 {
-		log.Fatal("Usage: ./client [-batch N] [-addr host:port] <input.csv>")
+	// Check if input file is provided
+	if len(os.Args) < 2 {
+		log.Fatal("Usage: ./client <input_file.txt> [server_address]")
 	}
-	inputFile := flag.Arg(0)
 
-	f, err := os.Open(inputFile)
+	inputFile := os.Args[1]
+
+	// Get server address from command line or use default
+	serverAddr := "localhost:8080"
+	if len(os.Args) >= 3 {
+		serverAddr = os.Args[2]
+	}
+
+	// Run the client
+	err := runClient(inputFile, serverAddr)
 	if err != nil {
-		log.Fatalf("Failed to open CSV: %v", err)
+		log.Fatalf("Client error: %v", err)
 	}
-	defer f.Close()
-
-	conn, err := net.Dial("tcp", *addr)
-	if err != nil {
-		log.Fatalf("Failed to connect to server: %v", err)
-	}
-	defer conn.Close()
-
-	fmt.Printf("Connected to %s\n", *addr)
-	fmt.Printf("Reading CSV: %s | batch size: %d\n", inputFile, *batchSize)
-
-	// Start goroutine for server responses
-	startServerReader(conn)
-
-	// Read CSV and send batches
-	r := csv.NewReader(f)
-	records, batches, err := sendBatches(conn, r, *batchSize)
-	if err != nil {
-		log.Fatalf("Transmission error: %v", err)
-	}
-
-	fmt.Printf("Finished sending %d record(s) in %d batch(es)\n", records, batches)
 }
