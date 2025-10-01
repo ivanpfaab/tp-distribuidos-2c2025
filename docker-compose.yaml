@@ -1,15 +1,14 @@
 services:
+  # Infrastructure
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: rabbitmq-server
+    container_name: rabbitmq-orchestrator
     ports:
       - "5672:5672"   # AMQP port
       - "15672:15672" # Management UI port
     environment:
       RABBITMQ_DEFAULT_USER: admin
       RABBITMQ_DEFAULT_PASS: password
-    networks:
-      - echo-network
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -17,6 +16,7 @@ services:
       retries: 5
       start_period: 30s
 
+  # Core application (data flow services)
   server:
     build:
       context: .
@@ -27,10 +27,25 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-    networks:
-      - echo-network
+      query-orchestrator:
+        condition: service_healthy
+      filter-worker:
+        condition: service_started
+      aggregator-worker:
+        condition: service_started
+      join-worker:
+        condition: service_started
+      groupby-worker:
+        condition: service_started
+      streaming-service:
+        condition: service_started
     environment:
       - SERVER_PORT=8080
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+    profiles: ["data-flow"]
 
   client:
     build:
@@ -40,12 +55,126 @@ services:
     depends_on:
       server:
         condition: service_started
-    networks:
-      - echo-network
     volumes:
       - ./input.txt:/app/input.txt
     command: ["./main", "/app/input.txt", "echo-server:8080"]
+    profiles: ["data-flow"]
 
-networks:
-  echo-network:
-    driver: bridge
+  # Query orchestration
+  query-orchestrator:
+    build:
+      context: .
+      dockerfile: ./server/controller/query-orchestrator/Dockerfile
+    container_name: query-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    healthcheck:
+      test: ["CMD", "pgrep", "main"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles: ["orchestration"]
+
+  # Worker services
+  filter-worker:
+    build:
+      context: .
+      dockerfile: ./workers/filter/Dockerfile
+    container_name: filter-worker
+    depends_on:
+      query-orchestrator:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  aggregator-worker:
+    build:
+      context: .
+      dockerfile: ./workers/aggregator/Dockerfile
+    container_name: aggregator-worker
+    depends_on:
+      query-orchestrator:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  join-worker:
+    build:
+      context: .
+      dockerfile: ./workers/join/Dockerfile
+    container_name: join-worker
+    depends_on:
+      query-orchestrator:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  groupby-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/Dockerfile
+    container_name: groupby-worker
+    depends_on:
+      query-orchestrator:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Streaming service
+  streaming-service:
+    build:
+      context: .
+      dockerfile: ./stream/Dockerfile
+    container_name: streaming-service
+    depends_on:
+      query-orchestrator:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Testing (optional, can be run with profile)
+  test-runner:
+    build:
+      context: .
+      dockerfile: ./tests/Dockerfile
+    container_name: test-runner
+    profiles: ["test"]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    environment:
+      RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
+      LOG_LEVEL: "info"
+      GOMAXPROCS: "1"
+    command: ["go", "test", "-v", "./..."]
+    stdin_open: true
+    tty: true

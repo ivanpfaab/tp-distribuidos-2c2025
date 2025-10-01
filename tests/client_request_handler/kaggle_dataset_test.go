@@ -345,7 +345,7 @@ func processDatasetWithConnection(t *testing.T, testConn *TestConnection, transa
 				testing_utils.LogStep("Chunk channel closed")
 				break
 			}
-			
+
 			chunksReceived++
 			testConn.chunkCount++
 			testing_utils.LogStep("Received chunk %d/%d for file %s: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
