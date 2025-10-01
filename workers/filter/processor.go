@@ -1,4 +1,4 @@
-package main
+package filter
 
 import (
 	"fmt"
@@ -10,6 +10,46 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
+
+func filterQueryType1(step int, line string) bool {
+	fields := strings.Split(line, ",")
+	if len(fields) < 9 {
+		fmt.Printf("Filter Worker: Malformed record (expected at least 9 fields): %s\n", line)
+		return false
+	}
+
+	ts := strings.TrimSpace(fields[8])
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.Local)
+	if err != nil {
+		fmt.Printf("Filter Worker: Failed to parse timestamp '%s': %v\n", ts, err)
+		return false
+	}
+	amm, err := strconv.Atoi(strings.TrimSpace(fields[8]))
+	if err != nil {
+		fmt.Printf("Filter Worker: Failed to parse integer from field[8] '%s': %v\n", fields[8], err)
+		return false
+	}
+	pass := false
+	switch step {
+	case 1:
+		// Keep only records from 2024 or 2025
+		y := t.Year()
+		pass = (y == 2024 || y == 2025)
+
+	case 2:
+		// Keep records between 06:00 and 23:00 inclusive
+		hr := t.Hour()
+		pass = (hr >= 6 && hr <= 23)
+
+	case 3:
+		// Keep records with ammount >= 75
+		pass = amm >= 75
+	default:
+
+		pass = false
+	}
+	return pass
+}
 
 // processMessage processes a single message
 func (fw *FilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
@@ -36,47 +76,11 @@ func (fw *FilterWorker) processMessage(delivery amqp.Delivery) middleware.Messag
 		for _, line := range chunkMsg.ChunkData {
 
 			lineStr := string(line)
-			fields := strings.Split(lineStr, ",")
-			if len(fields) < 9 {
-				fmt.Printf("Filter Worker: Malformed record (expected at least 9 fields): %s\n", lineStr)
-				continue
-			}
-
-			ts := strings.TrimSpace(fields[8])
-			t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.Local)
-			if err != nil {
-				fmt.Printf("Filter Worker: Failed to parse timestamp '%s': %v\n", ts, err)
-				continue
-			}
-			amm, err := strconv.Atoi(strings.TrimSpace(fields[8]))
-			if err != nil {
-				fmt.Printf("Filter Worker: Failed to parse integer from field[8] '%s': %v\n", fields[8], err)
-				continue
-			}
-			pass := false
-			switch chunkMsg.Step {
-			case 1:
-				// Keep only records from 2024 or 2025
-				y := t.Year()
-				pass = (y == 2024 || y == 2025)
-
-			case 2:
-				// Keep records between 06:00 and 23:00 inclusive
-				hr := t.Hour()
-				pass = (hr >= 6 && hr <= 23)
-
-			case 3:
-				// Keep records with ammount >= 75
-				pass = amm >= 75
-			default:
-
-				pass = false
-			}
-
+			pass := filterQueryType1(chunkMsg.Step, lineStr)
 			if pass {
 				responseBuilder.WriteString(lineStr)
 				responseBuilder.WriteByte('\n')
-				responseSize += len(lineStr) + 1
+				responseSize += 1
 			}
 		}
 	}
