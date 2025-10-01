@@ -20,6 +20,7 @@ type ProducerInterface interface {
 	SendToAggregator(data []byte) middleware.MessageMiddlewareError
 	SendToJoin(data []byte) middleware.MessageMiddlewareError
 	SendToGroupBy(data []byte) middleware.MessageMiddlewareError
+	SendToStreaming(data []byte) middleware.MessageMiddlewareError
 }
 
 // NewMessageHandler creates a new MessageHandler instance
@@ -57,6 +58,8 @@ func (mh *MessageHandler) ProcessChunk(rawChunk *chunk.Chunk) middleware.Message
 		return mh.producers.SendToJoin(messageData)
 	case "groupby":
 		return mh.producers.SendToGroupBy(messageData)
+	case "streaming":
+		return mh.producers.SendToStreaming(messageData)
 	default:
 		return middleware.MessageMiddlewareMessageError
 	}

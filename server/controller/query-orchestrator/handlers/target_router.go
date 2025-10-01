@@ -27,6 +27,8 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 			return "filter"
 		case 3:
 			return "filter"
+		case 4:
+			return "streaming"
 		}
 	case 2:
 		switch step {
@@ -40,6 +42,8 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 			return "filter"
 		case 5:
 			return "join"
+		case 6:
+			return "streaming"
 		}
 	case 3:
 		switch step {
@@ -53,6 +57,8 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 			return "groupby"
 		case 5:
 			return "join"
+		case 6:
+			return "streaming"
 		}
 	case 4:
 		switch step {
@@ -64,6 +70,8 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 			return "filter"
 		case 4:
 			return "join"
+		case 5:
+			return "streaming"
 		}
 	}
 

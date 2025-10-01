@@ -130,6 +130,22 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
 
+  # Streaming service
+  streaming-service:
+    build:
+      context: .
+      dockerfile: ./stream/Dockerfile
+    container_name: streaming-service
+    depends_on:
+      - query-orchestrator
+    networks:
+      - app-network
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
   # Testing (optional, can be run with profile)
   test-runner:
     build:

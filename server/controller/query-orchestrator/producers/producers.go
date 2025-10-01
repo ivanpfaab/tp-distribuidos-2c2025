@@ -11,6 +11,7 @@ type Producers struct {
 	AggregatorProducer *exchange.ExchangeMiddleware
 	JoinProducer       *exchange.ExchangeMiddleware
 	GroupByProducer    *exchange.ExchangeMiddleware
+	StreamingProducer  *exchange.ExchangeMiddleware
 }
 
 // NewProducers creates a new Producers instance
@@ -60,6 +61,16 @@ func (p *Producers) Initialize(config *middleware.ConnectionConfig) middleware.M
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
+	// Initialize Streaming producer
+	p.StreamingProducer = exchange.NewMessageMiddlewareExchange(
+		"streaming-exchange",
+		[]string{"streaming"},
+		config,
+	)
+	if p.StreamingProducer == nil {
+		return middleware.MessageMiddlewareDisconnectedError
+	}
+
 	return 0
 }
 
@@ -82,6 +93,11 @@ func (p *Producers) DeclareExchanges() middleware.MessageMiddlewareError {
 
 	// Declare Group By exchange
 	if err := p.GroupByProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
+		return err
+	}
+
+	// Declare Streaming exchange
+	if err := p.StreamingProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
 		return err
 	}
 
@@ -116,6 +132,12 @@ func (p *Producers) Close() middleware.MessageMiddlewareError {
 		}
 	}
 
+	if p.StreamingProducer != nil {
+		if err := p.StreamingProducer.Close(); err != 0 {
+			lastErr = err
+		}
+	}
+
 	return lastErr
 }
 
@@ -137,4 +159,9 @@ func (p *Producers) SendToJoin(data []byte) middleware.MessageMiddlewareError {
 // SendToGroupBy sends a message to the groupby exchange
 func (p *Producers) SendToGroupBy(data []byte) middleware.MessageMiddlewareError {
 	return p.GroupByProducer.Send(data, []string{"groupby"})
+}
+
+// SendToStreaming sends a message to the streaming exchange
+func (p *Producers) SendToStreaming(data []byte) middleware.MessageMiddlewareError {
+	return p.StreamingProducer.Send(data, []string{"streaming"})
 }
