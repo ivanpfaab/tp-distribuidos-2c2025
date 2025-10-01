@@ -1,45 +1,43 @@
 package workers
 
 import (
+	"os"
 	"testing"
-	"time"
 
-	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
-	"github.com/tp-distribuidos-2c2025/workers/filter"
-
+	"github.com/stretchr/testify/assert"
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
+	"github.com/tp-distribuidos-2c2025/workers/filter"
 )
 
+const InputSize = 21
+
 func TestWorkerFilter(t *testing.T) {
-
 	testing_utils.InitLogger()
-	testing_utils.LogTest("Testing Exchange One-to-One pattern")
+	testing_utils.LogTest("Testing Filter")
 
-	// Init connection
-	config := &middleware.ConnectionConfig{
-		URL: "amqp://admin:password@rabbitmq:5672/",
-	}
-	err := middleware.WaitForConnection(config, 10, 2*time.Second)
+	// Read input csv
+	inputData, err := os.ReadFile("test_input.csv")
 	if err != nil {
-		t.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		t.Fatalf("Failed to read input file: %v", err)
 	}
-	testing_utils.LogStep("Connected to RabbitMQ")
-
-	// Init middleware
-	testing_utils.LogStep("Creating exchange producer and consumer")
-	producer := exchange.NewMessageMiddlewareExchange("filter-exchange", []string{"test.key"}, config)
-	filterWorker, err := filter.NewFilterWorker(config)
-
-	if producer == nil || filterWorker == nil {
-		t.Fatal("Failed to create middleware")
+	testing_utils.LogStep("Input data: %s", string(inputData))
+	result, filterErr := filter.FilterLogic(1, chunk.QueryType1, string(inputData))
+	if filterErr != 0 {
+		t.Errorf("FilterLogic returned error: %v", filterErr)
+	}
+	testing_utils.LogStep("FilterLogic result: %s", result.ChunkData)
+	if len(result.ChunkData) == 0 {
+		t.Errorf("FilterLogic returned empty result")
 	}
 
-	// Declare exchange
-	testing_utils.LogStep("Declaring exchange")
-	errCode := producer.DeclareExchange("topic", true, false, false, false)
-	if errCode != 0 {
-		t.Fatalf("Failed to declare exchange: %v", errCode)
+	// Read expected output
+	expectedData, err := os.ReadFile("test_expected.csv")
+	if err != nil {
+		t.Fatalf("Failed to read expected output file: %v", err)
 	}
+
+	// Compare result with expected output
+	assert.Equal(t, string(expectedData), result.ChunkData)
 
 }

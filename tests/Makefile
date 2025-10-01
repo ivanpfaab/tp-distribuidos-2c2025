@@ -36,6 +36,10 @@ test-protocol:
 	@echo "Running protocol tests..."
 	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/protocol/...
 
+test-filter:
+	@echo "Running filter worker tests..."
+	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/workers/filter_test.go
+
 # Clean up
 clean:
 	@echo "Cleaning up..."
