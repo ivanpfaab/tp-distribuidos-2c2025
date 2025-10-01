@@ -170,7 +170,7 @@ func testDataHandlerChunkProcessing(t *testing.T) {
 	}
 
 	// Create consumer for query orchestrator queue
-	consumer := workerqueue.NewQueueConsumer("query-orchestrator-queue", config)
+	consumer := workerqueue.NewQueueConsumer("step0-data-queue", config)
 	if consumer == nil {
 		t.Skipf("Skipping test - failed to create RabbitMQ consumer")
 		return
