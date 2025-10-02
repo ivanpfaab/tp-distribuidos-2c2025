@@ -70,9 +70,10 @@ func (sw *StreamingWorker) handleFinalFilteringQuery(chunkData *chunk.Chunk) mid
 			clientID, chunkData.QueryType)
 
 		// Process final filtering based on query type
-		if chunkData.QueryType == 2 {
+		switch chunkData.QueryType {
+		case 2:
 			sw.processQuery2FinalFiltering(clientID)
-		} else if chunkData.QueryType == 4 {
+		case 4:
 			sw.processQuery4FinalFiltering(clientID)
 		}
 
@@ -169,9 +170,9 @@ func (sw *StreamingWorker) processQuery2FinalFiltering(clientID string) {
 	}
 }
 
-// processQuery4FinalFiltering processes Query 4 final filtering: Top 3 users with most transactions
+// processQuery4FinalFiltering processes Query 4 final filtering: Top 3 users with most transactions per store
 func (sw *StreamingWorker) processQuery4FinalFiltering(clientID string) {
-	fmt.Printf("Streaming Worker: Processing Query 4 final filtering for client %s\n", clientID)
+	fmt.Printf("Streaming Worker: ===== ENTERING processQuery4FinalFiltering for client %s =====\n", clientID)
 
 	// Combine all chunks
 	var allData strings.Builder
@@ -201,50 +202,72 @@ func (sw *StreamingWorker) processQuery4FinalFiltering(clientID string) {
 
 	// Skip header row
 	dataRecords := records[1:]
+	fmt.Printf("Streaming Worker: Processing %d data records (excluding header)\n", len(dataRecords))
 
-	// Aggregate transactions by user_id
-	userTransactions := make(map[string]int) // user_id -> total_count
+	// Group by store_id and find top 3 users per store
+	// Data is already grouped by user_id and store_id, so we need to find max count per user per store
+	storeUsers := make(map[string]map[string]int) // store_id -> user_id -> max_count
 
 	for _, record := range dataRecords {
 		if len(record) < 3 {
+			fmt.Printf("Streaming Worker: Skipping record with insufficient columns: %v\n", record)
 			continue
 		}
 
 		userID := record[0]   // user_id column
+		storeID := record[1]  // store_id column
 		countStr := record[2] // count column
 
 		count, err := strconv.Atoi(countStr)
 		if err != nil {
+			fmt.Printf("Streaming Worker: Error parsing count '%s' for user %s, store %s: %v\n", countStr, userID, storeID, err)
 			continue
 		}
 
-		userTransactions[userID] += count
-	}
-
-	// Convert to slice and sort by transaction count
-	type userCount struct {
-		userID string
-		count  int
-	}
-
-	var users []userCount
-	for userID, count := range userTransactions {
-		users = append(users, userCount{userID: userID, count: count})
-	}
-
-	// Sort by count (descending)
-	sort.Slice(users, func(i, j int) bool {
-		return users[i].count > users[j].count
-	})
-
-	// Print top 3 users
-	fmt.Printf("Q4 | user_id,total_transactions\n")
-	for i, user := range users {
-		if i >= 3 {
-			break
+		// Initialize store map if it doesn't exist
+		if storeUsers[storeID] == nil {
+			storeUsers[storeID] = make(map[string]int)
 		}
-		fmt.Printf("Q4 | %s,%d\n", user.userID, user.count)
+
+		// Keep the maximum count for this user in this store
+		if count > storeUsers[storeID][userID] {
+			storeUsers[storeID][userID] = count
+		}
 	}
+
+	fmt.Printf("Streaming Worker: Found data for %d stores\n", len(storeUsers))
+
+	// Process each store and find top 3 users
+	for storeID, users := range storeUsers {
+		fmt.Printf("Streaming Worker: Processing store %s with %d users\n", storeID, len(users))
+
+		// Convert to slice and sort by count
+		type userCount struct {
+			userID string
+			count  int
+		}
+
+		var userCounts []userCount
+		for userID, count := range users {
+			userCounts = append(userCounts, userCount{userID: userID, count: count})
+		}
+
+		// Sort by count (descending)
+		sort.Slice(userCounts, func(i, j int) bool {
+			return userCounts[i].count > userCounts[j].count
+		})
+
+		// Print top 3 users for this store
+		fmt.Printf("Q4 | Store %s | user_id,count\n", storeID)
+		for i, user := range userCounts {
+			if i >= 3 {
+				break
+			}
+			fmt.Printf("Q4 | Store %s | %s,%d\n", storeID, user.userID, user.count)
+		}
+	}
+
+	fmt.Printf("Streaming Worker: ===== COMPLETED processQuery4FinalFiltering for client %s =====\n", clientID)
 }
 
 // findTopItemByQuantity finds the item with highest quantity in a month
