@@ -24,14 +24,14 @@ docker-compose-up: ## Start all services in proper order
 	@echo "Waiting for RabbitMQ to be healthy..."
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
 	@echo "2. Starting Query Orchestrator..."
-	docker compose --profile orchestration up -d query-orchestrator
+	docker compose --profile orchestration up -d --build query-orchestrator
 	@echo "Waiting for Query Orchestrator to be healthy..."
 	@echo "3. Starting Workers..."
-	docker compose --profile orchestration up -d filter-worker aggregator-worker join-worker groupby-worker streaming-service
+	docker compose --profile orchestration up -d --build filter-worker aggregator-worker join-worker groupby-worker streaming-service
 	@echo "4. Starting Server..."
-	docker compose --profile orchestration --profile data-flow up -d server
+	docker compose --profile orchestration --profile data-flow up -d --build server
 	@echo "5. Starting Client..."
-	docker compose --profile orchestration --profile data-flow up -d client
+	docker compose --profile orchestration --profile data-flow up -d --build client
 	@echo "All services started successfully!"
 
 # Quick start (alternative - starts all at once with dependencies)

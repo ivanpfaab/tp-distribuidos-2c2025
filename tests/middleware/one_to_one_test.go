@@ -114,7 +114,7 @@ func TestWorkerQueueOneToOne(t *testing.T) {
 
 	// Declare queue
 	testing_utils.LogStep("Declaring queue")
-	errCode := producer.DeclareQueue(true, false, false, false)
+	errCode := producer.DeclareQueue(false, false, false, false)
 	if errCode != 0 {
 		t.Fatalf("Failed to declare queue: %v", errCode)
 	}
