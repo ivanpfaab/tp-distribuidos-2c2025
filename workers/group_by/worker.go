@@ -8,15 +8,17 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
-// GroupByWorker encapsulates the group by worker state and dependencies
-type GroupByWorker struct {
+// GroupByWorkerService encapsulates the group by worker service with distributed architecture
+type GroupByWorkerService struct {
 	consumer      *exchange.ExchangeConsumer
 	replyProducer *workerqueue.QueueMiddleware
 	config        *middleware.ConnectionConfig
+	orchestrator  *GroupByOrchestrator
+	numWorkers    int
 }
 
-// NewGroupByWorker creates a new GroupByWorker instance
-func NewGroupByWorker(config *middleware.ConnectionConfig) (*GroupByWorker, error) {
+// NewGroupByWorkerService creates a new GroupByWorkerService instance
+func NewGroupByWorkerService(config *middleware.ConnectionConfig, numWorkers int) (*GroupByWorkerService, error) {
 	// Create group by consumer
 	consumer := exchange.NewExchangeConsumer(
 		GroupByExchangeName,
@@ -44,36 +46,51 @@ func NewGroupByWorker(config *middleware.ConnectionConfig) (*GroupByWorker, erro
 		return nil, fmt.Errorf("failed to declare reply queue: %v", err)
 	}
 
-	return &GroupByWorker{
+	// Create the distributed orchestrator
+	orchestrator := NewGroupByOrchestrator(numWorkers)
+
+	return &GroupByWorkerService{
 		consumer:      consumer,
 		replyProducer: replyProducer,
 		config:        config,
+		orchestrator:  orchestrator,
+		numWorkers:    numWorkers,
 	}, nil
 }
 
-// Start starts the group by worker
-func (gbw *GroupByWorker) Start() middleware.MessageMiddlewareError {
-	fmt.Println("GroupBy Worker: Starting to listen for messages...")
-	return gbw.consumer.StartConsuming(gbw.createCallback())
+// Start starts the group by worker service
+func (gbws *GroupByWorkerService) Start() middleware.MessageMiddlewareError {
+	fmt.Printf("GroupBy Worker Service: Starting with %d workers\n", gbws.numWorkers)
+
+	// Start the distributed orchestrator
+	gbws.orchestrator.Start()
+
+	// Start listening for messages from RabbitMQ
+	fmt.Println("GroupBy Worker Service: Starting to listen for messages...")
+	return gbws.consumer.StartConsuming(gbws.createCallback())
 }
 
 // Close closes all connections
-func (gbw *GroupByWorker) Close() {
-	if gbw.consumer != nil {
-		gbw.consumer.Close()
+func (gbws *GroupByWorkerService) Close() {
+	// Stop the orchestrator
+	gbws.orchestrator.Stop()
+
+	// Close RabbitMQ connections
+	if gbws.consumer != nil {
+		gbws.consumer.Close()
 	}
-	if gbw.replyProducer != nil {
-		gbw.replyProducer.Close()
+	if gbws.replyProducer != nil {
+		gbws.replyProducer.Close()
 	}
 }
 
 // createCallback creates the message processing callback
-func (gbw *GroupByWorker) createCallback() func(middleware.ConsumeChannel, chan error) {
+func (gbws *GroupByWorkerService) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		fmt.Println("GroupBy Worker: Starting to listen for messages...")
+		fmt.Println("GroupBy Worker Service: Starting to listen for messages...")
 		for delivery := range *consumeChannel {
-			if err := gbw.processMessage(delivery); err != 0 {
-				fmt.Printf("GroupBy Worker: Failed to process message: %v\n", err)
+			if err := gbws.processMessage(delivery); err != 0 {
+				fmt.Printf("GroupBy Worker Service: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
 			}
