@@ -3,7 +3,7 @@ package main
 import "fmt"
 
 const (
-	DefaultNumWorkers = 4 // Default number of parallel workers
+	DefaultNumWorkers = 2 // Default number of parallel workers
 )
 
 func main() {

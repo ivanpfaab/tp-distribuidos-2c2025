@@ -72,7 +72,12 @@ func FilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMiddlewa
 	switch chunkMsg.QueryType {
 	case chunk.QueryType1:
 		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Skip header row (first line) and process data rows
+		// Include header row for consistency
+		if len(lines) > 0 && lines[0] != "" {
+			responseBuilder.WriteString(lines[0])
+			responseBuilder.WriteByte('\n')
+		}
+		// Process data rows
 		for i, l := range lines {
 			if i == 0 || l == "" {
 				continue
@@ -86,7 +91,12 @@ func FilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMiddlewa
 		}
 	case chunk.QueryType2:
 		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Skip header row (first line) and process data rows
+		// Include header row for Group By compatibility
+		if len(lines) > 0 && lines[0] != "" {
+			responseBuilder.WriteString(lines[0])
+			responseBuilder.WriteByte('\n')
+		}
+		// Process data rows
 		for i, l := range lines {
 			if i == 0 || l == "" {
 				continue
@@ -100,7 +110,12 @@ func FilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMiddlewa
 		}
 	case chunk.QueryType3:
 		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Skip header row (first line) and process data rows
+		// Include header row for Group By compatibility
+		if len(lines) > 0 && lines[0] != "" {
+			responseBuilder.WriteString(lines[0])
+			responseBuilder.WriteByte('\n')
+		}
+		// Process data rows
 		for i, l := range lines {
 			if i == 0 || l == "" {
 				continue
@@ -114,7 +129,12 @@ func FilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMiddlewa
 		}
 	case chunk.QueryType4:
 		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Skip header row (first line) and process data rows
+		// Include header row for Group By compatibility
+		if len(lines) > 0 && lines[0] != "" {
+			responseBuilder.WriteString(lines[0])
+			responseBuilder.WriteByte('\n')
+		}
+		// Process data rows
 		for i, l := range lines {
 			if i == 0 || l == "" {
 				continue

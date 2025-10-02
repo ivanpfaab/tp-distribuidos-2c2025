@@ -38,7 +38,7 @@ func NewFilterWorker(config *middleware.ConnectionConfig) (*FilterWorker, error)
 	}
 
 	// Declare the reply queue
-	if err := replyProducer.DeclareQueue(true, false, false, false); err != 0 {
+	if err := replyProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
 		replyProducer.Close()
 		return nil, fmt.Errorf("failed to declare reply queue: %v", err)

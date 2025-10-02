@@ -29,6 +29,10 @@ type GroupByOrchestrator struct {
 	reducerChannel  chan *chunk.Chunk
 	done            chan bool
 	wg              sync.WaitGroup
+
+	// Query-specific coordination
+	queryCompletion map[string]int // key: "queryType_clientID", value: completed workers count
+	queryMutex      sync.RWMutex   // protects queryCompletion map
 }
 
 // NewGroupByOrchestrator creates a new orchestrator with RabbitMQ integration
@@ -84,6 +88,9 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 		partialChannels: partialChannels,
 		reducerChannel:  reducerChannel,
 		done:            make(chan bool),
+
+		// Query-specific coordination
+		queryCompletion: make(map[string]int),
 	}
 
 	// Create workers
@@ -220,8 +227,8 @@ func (gbo *GroupByOrchestrator) processMessage(delivery amqp.Delivery) middlewar
 
 // waitForResult waits for the final result from the distributed processing
 func (gbo *GroupByOrchestrator) waitForResult(originalChunk *chunk.Chunk) {
-	fmt.Printf("GroupBy Orchestrator: Waiting for result for ClientID: %s, ChunkNumber: %d\n",
-		originalChunk.ClientID, originalChunk.ChunkNumber)
+	fmt.Printf("GroupBy Orchestrator: Waiting for result for ClientID: %s, QueryType: %d, ChunkNumber: %d\n",
+		originalChunk.ClientID, originalChunk.QueryType, originalChunk.ChunkNumber)
 
 	// Listen for results from the reducer
 	for resultChunk := range gbo.reducerChannel {
@@ -231,9 +238,15 @@ func (gbo *GroupByOrchestrator) waitForResult(originalChunk *chunk.Chunk) {
 				resultChunk.ClientID, resultChunk.QueryType, resultChunk.Step, resultChunk.ChunkNumber, len(resultChunk.ChunkData), resultChunk.IsLastChunk)
 			fmt.Printf("GroupBy Orchestrator: FINAL RESULT DATA:\n%s\n", resultChunk.ChunkData)
 
-			// Send the result back to the query orchestrator
-			gbo.sendReply(resultChunk)
-			break
+			// Only send reply if the result has actual data (Size > 0)
+			// This prevents sending empty results that come from completion signals
+			if len(resultChunk.ChunkData) > 0 {
+				fmt.Printf("GroupBy Orchestrator: Sending reply with actual data (Size: %d)\n", len(resultChunk.ChunkData))
+				gbo.sendReply(resultChunk)
+				break
+			} else {
+				fmt.Printf("GroupBy Orchestrator: Ignoring empty result, waiting for data...\n")
+			}
 		}
 	}
 }
@@ -277,9 +290,39 @@ func (gbo *GroupByOrchestrator) ProcessChunk(chunk *chunk.Chunk) {
 		fmt.Printf("\033[35m[ORCHESTRATOR] QUEUED CHUNK %d (after delay)\033[0m\n", chunk.ChunkNumber)
 	}
 
-	// Note: We don't immediately signal completion here anymore
-	// The orchestrator will wait for explicit FinishProcessing() call
-	// This allows multiple queries to be processed simultaneously
+	// If this is the last chunk for this query, send completion signals to all workers
+	if chunk.IsLastChunk {
+		gbo.sendQueryCompletionSignals(chunk)
+	}
+}
+
+// sendQueryCompletionSignals sends completion signals to all workers for a specific query
+func (gbo *GroupByOrchestrator) sendQueryCompletionSignals(chunkMsg *chunk.Chunk) {
+	fmt.Printf("\033[35m[ORCHESTRATOR] SENDING COMPLETION SIGNALS - QueryType: %d, ClientID: %s\033[0m\n",
+		chunkMsg.QueryType, chunkMsg.ClientID)
+
+	// Create completion signal chunk (ChunkNumber = -1 indicates completion)
+	completionChunk := chunk.NewChunk(
+		chunkMsg.ClientID,
+		chunkMsg.FileID,
+		chunkMsg.QueryType,
+		-1,   // Special value indicating query completion
+		true, // IsLastChunk
+		chunkMsg.Step,
+		0, // ChunkSize
+		chunkMsg.TableID,
+		"", // ChunkData
+	)
+
+	// Send completion signal to all workers
+	for i := 0; i < gbo.numWorkers; i++ {
+		select {
+		case gbo.chunkQueue <- completionChunk:
+			fmt.Printf("\033[35m[ORCHESTRATOR] SENT COMPLETION SIGNAL to worker %d\033[0m\n", i)
+		default:
+			fmt.Printf("\033[35m[ORCHESTRATOR] WARNING - Could not send completion signal to worker %d\033[0m\n", i)
+		}
+	}
 }
 
 // FinishProcessing signals that all chunks have been sent and workers should finish

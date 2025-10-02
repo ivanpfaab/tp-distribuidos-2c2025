@@ -16,6 +16,7 @@ type QueryReducerState struct {
 	clientID        string
 	expectedResults int
 	receivedResults int
+	processed       bool // Track if this query has been processed
 }
 
 // GroupByReducer collects results from all partial reducers and applies final reduction
@@ -91,6 +92,7 @@ func (gbr *GroupByReducer) listenToPartialReducer(partialChannel <-chan *chunk.C
 				clientID:        resultChunk.ClientID,
 				expectedResults: len(gbr.partialChannels),
 				receivedResults: 0,
+				processed:       false,
 			}
 			fmt.Printf("\033[32m[FINAL REDUCER] INITIALIZED - QueryType: %d, Step: %d, ClientID: %s\033[0m\n",
 				resultChunk.QueryType, resultChunk.Step, resultChunk.ClientID)
@@ -108,9 +110,11 @@ func (gbr *GroupByReducer) listenToPartialReducer(partialChannel <-chan *chunk.C
 		fmt.Printf("\033[32m[FINAL REDUCER] COLLECTED - From Partial %d (%d/%d) - Lines: %d, Total: %d for QueryType %d\033[0m\n",
 			reducerID, gbr.queryStates[queryKey].receivedResults, gbr.queryStates[queryKey].expectedResults, len(lines), len(gbr.queryStates[queryKey].collectedData), resultChunk.QueryType)
 
-		// Check if we have received all expected results for this query
-		if gbr.queryStates[queryKey].receivedResults >= gbr.queryStates[queryKey].expectedResults {
+		// Check if we have received all expected results for this query and haven't processed it yet
+		if gbr.queryStates[queryKey].receivedResults >= gbr.queryStates[queryKey].expectedResults && !gbr.queryStates[queryKey].processed {
 			fmt.Printf("\033[32m[FINAL REDUCER] Received all %d results for query %s, applying final reduction\033[0m\n", gbr.queryStates[queryKey].expectedResults, queryKey)
+			// Mark as processed to prevent multiple processing
+			gbr.queryStates[queryKey].processed = true
 			// Apply final reduction for this specific query without holding the mutex to avoid deadlock
 			go gbr.applyFinalReductionForQuery(queryKey, gbr.queryStates[queryKey])
 		}

@@ -59,13 +59,13 @@ func (qo *QueryOrchestrator) Initialize() middleware.MessageMiddlewareError {
 
 // StartConsuming starts consuming messages from both the data handler queue and reply queue in parallel
 func (qo *QueryOrchestrator) StartConsuming() middleware.MessageMiddlewareError {
-	// Start data handler consumer
-	if err := qo.consumers.DataHandlerConsumer.StartConsuming(qo.messageHandler.QueryOrchestratorCallback); err != 0 {
+	// Start data handler consumer with separate callback
+	if err := qo.consumers.DataHandlerConsumer.StartConsuming(qo.messageHandler.DataHandlerCallback); err != 0 {
 		return err
 	}
 
-	// Start reply consumer
-	if err := qo.consumers.ReplyConsumer.StartConsuming(qo.messageHandler.QueryOrchestratorCallback); err != 0 {
+	// Start reply consumer with separate callback
+	if err := qo.consumers.ReplyConsumer.StartConsuming(qo.messageHandler.ReplyCallback); err != 0 {
 		return err
 	}
 

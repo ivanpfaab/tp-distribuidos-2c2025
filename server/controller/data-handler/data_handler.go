@@ -55,7 +55,7 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 	}
 
 	// Declare the producer queue
-	if err := dh.queueProducer.DeclareQueue(true, false, false, false); err != 0 {
+	if err := dh.queueProducer.DeclareQueue(false, false, false, false); err != 0 {
 		return err
 	}
 
@@ -69,7 +69,7 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 	}
 
 	// Declare the writer producer queue
-	if err := dh.writerProducer.DeclareQueue(true, false, false, false); err != 0 {
+	if err := dh.writerProducer.DeclareQueue(false, false, false, false); err != 0 {
 		return err
 	}
 

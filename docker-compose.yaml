@@ -31,8 +31,6 @@ services:
         condition: service_healthy
       filter-worker:
         condition: service_started
-      aggregator-worker:
-        condition: service_started
       join-worker:
         condition: service_started
       groupby-worker:
@@ -90,21 +88,6 @@ services:
       context: .
       dockerfile: ./workers/filter/Dockerfile
     container_name: filter-worker
-    depends_on:
-      query-orchestrator:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
-  aggregator-worker:
-    build:
-      context: .
-      dockerfile: ./workers/aggregator/Dockerfile
-    container_name: aggregator-worker
     depends_on:
       query-orchestrator:
         condition: service_healthy
