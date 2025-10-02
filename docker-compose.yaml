@@ -56,8 +56,8 @@ services:
       server:
         condition: service_started
     volumes:
-      - ./input.txt:/app/input.txt
-    command: ["./main", "/app/input.txt", "echo-server:8080"]
+      - ./data:/app/data
+    command: ["./main", "/app/data", "echo-server:8080"]
     profiles: ["data-flow"]
 
   # Query orchestration

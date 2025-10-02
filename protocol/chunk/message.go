@@ -17,6 +17,7 @@ const (
 const (
 	MessageType     = 2
 	ClientIDSize    = 4
+	FileIDSize      = 4
 	QueryTypeSize   = 1
 	TableIDSize     = 1
 	ChunkSizeSize   = 8
@@ -42,7 +43,7 @@ func NewChunkMessage(chunk *Chunk) *ChunkMessage {
 }
 
 func SerializeChunkMessage(msg *ChunkMessage) ([]byte, error) {
-	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + ClientIDSize + QueryTypeSize + TableIDSize + ChunkSizeSize + ChunkNumberSize + IsLastChunkSize + StepSize
+	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + ClientIDSize + FileIDSize + QueryTypeSize + TableIDSize + ChunkSizeSize + ChunkNumberSize + IsLastChunkSize + StepSize
 
 	totalLength := headerLength + len(msg.Chunk.ChunkData)
 
@@ -65,6 +66,12 @@ func SerializeChunkMessage(msg *ChunkMessage) ([]byte, error) {
 	}
 	copy(buf[offset:], []byte(msg.Chunk.ClientID))
 	offset += ClientIDSize
+
+	if len(msg.Chunk.FileID) > FileIDSize {
+		return nil, fmt.Errorf("file_id too long: %d bytes, max %d", len(msg.Chunk.FileID), FileIDSize)
+	}
+	copy(buf[offset:], []byte(msg.Chunk.FileID))
+	offset += FileIDSize
 
 	buf[offset] = msg.Chunk.QueryType
 	offset += QueryTypeSize
