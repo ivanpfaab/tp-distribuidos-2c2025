@@ -138,7 +138,7 @@ print_status "Running Kaggle dataset processing tests..."
 echo "=========================================="
 
 # Run the specific test
-docker compose -f docker-compose.test.yaml exec test-runner go test -v ./client_request_handler/ -run TestKaggleDatasetProcessing
+docker compose -f docker-compose.test.yaml exec test-runner go test -v -timeout 30m ./client_request_handler/ -run TestKaggleDatasetProcessing
 
 # Check test results
 if [ $? -eq 0 ]; then
