@@ -12,6 +12,10 @@ type StreamingWorker struct {
 	consumer       *exchange.ExchangeConsumer
 	config         *middleware.ConnectionConfig
 	printedSchemas map[string]bool // Track which queries have had their schema printed
+	// For final filtering that requires all chunks
+	collectedChunks map[string][]string // clientID -> []chunkData
+	chunkCounts     map[string]int      // clientID -> total chunks expected
+	receivedCounts  map[string]int      // clientID -> chunks received
 }
 
 // NewStreamingWorker creates a new StreamingWorker instance
@@ -27,9 +31,12 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 	}
 
 	return &StreamingWorker{
-		consumer:       consumer,
-		config:         config,
-		printedSchemas: make(map[string]bool),
+		consumer:        consumer,
+		config:          config,
+		printedSchemas:  make(map[string]bool),
+		collectedChunks: make(map[string][]string),
+		chunkCounts:     make(map[string]int),
+		receivedCounts:  make(map[string]int),
 	}, nil
 }
 
