@@ -30,9 +30,12 @@ type GroupByOrchestrator struct {
 	done            chan bool
 	wg              sync.WaitGroup
 
+	// EOS signaling components
+	eosSignalIn    chan EOSMessage
+	eosTransmitter *EOSTransmitter
+
 	// Query-specific coordination
 	queryCompletion map[string]int // key: "queryType_clientID", value: completed workers count
-	queryMutex      sync.RWMutex   // protects queryCompletion map
 }
 
 // NewGroupByOrchestrator creates a new orchestrator with RabbitMQ integration
@@ -75,6 +78,9 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 		partialChannels[i] = make(chan *chunk.Chunk)
 	}
 
+	// Create EOS signaling channel
+	eosSignalIn := make(chan EOSMessage, numWorkers)
+
 	orchestrator := &GroupByOrchestrator{
 		// RabbitMQ components
 		consumer:      consumer,
@@ -89,6 +95,9 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 		reducerChannel:  reducerChannel,
 		done:            make(chan bool),
 
+		// EOS signaling components
+		eosSignalIn: eosSignalIn,
+
 		// Query-specific coordination
 		queryCompletion: make(map[string]int),
 	}
@@ -96,7 +105,8 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 	// Create workers
 	orchestrator.workers = make([]*GroupByWorker, numWorkers)
 	for i := 0; i < numWorkers; i++ {
-		orchestrator.workers[i] = NewGroupByWorker(i, chunkQueue, workerChannels[i])
+		eosChannel := orchestrator.eosTransmitter.GetWorkerChannel(i)
+		orchestrator.workers[i] = NewGroupByWorker(i, chunkQueue, workerChannels[i], eosChannel, orchestrator.eosTransmitter)
 	}
 
 	// Create partial reducers
@@ -107,6 +117,9 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 
 	// Create final reducer
 	orchestrator.reducer = NewGroupByReducer(partialChannels, reducerChannel)
+
+	// Create EOS transmitter
+	orchestrator.eosTransmitter = NewEOSTransmitter(eosSignalIn, numWorkers)
 
 	return orchestrator, nil
 }
@@ -138,6 +151,13 @@ func (gbo *GroupByOrchestrator) Start() middleware.MessageMiddlewareError {
 	go func() {
 		defer gbo.wg.Done()
 		gbo.reducer.Start()
+	}()
+
+	// Start EOS transmitter
+	gbo.wg.Add(1)
+	go func() {
+		defer gbo.wg.Done()
+		gbo.eosTransmitter.Start()
 	}()
 
 	// Start listening for messages from RabbitMQ (if consumer is available)
@@ -290,39 +310,9 @@ func (gbo *GroupByOrchestrator) ProcessChunk(chunk *chunk.Chunk) {
 		fmt.Printf("\033[35m[ORCHESTRATOR] QUEUED CHUNK %d (after delay)\033[0m\n", chunk.ChunkNumber)
 	}
 
-	// If this is the last chunk for this query, send completion signals to all workers
-	if chunk.IsLastChunk {
-		gbo.sendQueryCompletionSignals(chunk)
-	}
-}
-
-// sendQueryCompletionSignals sends completion signals to all workers for a specific query
-func (gbo *GroupByOrchestrator) sendQueryCompletionSignals(chunkMsg *chunk.Chunk) {
-	fmt.Printf("\033[35m[ORCHESTRATOR] SENDING COMPLETION SIGNALS - QueryType: %d, ClientID: %s\033[0m\n",
-		chunkMsg.QueryType, chunkMsg.ClientID)
-
-	// Create completion signal chunk (ChunkNumber = -1 indicates completion)
-	completionChunk := chunk.NewChunk(
-		chunkMsg.ClientID,
-		chunkMsg.FileID,
-		chunkMsg.QueryType,
-		-1,   // Special value indicating query completion
-		true, // IsLastChunk
-		chunkMsg.Step,
-		0, // ChunkSize
-		chunkMsg.TableID,
-		"", // ChunkData
-	)
-
-	// Send completion signal to all workers
-	for i := 0; i < gbo.numWorkers; i++ {
-		select {
-		case gbo.chunkQueue <- completionChunk:
-			fmt.Printf("\033[35m[ORCHESTRATOR] SENT COMPLETION SIGNAL to worker %d\033[0m\n", i)
-		default:
-			fmt.Printf("\033[35m[ORCHESTRATOR] WARNING - Could not send completion signal to worker %d\033[0m\n", i)
-		}
-	}
+	// Note: EOS signals are now sent by workers when they process the last chunk
+	// This avoids race conditions where workers might receive EOS signals before
+	// they finish processing all chunks from the shared queue
 }
 
 // FinishProcessing signals that all chunks have been sent and workers should finish
