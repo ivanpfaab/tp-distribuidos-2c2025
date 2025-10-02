@@ -69,10 +69,12 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 
 		for _, l := range strings.Split(data, "\n") {
 
-			lineStr := string(l)
-			pass := filterYearAndHour(lineStr, 8) && filterAmmount(lineStr, 7)
+			if l == "" {
+				continue
+			}
+			pass := filterYearAndHour(l, 8) && filterAmmount(l, 7)
 			if pass {
-				responseBuilder.WriteString(lineStr)
+				responseBuilder.WriteString(l)
 				responseBuilder.WriteByte('\n')
 				responseSize += 1
 			}
@@ -81,10 +83,12 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 
 		for _, l := range strings.Split(data, "\n") {
 
-			lineStr := string(l)
-			pass := filterYear(lineStr, 6)
+			if l == "" {
+				continue
+			}
+			pass := filterYear(l, 5)
 			if pass {
-				responseBuilder.WriteString(lineStr)
+				responseBuilder.WriteString(l)
 				responseBuilder.WriteByte('\n')
 				responseSize += 1
 			}
@@ -92,10 +96,12 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 	case chunk.QueryType3:
 		for _, l := range strings.Split(data, "\n") {
 
-			lineStr := string(l)
-			pass := filterYearAndHour(lineStr, 8)
+			if l == "" {
+				continue
+			}
+			pass := filterYearAndHour(l, 8)
 			if pass {
-				responseBuilder.WriteString(lineStr)
+				responseBuilder.WriteString(l)
 				responseBuilder.WriteByte('\n')
 				responseSize += 1
 			}
@@ -103,10 +109,12 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 	case chunk.QueryType4:
 		for _, l := range strings.Split(data, "\n") {
 
-			lineStr := string(l)
-			pass := filterYear(lineStr, 8)
+			if l == "" {
+				continue
+			}
+			pass := filterYear(l, 8)
 			if pass {
-				responseBuilder.WriteString(lineStr)
+				responseBuilder.WriteString(l)
 				responseBuilder.WriteByte('\n')
 				responseSize += 1
 			}
