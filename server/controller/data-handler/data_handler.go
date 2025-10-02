@@ -80,7 +80,8 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	// Create chunk from batch
 	chunkObj := chunk.NewChunk(
 		batchMsg.ClientID,       // clientID
-		1,                       // queryType (hardcoded for now)
+		batchMsg.FileID,        // fileID
+		2,                       // queryType (hardcoded for now)
 		batchMsg.BatchNumber,    // chunkNumber
 		batchMsg.IsEOF,          // isLastChunk
 		0,                       // step (hardcoded to 0 as requested)

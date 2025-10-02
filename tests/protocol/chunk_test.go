@@ -13,6 +13,7 @@ import (
 
 func TestNewChunk(t *testing.T) {
 	clientID := "1234"
+	fileID := "0001"
 	queryType := uint8(1)
 	chunkNumber := 5
 	isLastChunk := true
@@ -21,9 +22,10 @@ func TestNewChunk(t *testing.T) {
 	tableID := 3
 	chunkData := "test chunk data"
 
-	c := chunk.NewChunk(clientID, queryType, chunkNumber, isLastChunk, step, chunkSize, tableID, chunkData)
+	c := chunk.NewChunk(clientID, fileID, queryType, chunkNumber, isLastChunk, step, chunkSize, tableID, chunkData)
 
 	assert.Equal(t, clientID, c.ClientID)
+	assert.Equal(t, fileID, c.FileID)
 	assert.Equal(t, queryType, c.QueryType)
 	assert.Equal(t, chunkNumber, c.ChunkNumber)
 	assert.Equal(t, isLastChunk, c.IsLastChunk)
@@ -35,6 +37,7 @@ func TestNewChunk(t *testing.T) {
 
 func TestNewChunkMessage(t *testing.T) {
 	clientID := "1234"
+	fileID := "0002"
 	queryType := uint8(2)
 	chunkNumber := 3
 	isLastChunk := false
@@ -43,13 +46,14 @@ func TestNewChunkMessage(t *testing.T) {
 	tableID := 1
 	chunkData := "chunk data"
 
-	c := chunk.NewChunk(clientID, queryType, chunkNumber, isLastChunk, step, chunkSize, tableID, chunkData)
+	c := chunk.NewChunk(clientID, fileID, queryType, chunkNumber, isLastChunk, step, chunkSize, tableID, chunkData)
 	msg := chunk.NewChunkMessage(c)
 
 	assert.Equal(t, uint16(0), msg.Header.HeaderLength) // Will be calculated during serialization
 	assert.Equal(t, int32(0), msg.Header.TotalLength)   // Will be calculated during serialization
 	assert.Equal(t, chunk.MessageType, msg.Header.MsgTypeID)
 	assert.Equal(t, clientID, msg.Chunk.ClientID)
+	assert.Equal(t, fileID, msg.Chunk.FileID)
 	assert.Equal(t, queryType, msg.Chunk.QueryType)
 	assert.Equal(t, chunkNumber, msg.Chunk.ChunkNumber)
 	assert.Equal(t, isLastChunk, msg.Chunk.IsLastChunk)
@@ -76,6 +80,7 @@ func TestSerializeChunkMessage(t *testing.T) {
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "1234",
+					FileID:      "0001",
 					QueryType:   1,
 					ChunkNumber: 5,
 					IsLastChunk: true,
@@ -97,6 +102,7 @@ func TestSerializeChunkMessage(t *testing.T) {
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "1234",
+					FileID:      "0002",
 					QueryType:   2,
 					ChunkNumber: 1,
 					IsLastChunk: false,
@@ -118,6 +124,7 @@ func TestSerializeChunkMessage(t *testing.T) {
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "12345", // 5 bytes, max is 4
+					FileID:      "0001",
 					QueryType:   1,
 					ChunkNumber: 5,
 					IsLastChunk: true,
@@ -158,6 +165,7 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 		},
 		Chunk: chunk.Chunk{
 			ClientID:    "1234",
+			FileID:      "0001",
 			QueryType:   1,
 			ChunkNumber: 5,
 			IsLastChunk: true,
@@ -176,7 +184,7 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 
 	// Check header_length (2 bytes)
 	headerLength := binary.BigEndian.Uint16(data[offset:])
-	expectedHeaderLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.StepSize
+	expectedHeaderLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.FileIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.StepSize
 	assert.Equal(t, uint16(expectedHeaderLength), headerLength)
 	offset += common.HeaderLengthSize
 
@@ -193,6 +201,10 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 	// Check client_id (4 bytes)
 	assert.Equal(t, []byte("1234"), data[offset:offset+chunk.ClientIDSize])
 	offset += chunk.ClientIDSize
+
+	// Check file_id (4 bytes)
+	assert.Equal(t, []byte("0001"), data[offset:offset+chunk.FileIDSize])
+	offset += chunk.FileIDSize
 
 	// Check query_type (1 byte)
 	assert.Equal(t, uint8(1), data[offset])
@@ -233,6 +245,7 @@ func TestSerializeChunkMessageWithEmptyData(t *testing.T) {
 		},
 		Chunk: chunk.Chunk{
 			ClientID:    "1234",
+			FileID:      "0001",
 			QueryType:   1,
 			ChunkNumber: 1,
 			IsLastChunk: false,
@@ -248,7 +261,7 @@ func TestSerializeChunkMessageWithEmptyData(t *testing.T) {
 
 	// Should still serialize successfully with empty data
 	assert.NotNil(t, data)
-	expectedLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.StepSize
+	expectedLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.FileIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.StepSize
 	assert.Equal(t, expectedLength, len(data))
 }
 
@@ -266,6 +279,7 @@ func TestQueryTypes(t *testing.T) {
 				},
 				Chunk: chunk.Chunk{
 					ClientID:    "1234",
+					FileID:      "0001",
 					QueryType:   queryType,
 					ChunkNumber: 1,
 					IsLastChunk: false,
@@ -293,6 +307,7 @@ func TestChunkMessageWithLargeNumbers(t *testing.T) {
 		},
 		Chunk: chunk.Chunk{
 			ClientID:    "1234",
+			FileID:      "0001",
 			QueryType:   1,
 			ChunkNumber: 9223372036854775807, // Max int64
 			IsLastChunk: true,
@@ -308,7 +323,7 @@ func TestChunkMessageWithLargeNumbers(t *testing.T) {
 	assert.NotNil(t, data)
 
 	// Verify the large numbers were serialized correctly
-	offset := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.QueryTypeSize + chunk.TableIDSize
+	offset := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.FileIDSize + chunk.QueryTypeSize + chunk.TableIDSize
 
 	// Check chunk_size
 	chunkSize := binary.BigEndian.Uint64(data[offset:])

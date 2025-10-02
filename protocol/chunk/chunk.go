@@ -8,6 +8,7 @@ import (
 
 type Chunk struct {
 	ClientID    string
+	FileID      string
 	QueryType   byte
 	TableID     int
 	ChunkSize   int
@@ -17,9 +18,10 @@ type Chunk struct {
 	ChunkData   string
 }
 
-func NewChunk(clientID string, queryType byte, chunkNumber int, isLastChunk bool, step, chunkSize, tableID int, chunkData string) *Chunk {
+func NewChunk(clientID, fileID string, queryType byte, chunkNumber int, isLastChunk bool, step, chunkSize, tableID int, chunkData string) *Chunk {
 	return &Chunk{
 		ClientID:    clientID,
+		FileID:      fileID,
 		QueryType:   queryType,
 		ChunkNumber: chunkNumber,
 		IsLastChunk: isLastChunk,
@@ -39,6 +41,10 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 	clientIDBytes := data[offset : offset+ClientIDSize]
 	clientID := string(clientIDBytes)
 	offset += ClientIDSize
+
+	fileIDBytes := data[offset : offset+4] // FileID is 4 bytes
+	fileID := string(fileIDBytes)
+	offset += 4
 
 	queryType := data[offset]
 	offset += QueryTypeSize
@@ -66,6 +72,7 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 
 	return &Chunk{
 		ClientID:    clientID,
+		FileID:      fileID,
 		QueryType:   queryType,
 		TableID:     tableID,
 		ChunkSize:   chunkSize,

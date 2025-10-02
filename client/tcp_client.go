@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,8 +59,33 @@ func (c *TCPClient) Close() error {
 	return nil
 }
 
+// scanCSVFiles scans the data folder and returns all CSV files with their file IDs
+func scanCSVFiles(dataFolder string) (map[string]string, error) {
+	fileMap := make(map[string]string)
+	fileIDCounter := 1
+
+	err := filepath.Walk(dataFolder, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Only process CSV files
+		if !info.IsDir() && strings.HasSuffix(strings.ToLower(path), ".csv") {
+			// Generate a unique 4-character file ID
+			fileID := fmt.Sprintf("%04d", fileIDCounter)
+			fileMap[path] = fileID
+			fileIDCounter++
+			log.Printf("Found CSV file: %s (FileID: %s)", path, fileID)
+		}
+
+		return nil
+	})
+
+	return fileMap, err
+}
+
 // sendBatches reads CSV records, groups them into batches, and sends them.
-func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int) (int, int, error) {
+func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (int, int, error) {
 	r.FieldsPerRecord = -1 // allow variable columns
 
 	var batch []string
@@ -85,7 +111,7 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int) (int, int, error) 
 			// Create batch message
 			batchData := &batchpkg.Batch{
 				ClientID:    "1234", // Exactly 4 bytes
-				FileID:      "5678", // Exactly 4 bytes
+				FileID:      fileID, // Use provided file ID
 				IsEOF:       strings.ToLower(payload) == "exit",
 				BatchNumber: batchNum,
 				BatchSize:   len(payload),
@@ -110,7 +136,7 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int) (int, int, error) 
 		// Create batch message
 		batchData := &batchpkg.Batch{
 			ClientID:    "1234", // Exactly 4 bytes
-			FileID:      "5678", // Exactly 4 bytes
+			FileID:      fileID, // Use provided file ID
 			IsEOF:       strings.ToLower(payload) == "exit",
 			BatchNumber: batchNum,
 			BatchSize:   len(payload),
@@ -139,14 +165,18 @@ func (c *TCPClient) StartServerReader() {
 	}()
 }
 
-// runClient runs the client with the given input file
-func runClient(inputFile string, serverAddr string) error {
-	// Open the input file
-	f, err := os.Open(inputFile)
+// runClient runs the client with the given data folder
+func runClient(dataFolder string, serverAddr string) error {
+	// Scan for CSV files in the data folder
+	fileMap, err := scanCSVFiles(dataFolder)
 	if err != nil {
-		log.Fatalf("Failed to open CSV: %v", err)
+		return fmt.Errorf("failed to scan data folder: %w", err)
 	}
-	defer f.Close()
+
+	if len(fileMap) == 0 {
+		return fmt.Errorf("no CSV files found in data folder: %s", dataFolder)
+	}
+
 	// Connect to server
 	client, err := NewTCPClient(serverAddr)
 	if err != nil {
@@ -155,21 +185,50 @@ func runClient(inputFile string, serverAddr string) error {
 	defer client.Close()
 
 	fmt.Printf("Connected to server at %s\n", serverAddr)
-	fmt.Printf("Reading messages from file: %s\n", inputFile)
+	fmt.Printf("Found %d CSV files in folder: %s\n", len(fileMap), dataFolder)
 
 	// Start goroutine for server responses
 	client.StartServerReader()
 
-	// Read lines from file and send to server
-	r := csv.NewReader(f)
-	sentRecords, sentBatches, err := client.sendBatches(r, 5)
-	if err != nil {
-		return fmt.Errorf("error sending batches: %w", err)
+	totalRecords := 0
+	totalBatches := 0
+	totalFiles := 0
+
+	// Process each CSV file
+	for filePath, fileID := range fileMap {
+		fmt.Printf("\nProcessing file: %s (FileID: %s)\n", filePath, fileID)
+
+		// Open the CSV file
+		f, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("Failed to open CSV file %s: %v", filePath, err)
+			continue
+		}
+
+		// Read lines from file and send to server
+		r := csv.NewReader(f)
+		sentRecords, sentBatches, err := client.sendBatches(r, 1000, fileID)
+		if err != nil {
+			log.Printf("Error sending batches for file %s: %v", filePath, err)
+			f.Close()
+			continue
+		}
+
+		f.Close()
+		totalRecords += sentRecords
+		totalBatches += sentBatches
+		totalFiles++
+
+		fmt.Printf("Completed file %s: %d records, %d batches\n", filePath, sentRecords, sentBatches)
+
+		// Small delay between files
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	sleep := time.After(10 * time.Second)
 	<-sleep
 
-	fmt.Printf("Finished sending. Total records: %d, Total batches: %d\n", sentRecords, sentBatches)
+	fmt.Printf("\nFinished sending all files. Total files: %d, Total records: %d, Total batches: %d\n",
+		totalFiles, totalRecords, totalBatches)
 	return nil
 }

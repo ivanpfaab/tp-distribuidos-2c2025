@@ -6,12 +6,12 @@ import (
 )
 
 func main() {
-	// Check if input file is provided
+	// Check if data folder is provided
 	if len(os.Args) < 2 {
-		log.Fatal("Usage: ./client <input_file.csv> [server_address]")
+		log.Fatal("Usage: ./client <data_folder_path> [server_address]")
 	}
 
-	inputFile := os.Args[1]
+	dataFolder := os.Args[1]
 
 	// Get server address from command line or use default
 	serverAddr := "localhost:8080"
@@ -20,7 +20,7 @@ func main() {
 	}
 
 	// Run the client
-	err := runClient(inputFile, serverAddr)
+	err := runClient(dataFolder, serverAddr)
 	if err != nil {
 		log.Fatalf("Client error: %v", err)
 	}
