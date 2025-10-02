@@ -9,6 +9,7 @@ import (
 type EOSMessage struct {
 	QueryType byte
 	ClientID  string
+	Step      int
 }
 
 // EOSTransmitter broadcasts EOS signals to all workers
@@ -59,8 +60,8 @@ func (eos *EOSTransmitter) Start() {
 				break
 			}
 
-			fmt.Printf("\033[35m[EOS TRANSMITTER] Received EOS signal - QueryType: %d, ClientID: %s\033[0m\n",
-				eosMsg.QueryType, eosMsg.ClientID)
+			fmt.Printf("\033[35m[EOS TRANSMITTER] Received EOS signal - QueryType: %d, ClientID: %s, Step: %d\033[0m\n",
+				eosMsg.QueryType, eosMsg.ClientID, eosMsg.Step)
 
 			// Broadcast to all workers
 			for i, workerChannel := range eos.workerChannels {
@@ -87,8 +88,8 @@ func (eos *EOSTransmitter) Start() {
 func (eos *EOSTransmitter) SendEOSSignal(eosMsg EOSMessage) {
 	select {
 	case eos.signalIn <- eosMsg:
-		fmt.Printf("\033[35m[EOS TRANSMITTER] Received EOS signal from worker - QueryType: %d, ClientID: %s\033[0m\n",
-			eosMsg.QueryType, eosMsg.ClientID)
+		fmt.Printf("\033[35m[EOS TRANSMITTER] Received EOS signal from worker - QueryType: %d, ClientID: %s, Step: %d\033[0m\n",
+			eosMsg.QueryType, eosMsg.ClientID, eosMsg.Step)
 	default:
 		fmt.Printf("\033[35m[EOS TRANSMITTER] WARNING - Could not send EOS signal to transmitter\033[0m\n")
 	}

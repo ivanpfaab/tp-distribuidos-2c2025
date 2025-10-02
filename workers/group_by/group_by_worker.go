@@ -70,11 +70,11 @@ func (gbw *GroupByWorker) Start() {
 				break
 			}
 
-			fmt.Printf("\033[37m[WORKER %d] RECEIVED EOS SIGNAL - QueryType: %d, ClientID: %s\033[0m\n",
-				gbw.workerID, eosMsg.QueryType, eosMsg.ClientID)
+			fmt.Printf("\033[37m[WORKER %d] RECEIVED EOS SIGNAL - QueryType: %d, ClientID: %s, Step: %d\033[0m\n",
+				gbw.workerID, eosMsg.QueryType, eosMsg.ClientID, eosMsg.Step)
 
 			// Send completion signal to partial reducer for this query
-			gbw.sendCompletionSignal(eosMsg.QueryType, eosMsg.ClientID)
+			gbw.sendCompletionSignal(eosMsg.QueryType, eosMsg.ClientID, eosMsg.Step)
 		}
 	}
 
@@ -117,12 +117,13 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 
 	// If this is the last chunk for this query, send EOS signal
 	if chunkData.IsLastChunk {
-		fmt.Printf("\033[37m[WORKER %d] LAST CHUNK PROCESSED - Sending EOS signal for QueryType: %d, ClientID: %s\033[0m\n",
-			gbw.workerID, chunkData.QueryType, chunkData.ClientID)
+		fmt.Printf("\033[37m[WORKER %d] LAST CHUNK PROCESSED - Sending EOS signal for QueryType: %d, ClientID: %s, Step: %d\033[0m\n",
+			gbw.workerID, chunkData.QueryType, chunkData.ClientID, chunkData.Step)
 
 		eosMsg := EOSMessage{
 			QueryType: chunkData.QueryType,
 			ClientID:  chunkData.ClientID,
+			Step:      chunkData.Step,
 		}
 		gbw.eosTransmitter.SendEOSSignal(eosMsg)
 	}
@@ -150,7 +151,7 @@ func getResultLength(results interface{}, queryType int) int {
 }
 
 // sendCompletionSignal sends a completion signal to the partial reducer for a specific query
-func (gbw *GroupByWorker) sendCompletionSignal(queryType byte, clientID string) {
+func (gbw *GroupByWorker) sendCompletionSignal(queryType byte, clientID string, step int) {
 	queryKey := fmt.Sprintf("%d_%s", queryType, clientID)
 
 	// Check if this worker has already processed any chunks for this query
@@ -172,11 +173,11 @@ func (gbw *GroupByWorker) sendCompletionSignal(queryType byte, clientID string) 
 		ChunkSize:   0,
 		ChunkNumber: -1, // Special marker for completion
 		IsLastChunk: true,
-		Step:        0,  // Default step
-		ChunkData:   "", // Empty data for completion signal
+		Step:        step, // Use the correct step from the EOS signal
+		ChunkData:   "",   // Empty data for completion signal
 	}
 
 	gbw.partialChannel <- completionChunk
-	fmt.Printf("\033[37m[WORKER %d] SENT COMPLETION SIGNAL - QueryType: %d, ClientID: %s\033[0m\n",
-		gbw.workerID, queryType, clientID)
+	fmt.Printf("\033[37m[WORKER %d] SENT COMPLETION SIGNAL - QueryType: %d, ClientID: %s, Step: %d\033[0m\n",
+		gbw.workerID, queryType, clientID, step)
 }
