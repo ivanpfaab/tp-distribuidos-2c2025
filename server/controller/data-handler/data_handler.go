@@ -75,10 +75,21 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 	return 0
 }
 
-// isStoresCSVChunk checks if the chunk belongs to stores.csv by examining the FileID
-func isStoresCSVChunk(fileID string) bool {
-	// With enhanced FileID logic, stores.csv will have FileID "ST01"
-	return fileID == "ST01"
+// isReferenceDataChunk checks if the chunk belongs to reference data files that need to be sent to writer
+func isReferenceDataChunk(fileID string) bool {
+	// Reference data files that need to be stored in writer for joins:
+	// - ST01: stores.csv (for store_id joins in query 3)
+	// - MN01: menu_items.csv (for item_id joins in query 2)
+	// - US01, US02: users_*.csv (for user_id joins in query 4)
+	return fileID == "ST01" || fileID == "MN01" || fileID == "US01" || fileID == "US02"
+}
+
+// isTransactionDataChunk checks if the chunk belongs to transaction data files
+func isTransactionDataChunk(fileID string) bool {
+	// Transaction data files:
+	// - TR01, TR02: transactions_*.csv (for store_id and user_id joins)
+	// - TI01, TI02: transaction_items_*.csv (for item_id joins)
+	return fileID == "TR01" || fileID == "TR02" || fileID == "TI01" || fileID == "TI02"
 }
 
 // ProcessBatchMessage processes a batch message and creates chunks
@@ -116,22 +127,25 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	// Create chunk message
 	chunkMsg := chunk.NewChunkMessage(chunkObj)
 
-	// Send chunk to query orchestrator
-	if err := dh.SendChunk(chunkMsg); err != 0 {
-		log.Printf("Data Handler: Failed to send chunk to orchestrator: %v", err)
-		return fmt.Errorf("failed to send chunk to orchestrator: %v", err)
-	}
-
-	// Send chunk to data writer only if it belongs to stores.csv
-	if isStoresCSVChunk(chunkObj.FileID) {
+	// Route chunk based on file type
+	if isReferenceDataChunk(chunkObj.FileID) {
+		// Send reference data (stores, menu_items, users) to writer for join operations
 		if err := dh.SendChunkToWriter(chunkMsg); err != 0 {
-			log.Printf("Data Handler: Failed to send chunk to writer: %v", err)
-			return fmt.Errorf("failed to send chunk to writer: %v", err)
+			log.Printf("Data Handler: Failed to send reference data chunk to writer: %v", err)
+			return fmt.Errorf("failed to send reference data chunk to writer: %v", err)
 		}
-		log.Printf("Data Handler: Sent stores.csv chunk to writer - ClientID: %s, FileID: %s, ChunkNumber: %d",
+		log.Printf("Data Handler: Sent reference data chunk to writer - ClientID: %s, FileID: %s, ChunkNumber: %d",
+			chunkObj.ClientID, chunkObj.FileID, chunkObj.ChunkNumber)
+	} else if isTransactionDataChunk(chunkObj.FileID) {
+		// Send transaction data (transactions, transaction_items) to query orchestrator for processing
+		if err := dh.SendChunk(chunkMsg); err != 0 {
+			log.Printf("Data Handler: Failed to send transaction data chunk to orchestrator: %v", err)
+			return fmt.Errorf("failed to send transaction data chunk to orchestrator: %v", err)
+		}
+		log.Printf("Data Handler: Sent transaction data chunk to orchestrator - ClientID: %s, FileID: %s, ChunkNumber: %d",
 			chunkObj.ClientID, chunkObj.FileID, chunkObj.ChunkNumber)
 	} else {
-		log.Printf("Data Handler: Skipped non-stores.csv chunk - ClientID: %s, FileID: %s, ChunkNumber: %d",
+		log.Printf("Data Handler: Unknown file type - ClientID: %s, FileID: %s, ChunkNumber: %d",
 			chunkObj.ClientID, chunkObj.FileID, chunkObj.ChunkNumber)
 	}
 

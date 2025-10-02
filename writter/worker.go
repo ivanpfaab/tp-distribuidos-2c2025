@@ -4,13 +4,15 @@ import (
 	"fmt"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 // DataWriterWorker encapsulates the data writer worker state and dependencies
 type DataWriterWorker struct {
-	consumer *workerqueue.QueueConsumer
-	config   *middleware.ConnectionConfig
+	consumer     *workerqueue.QueueConsumer
+	joinProducer *exchange.ExchangeMiddleware
+	config       *middleware.ConnectionConfig
 }
 
 // NewDataWriterWorker creates a new DataWriterWorker instance
@@ -24,13 +26,25 @@ func NewDataWriterWorker(config *middleware.ConnectionConfig) (*DataWriterWorker
 		return nil, fmt.Errorf("failed to create data writer consumer")
 	}
 
+	// Create join producer for sending reference data to join worker
+	joinProducer := exchange.NewMessageMiddlewareExchange(
+		"join-exchange",
+		[]string{"join"},
+		config,
+	)
+	if joinProducer == nil {
+		consumer.Close()
+		return nil, fmt.Errorf("failed to create join producer")
+	}
+
 	return &DataWriterWorker{
-		consumer: consumer,
-		config:   config,
+		consumer:     consumer,
+		joinProducer: joinProducer,
+		config:       config,
 	}, nil
 }
 
-// DeclareQueue declares the data writer queue on RabbitMQ
+// DeclareQueue declares the data writer queue and join exchange on RabbitMQ
 func (dww *DataWriterWorker) DeclareQueue() middleware.MessageMiddlewareError {
 	// Create a temporary producer to declare the queue
 	queueProducer := workerqueue.NewMessageMiddlewareQueue(
@@ -47,7 +61,12 @@ func (dww *DataWriterWorker) DeclareQueue() middleware.MessageMiddlewareError {
 		return err
 	}
 
-	fmt.Printf("Data Writer: Queue '%s' declared successfully\n", DataWriterQueueName)
+	// Declare the join exchange
+	if err := dww.joinProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
+		return err
+	}
+
+	fmt.Printf("Data Writer: Queue '%s' and join exchange declared successfully\n", DataWriterQueueName)
 	return 0
 }
 
@@ -61,6 +80,9 @@ func (dww *DataWriterWorker) Start() middleware.MessageMiddlewareError {
 func (dww *DataWriterWorker) Close() {
 	if dww.consumer != nil {
 		dww.consumer.Close()
+	}
+	if dww.joinProducer != nil {
+		dww.joinProducer.Close()
 	}
 }
 
@@ -78,4 +100,19 @@ func (dww *DataWriterWorker) createCallback() func(middleware.ConsumeChannel, ch
 		}
 		done <- nil
 	}
+}
+
+// SendReferenceDataToJoinWorker sends reference data to the join worker
+func (dww *DataWriterWorker) SendReferenceDataToJoinWorker(fileID string, data []byte) middleware.MessageMiddlewareError {
+	fmt.Printf("Data Writer: Sending reference data for FileID: %s to join worker\n", fileID)
+	fmt.Printf("Data Writer: Message content: %s\n", string(data))
+
+	// Send the reference data to the join worker
+	if err := dww.joinProducer.Send(data, []string{"join"}); err != 0 {
+		fmt.Printf("Data Writer: Failed to send reference data to join worker: %v\n", err)
+		return err
+	}
+
+	fmt.Printf("Data Writer: Successfully sent reference data for FileID: %s to join worker\n", fileID)
+	return 0
 }
