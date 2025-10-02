@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
 // TestDistributedGroupByFlow tests the entire distributed group by flow
@@ -21,8 +22,19 @@ func TestDistributedGroupByFlow(t *testing.T) {
 	// Create test data
 	testChunks := createTestChunks(numChunks)
 
+	// Create mock config for testing
+	config := &middleware.ConnectionConfig{
+		Host:     "localhost",
+		Port:     5672,
+		Username: "guest",
+		Password: "guest",
+	}
+
 	// Create the distributed orchestrator
-	orchestrator := NewGroupByOrchestrator(numWorkers)
+	orchestrator, err := NewGroupByOrchestrator(config, numWorkers)
+	if err != nil {
+		t.Fatalf("Failed to create orchestrator: %v", err)
+	}
 
 	// Start the orchestrator
 	orchestrator.Start()
@@ -89,8 +101,19 @@ func TestDistributedGroupByWithRealData(t *testing.T) {
 	// Create test data that mimics real coffee shop data
 	testChunks := createRealDataTestChunks(numChunks)
 
+	// Create mock config for testing
+	config := &middleware.ConnectionConfig{
+		Host:     "localhost",
+		Port:     5672,
+		Username: "guest",
+		Password: "guest",
+	}
+
 	// Create the distributed orchestrator
-	orchestrator := NewGroupByOrchestrator(numWorkers)
+	orchestrator, err := NewGroupByOrchestrator(config, numWorkers)
+	if err != nil {
+		t.Fatalf("Failed to create orchestrator: %v", err)
+	}
 
 	// Start the orchestrator
 	orchestrator.Start()

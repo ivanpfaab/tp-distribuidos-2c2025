@@ -20,8 +20,8 @@ func TestSimpleDistributedGroupBy(t *testing.T) {
 	// Create test data
 	testChunks := createSimpleTestChunks(numChunks)
 
-	// Create the distributed orchestrator
-	orchestrator := NewGroupByOrchestrator(numWorkers)
+	// Create the distributed orchestrator for testing (without RabbitMQ)
+	orchestrator := createTestOrchestrator(numWorkers)
 
 	// Start the orchestrator
 	orchestrator.Start()
@@ -141,4 +141,50 @@ func createSimpleTestChunks(count int) []*chunk.Chunk {
 	}
 
 	return chunks
+}
+
+// createTestOrchestrator creates an orchestrator for testing without RabbitMQ
+func createTestOrchestrator(numWorkers int) *GroupByOrchestrator {
+	// Create channels for internal communication
+	chunkQueue := make(chan *chunk.Chunk, numWorkers*2)
+	workerChannels := make([]chan *chunk.Chunk, numWorkers)
+	partialChannels := make([]chan *chunk.Chunk, numWorkers)
+	reducerChannel := make(chan *chunk.Chunk, numWorkers)
+
+	for i := 0; i < numWorkers; i++ {
+		workerChannels[i] = make(chan *chunk.Chunk)
+		partialChannels[i] = make(chan *chunk.Chunk)
+	}
+
+	orchestrator := &GroupByOrchestrator{
+		// No RabbitMQ components for testing
+		consumer:      nil,
+		replyProducer: nil,
+		config:        nil,
+
+		// Distributed processing components
+		chunkQueue:      chunkQueue,
+		numWorkers:      numWorkers,
+		workerChannels:  workerChannels,
+		partialChannels: partialChannels,
+		reducerChannel:  reducerChannel,
+		done:            make(chan bool),
+	}
+
+	// Create workers
+	orchestrator.workers = make([]*GroupByWorker, numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		orchestrator.workers[i] = NewGroupByWorker(i, chunkQueue, workerChannels[i])
+	}
+
+	// Create partial reducers
+	orchestrator.partialReducers = make([]*GroupByPartialReducer, numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		orchestrator.partialReducers[i] = NewGroupByPartialReducer(i, workerChannels[i], partialChannels[i])
+	}
+
+	// Create final reducer
+	orchestrator.reducer = NewGroupByReducer(partialChannels, reducerChannel)
+
+	return orchestrator
 }

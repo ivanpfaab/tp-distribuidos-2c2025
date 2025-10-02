@@ -7,7 +7,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 )
 
-// GroupByWorker processes chunks in parallel
+// GroupByWorker represents a worker within the distributed group_by system
 type GroupByWorker struct {
 	workerID       int
 	chunkQueue     <-chan *chunk.Chunk
@@ -65,8 +65,6 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 	// Dummy group by operation: take first 10 elements
 	lines := strings.Split(chunkData.ChunkData, "\n")
 	var resultLines []string
-
-	// Take first 10 non-empty lines
 	count := 0
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" && count < 10 {
@@ -75,12 +73,13 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 		}
 	}
 
-	// Create result chunk with processed data
+	// Create result data
 	resultData := strings.Join(resultLines, "\n")
+
+	// Create result chunk
 	resultChunk := &chunk.Chunk{
 		ClientID:    chunkData.ClientID,
 		QueryType:   chunkData.QueryType,
-		TableID:     chunkData.TableID,
 		ChunkSize:   len(resultData),
 		ChunkNumber: chunkData.ChunkNumber,
 		IsLastChunk: chunkData.IsLastChunk,
