@@ -195,7 +195,7 @@ func (gbo *GroupByOrchestrator) createCallback() func(middleware.ConsumeChannel,
 
 // processMessage processes a single message
 func (gbo *GroupByOrchestrator) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	fmt.Printf("GroupBy Orchestrator: Received message: %s\n", string(delivery.Body))
+	fmt.Printf("GroupBy Orchestrator: Received message from RabbitMQ - Size: %d bytes\n", len(delivery.Body))
 
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
@@ -205,8 +205,9 @@ func (gbo *GroupByOrchestrator) processMessage(delivery amqp.Delivery) middlewar
 	}
 
 	// Process the chunk using the distributed system
-	fmt.Printf("GroupBy Orchestrator: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
-		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber)
+	fmt.Printf("GroupBy Orchestrator: Processing chunk - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\n",
+		chunkMsg.ClientID, chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ChunkNumber, len(chunkMsg.ChunkData), chunkMsg.IsLastChunk)
+	fmt.Printf("GroupBy Orchestrator: CHUNK DATA:\n%s\n", chunkMsg.ChunkData)
 
 	// Send chunk to the distributed processing
 	gbo.ProcessChunk(chunkMsg)
@@ -226,7 +227,9 @@ func (gbo *GroupByOrchestrator) waitForResult(originalChunk *chunk.Chunk) {
 	for resultChunk := range gbo.reducerChannel {
 		// Check if this result matches our original chunk
 		if resultChunk.ClientID == originalChunk.ClientID && resultChunk.QueryType == originalChunk.QueryType {
-			fmt.Printf("GroupBy Orchestrator: Received final result for ClientID: %s\n", resultChunk.ClientID)
+			fmt.Printf("GroupBy Orchestrator: Received final result - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\n",
+				resultChunk.ClientID, resultChunk.QueryType, resultChunk.Step, resultChunk.ChunkNumber, len(resultChunk.ChunkData), resultChunk.IsLastChunk)
+			fmt.Printf("GroupBy Orchestrator: FINAL RESULT DATA:\n%s\n", resultChunk.ChunkData)
 
 			// Send the result back to the query orchestrator
 			gbo.sendReply(resultChunk)
@@ -253,15 +256,16 @@ func (gbo *GroupByOrchestrator) sendReply(chunkMsg *chunk.Chunk) middleware.Mess
 		return err
 	}
 
-	fmt.Printf("GroupBy Orchestrator: Reply sent successfully for ClientID: %s, ChunkNumber: %d\n",
-		chunkMsg.ClientID, chunkMsg.ChunkNumber)
+	fmt.Printf("GroupBy Orchestrator: Reply sent successfully - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\n",
+		chunkMsg.ClientID, chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ChunkNumber, len(chunkMsg.ChunkData), chunkMsg.IsLastChunk)
 	return 0
 }
 
 // ProcessChunk processes a single chunk through the distributed group_by system
 func (gbo *GroupByOrchestrator) ProcessChunk(chunk *chunk.Chunk) {
-	fmt.Printf("\033[35m[ORCHESTRATOR] RECEIVED CHUNK - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d\033[0m\n",
-		chunk.ClientID, chunk.QueryType, chunk.Step, chunk.ChunkNumber, len(chunk.ChunkData))
+	fmt.Printf("\033[35m[ORCHESTRATOR] RECEIVED CHUNK - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\033[0m\n",
+		chunk.ClientID, chunk.QueryType, chunk.Step, chunk.ChunkNumber, len(chunk.ChunkData), chunk.IsLastChunk)
+	fmt.Printf("\033[35m[ORCHESTRATOR] CHUNK DATA:\n%s\033[0m\n", chunk.ChunkData)
 
 	// Send chunk to the shared queue for workers to process
 	select {

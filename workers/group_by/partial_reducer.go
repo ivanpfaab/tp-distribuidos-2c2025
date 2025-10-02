@@ -18,6 +18,7 @@ type GroupByPartialReducer struct {
 	clientID       string
 	workerFinished bool
 	running        bool
+	queryProcessor *QueryProcessor
 }
 
 // NewGroupByPartialReducer creates a new partial reducer
@@ -29,6 +30,7 @@ func NewGroupByPartialReducer(reducerID int, workerChannel <-chan *chunk.Chunk, 
 		collectedData:  make([]string, 0),
 		workerFinished: false,
 		running:        false,
+		queryProcessor: NewQueryProcessor(),
 	}
 }
 
@@ -48,8 +50,9 @@ func (gbpr *GroupByPartialReducer) Start() {
 			break
 		}
 
-		fmt.Printf("\033[33m[PARTIAL REDUCER %d] RECEIVED RESULT - ChunkNumber: %d, Size: %d bytes\033[0m\n",
-			gbpr.reducerID, resultChunk.ChunkNumber, len(resultChunk.ChunkData))
+		fmt.Printf("\033[33m[PARTIAL REDUCER %d] RECEIVED RESULT - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\033[0m\n",
+			gbpr.reducerID, resultChunk.ClientID, resultChunk.QueryType, resultChunk.Step, resultChunk.ChunkNumber, len(resultChunk.ChunkData), resultChunk.IsLastChunk)
+		fmt.Printf("\033[33m[PARTIAL REDUCER %d] RESULT DATA:\n%s\033[0m\n", gbpr.reducerID, resultChunk.ChunkData)
 
 		// Store the result from worker
 		gbpr.storeResult(resultChunk)
@@ -89,18 +92,25 @@ func (gbpr *GroupByPartialReducer) applyReduction() {
 	fmt.Printf("\033[33m[PARTIAL REDUCER %d] APPLYING REDUCTION - Collected: %d lines\033[0m\n",
 		gbpr.reducerID, len(gbpr.collectedData))
 
-	// Dummy group by operation: take first 10 elements from collected data
-	var resultLines []string
-	count := 0
-	for _, line := range gbpr.collectedData {
-		if strings.TrimSpace(line) != "" && count < 10 {
-			resultLines = append(resultLines, line)
-			count++
-		}
+	// Combine all collected data
+	combinedData := strings.Join(gbpr.collectedData, "\n")
+
+	// Create a temporary chunk for processing
+	tempChunk := &chunk.Chunk{
+		ClientID:    gbpr.clientID,
+		QueryType:   gbpr.queryType,
+		ChunkSize:   len(combinedData),
+		ChunkNumber: gbpr.reducerID,
+		IsLastChunk: true,
+		Step:        gbpr.step,
+		ChunkData:   combinedData,
 	}
 
-	// Create result chunk
-	resultData := strings.Join(resultLines, "\n")
+	// Process the combined data using the query processor (GROUPED DATA)
+	results := gbpr.queryProcessor.ProcessQuery(tempChunk, GroupedData)
+
+	// Convert results to CSV format
+	resultData := gbpr.queryProcessor.ResultsToCSV(results, int(gbpr.queryType))
 	resultChunk := &chunk.Chunk{
 		ClientID:    gbpr.clientID,
 		QueryType:   gbpr.queryType,
@@ -114,8 +124,9 @@ func (gbpr *GroupByPartialReducer) applyReduction() {
 
 	// Send result to final reducer
 	gbpr.reducerChannel <- resultChunk
-	fmt.Printf("\033[33m[PARTIAL REDUCER %d] SENT RESULT - ClientID: %s, QueryType: %d, Size: %d bytes\033[0m\n",
-		gbpr.reducerID, gbpr.clientID, gbpr.queryType, len(resultData))
+	fmt.Printf("\033[33m[PARTIAL REDUCER %d] SENT RESULT - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Groups: %d, Size: %d, IsLastChunk: %t\033[0m\n",
+		gbpr.reducerID, gbpr.clientID, gbpr.queryType, gbpr.step, resultChunk.ChunkNumber, len(results), len(resultData), resultChunk.IsLastChunk)
+	fmt.Printf("\033[33m[PARTIAL REDUCER %d] REDUCED DATA:\n%s\033[0m\n", gbpr.reducerID, resultData)
 
 	// Clear collected data for next query
 	gbpr.collectedData = make([]string, 0)

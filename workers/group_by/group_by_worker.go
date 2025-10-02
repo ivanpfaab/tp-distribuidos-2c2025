@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 )
@@ -13,6 +12,7 @@ type GroupByWorker struct {
 	chunkQueue     <-chan *chunk.Chunk
 	partialChannel chan<- *chunk.Chunk
 	running        bool
+	queryProcessor *QueryProcessor
 }
 
 // NewGroupByWorker creates a new group by worker
@@ -22,6 +22,7 @@ func NewGroupByWorker(workerID int, chunkQueue <-chan *chunk.Chunk, partialChann
 		chunkQueue:     chunkQueue,
 		partialChannel: partialChannel,
 		running:        false,
+		queryProcessor: NewQueryProcessor(),
 	}
 }
 
@@ -39,16 +40,18 @@ func (gbw *GroupByWorker) Start() {
 			break
 		}
 
-		fmt.Printf("\033[37m[WORKER %d] RECEIVED CHUNK - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d\033[0m\n",
-			gbw.workerID, chunk.ClientID, chunk.QueryType, chunk.Step, chunk.ChunkNumber, len(chunk.ChunkData))
+		fmt.Printf("\033[37m[WORKER %d] RECEIVED CHUNK - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\033[0m\n",
+			gbw.workerID, chunk.ClientID, chunk.QueryType, chunk.Step, chunk.ChunkNumber, len(chunk.ChunkData), chunk.IsLastChunk)
+		fmt.Printf("\033[37m[WORKER %d] CHUNK DATA:\n%s\033[0m\n", gbw.workerID, chunk.ChunkData)
 
 		// Process the chunk
 		result := gbw.processChunk(chunk)
 		if result != nil {
 			// Send result to partial reducer
 			gbw.partialChannel <- result
-			fmt.Printf("\033[37m[WORKER %d] SENT RESULT - ChunkNumber: %d, ResultSize: %d\033[0m\n",
-				gbw.workerID, chunk.ChunkNumber, len(result.ChunkData))
+			fmt.Printf("\033[37m[WORKER %d] SENT RESULT - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\033[0m\n",
+				gbw.workerID, result.ClientID, result.QueryType, result.Step, result.ChunkNumber, len(result.ChunkData), result.IsLastChunk)
+			fmt.Printf("\033[37m[WORKER %d] RESULT DATA:\n%s\033[0m\n", gbw.workerID, result.ChunkData)
 		}
 	}
 
@@ -62,19 +65,11 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 	fmt.Printf("\033[37m[WORKER %d] PROCESSING - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\033[0m\n",
 		gbw.workerID, chunkData.QueryType, chunkData.Step, chunkData.ClientID, chunkData.ChunkNumber)
 
-	// Dummy group by operation: take first 10 elements
-	lines := strings.Split(chunkData.ChunkData, "\n")
-	var resultLines []string
-	count := 0
-	for _, line := range lines {
-		if strings.TrimSpace(line) != "" && count < 10 {
-			resultLines = append(resultLines, line)
-			count++
-		}
-	}
+	// Process the query using the query processor (RAW DATA)
+	results := gbw.queryProcessor.ProcessQuery(chunkData, RawData)
 
-	// Create result data
-	resultData := strings.Join(resultLines, "\n")
+	// Convert results to CSV format
+	resultData := gbw.queryProcessor.ResultsToCSV(results, int(chunkData.QueryType))
 
 	// Create result chunk
 	resultChunk := &chunk.Chunk{
@@ -87,8 +82,8 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 		ChunkData:   resultData,
 	}
 
-	fmt.Printf("\033[37m[WORKER %d] COMPLETED - ChunkNumber: %d, Original: %d lines, Result: %d lines, Size: %d bytes\033[0m\n",
-		gbw.workerID, chunkData.ChunkNumber, len(lines), len(resultLines), len(resultData))
+	fmt.Printf("\033[37m[WORKER %d] COMPLETED - ChunkNumber: %d, Groups: %d, Size: %d bytes\033[0m\n",
+		gbw.workerID, chunkData.ChunkNumber, len(results), len(resultData))
 
 	return resultChunk
 }

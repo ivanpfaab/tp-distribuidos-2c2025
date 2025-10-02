@@ -120,10 +120,22 @@ func createSimpleTestChunks(count int) []*chunk.Chunk {
 	chunks := make([]*chunk.Chunk, count)
 
 	for i := 0; i < count; i++ {
-		// Create simple test data
-		lines := make([]string, 12) // More than 10 lines to test filtering
-		for j := 0; j < 12; j++ {
-			lines[j] = fmt.Sprintf("Data line %d from chunk %d", j+1, i+1)
+		// Create transaction_items test data
+		lines := []string{
+			"transaction_id,item_id,quantity,unit_price,subtotal,created_at",
+		}
+
+		// Add some test transaction items
+		for j := 0; j < 10; j++ {
+			itemID := (j % 3) + 1            // Items 1, 2, 3
+			quantity := (j % 2) + 1          // Quantity 1 or 2
+			unitPrice := 10.0 + float64(j%5) // Price 10-14
+			subtotal := unitPrice * float64(quantity)
+			createdAt := fmt.Sprintf("2023-07-%02d 10:%02d:00", (j%3)+1, (j % 60))
+
+			line := fmt.Sprintf("txn-%d-%d,%d,%d,%.1f,%.1f,%s",
+				i+1, j+1, itemID, quantity, unitPrice, subtotal, createdAt)
+			lines = append(lines, line)
 		}
 
 		chunkData := strings.Join(lines, "\n")
