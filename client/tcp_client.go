@@ -162,7 +162,7 @@ func runClient(inputFile string, serverAddr string) error {
 
 	// Read lines from file and send to server
 	r := csv.NewReader(f)
-	sentRecords, sentBatches, err := client.sendBatches(r, 5)
+	sentRecords, sentBatches, err := client.sendBatches(r, 1000)
 	if err != nil {
 		return fmt.Errorf("error sending batches: %w", err)
 	}
