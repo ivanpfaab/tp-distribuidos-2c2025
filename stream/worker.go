@@ -9,8 +9,9 @@ import (
 
 // StreamingWorker encapsulates the streaming worker state and dependencies
 type StreamingWorker struct {
-	consumer *exchange.ExchangeConsumer
-	config   *middleware.ConnectionConfig
+	consumer       *exchange.ExchangeConsumer
+	config         *middleware.ConnectionConfig
+	printedSchemas map[string]bool // Track which queries have had their schema printed
 }
 
 // NewStreamingWorker creates a new StreamingWorker instance
@@ -26,8 +27,9 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 	}
 
 	return &StreamingWorker{
-		consumer: consumer,
-		config:   config,
+		consumer:       consumer,
+		config:         config,
+		printedSchemas: make(map[string]bool),
 	}, nil
 }
 
