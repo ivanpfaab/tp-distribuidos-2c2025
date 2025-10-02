@@ -277,11 +277,9 @@ func (gbo *GroupByOrchestrator) ProcessChunk(chunk *chunk.Chunk) {
 		fmt.Printf("\033[35m[ORCHESTRATOR] QUEUED CHUNK %d (after delay)\033[0m\n", chunk.ChunkNumber)
 	}
 
-	// If this is the last chunk, signal completion
-	if chunk.IsLastChunk {
-		fmt.Printf("\033[35m[ORCHESTRATOR] LAST CHUNK RECEIVED - Signaling completion\033[0m\n")
-		gbo.FinishProcessing()
-	}
+	// Note: We don't immediately signal completion here anymore
+	// The orchestrator will wait for explicit FinishProcessing() call
+	// This allows multiple queries to be processed simultaneously
 }
 
 // FinishProcessing signals that all chunks have been sent and workers should finish

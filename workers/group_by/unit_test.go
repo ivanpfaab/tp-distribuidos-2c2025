@@ -248,6 +248,113 @@ func TestDistributedGroupByQueryType4(t *testing.T) {
 	fmt.Println("\033[36m[TEST] Distributed Group By Test - QueryType 4 Completed\033[0m")
 }
 
+// TestDistributedGroupByMultipleQueryTypes tests the distributed group by with multiple queries simultaneously
+func TestDistributedGroupByMultipleQueryTypes(t *testing.T) {
+	fmt.Println("=== Starting Distributed Group By Test - Multiple Queries (Simultaneous) ===")
+
+	// Test configuration
+	numWorkers := 2
+	numChunksPerQuery := 2
+
+	// Create test data for two different queries of the same type but different client IDs
+	query2Chunks := createQueryType2TestChunks(numChunksPerQuery)
+	query3Chunks := createQueryType3TestChunks(numChunksPerQuery)
+
+	// Create the distributed orchestrator for testing (without RabbitMQ)
+	orchestrator := createTestOrchestrator(numWorkers)
+
+	// Start the orchestrator
+	orchestrator.Start()
+	defer func() {
+		fmt.Println("Stopping orchestrator...")
+		orchestrator.Stop()
+	}()
+
+	// Wait a bit for all components to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Start a goroutine to listen for results
+	resultReceived := make(chan bool, 1)
+	results := make([]*chunk.Chunk, 0)
+	go func() {
+		timeout := time.After(60 * time.Second)
+		for {
+			select {
+			case result := <-orchestrator.GetResultChannel():
+				fmt.Printf("\033[36m[TEST] RECEIVED FINAL RESULT - ClientID: %s, QueryType: %d, Size: %d bytes\033[0m\n",
+					result.ClientID, result.QueryType, len(result.ChunkData))
+				fmt.Printf("\033[36m[TEST] FINAL RESULT DATA:\n%s\033[0m\n", result.ChunkData)
+				results = append(results, result)
+
+				// Check if we received both queries
+				if len(results) >= 2 {
+					resultReceived <- true
+					return
+				}
+			case <-timeout:
+				fmt.Println("\033[31m[TEST] TIMEOUT - Not all results received within 60 seconds\033[0m")
+				resultReceived <- false
+				return
+			}
+		}
+	}()
+
+	// Send chunks in alternating manner: Query A, Query B, Query A, Query B
+	fmt.Printf("\033[36m[TEST] Sending chunks in alternating manner...\033[0m\n")
+
+	// Send Query A chunk 1
+	fmt.Printf("\033[36m[TEST] Sending Query A chunk 1 - ClientID: %s, QueryType: %d, Size: %d\033[0m\n",
+		query2Chunks[0].ClientID, query2Chunks[0].QueryType, len(query2Chunks[0].ChunkData))
+	orchestrator.ProcessChunk(query2Chunks[0])
+	time.Sleep(50 * time.Millisecond)
+
+	// Send Query B chunk 1
+	fmt.Printf("\033[36m[TEST] Sending Query B chunk 1 - ClientID: %s, QueryType: %d, Size: %d\033[0m\n",
+		query3Chunks[0].ClientID, query3Chunks[0].QueryType, len(query3Chunks[0].ChunkData))
+	orchestrator.ProcessChunk(query3Chunks[0])
+	time.Sleep(50 * time.Millisecond)
+
+	// Send Query A chunk 2 (mark as NOT last chunk since we have more to send)
+	query2Chunk2 := *query2Chunks[1] // Copy the chunk
+	fmt.Printf("\033[36m[TEST] Sending Query A chunk 2 - ClientID: %s, QueryType: %d, Size: %d\033[0m\n",
+		query2Chunk2.ClientID, query2Chunk2.QueryType, len(query2Chunk2.ChunkData))
+	orchestrator.ProcessChunk(query2Chunks[1])
+	time.Sleep(50 * time.Millisecond)
+
+	// Send Query B chunk 2 (mark as last chunk since this is the final chunk)
+	fmt.Printf("\033[36m[TEST] Sending Query B chunk 2 - ClientID: %s, QueryType: %d, Size: %d\033[0m\n",
+		query3Chunks[1].ClientID, query3Chunks[1].QueryType, len(query3Chunks[1].ChunkData))
+	orchestrator.ProcessChunk(query3Chunks[1])
+	time.Sleep(50 * time.Millisecond)
+
+	// Wait a bit for all chunks to be processed
+	time.Sleep(200 * time.Millisecond)
+
+	// Signal that all chunks have been sent
+	orchestrator.FinishProcessing()
+
+	// Wait for results
+	success := <-resultReceived
+	if !success {
+		t.Error("Test failed - not all results received or timeout occurred")
+	}
+
+	// Verify we received results for both queries
+	clientIDs := make(map[string]bool)
+	for _, result := range results {
+		clientIDs[result.ClientID] = true
+	}
+
+	if !clientIDs["CLIENT_A"] {
+		t.Error("Test failed - no result received for CLIENT_A")
+	}
+	if !clientIDs["CLIENT_B"] {
+		t.Error("Test failed - no result received for CLIENT_B")
+	}
+
+	fmt.Println("\033[36m[TEST] Distributed Group By Test - Multiple Queries (Simultaneous) Completed\033[0m")
+}
+
 // TestGroupByComponents tests individual components
 func TestGroupByComponents(t *testing.T) {
 	fmt.Println("=== Starting Component Test ===")
@@ -364,7 +471,7 @@ func createQueryType2TestChunks(count int) []*chunk.Chunk {
 		chunkData := strings.Join(lines, "\n")
 
 		chunks[i] = &chunk.Chunk{
-			ClientID:    fmt.Sprintf("TEST_CLIENT_QT2_%d", i+1),
+			ClientID:    "TEST_CLIENT_QT2", // Same client ID for all chunks of the same query
 			QueryType:   2,
 			TableID:     1,
 			ChunkSize:   len(chunkData),
@@ -410,7 +517,7 @@ func createQueryType3TestChunks(count int) []*chunk.Chunk {
 		chunkData := strings.Join(lines, "\n")
 
 		chunks[i] = &chunk.Chunk{
-			ClientID:    fmt.Sprintf("TEST_CLIENT_QT3_%d", i+1),
+			ClientID:    "TEST_CLIENT_QT3", // Same client ID for all chunks of the same query
 			QueryType:   3,
 			TableID:     1,
 			ChunkSize:   len(chunkData),
@@ -456,7 +563,7 @@ func createQueryType4TestChunks(count int) []*chunk.Chunk {
 		chunkData := strings.Join(lines, "\n")
 
 		chunks[i] = &chunk.Chunk{
-			ClientID:    fmt.Sprintf("TEST_CLIENT_QT4_%d", i+1),
+			ClientID:    "TEST_CLIENT_QT4", // Same client ID for all chunks of the same query
 			QueryType:   4,
 			TableID:     1,
 			ChunkSize:   len(chunkData),

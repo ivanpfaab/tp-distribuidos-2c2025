@@ -13,16 +13,19 @@ type GroupByWorker struct {
 	partialChannel chan<- *chunk.Chunk
 	running        bool
 	queryProcessor *QueryProcessor
+	// Track per-query completion
+	queryCompletion map[string]bool // key: "queryType_clientID"
 }
 
 // NewGroupByWorker creates a new group by worker
 func NewGroupByWorker(workerID int, chunkQueue <-chan *chunk.Chunk, partialChannel chan<- *chunk.Chunk) *GroupByWorker {
 	return &GroupByWorker{
-		workerID:       workerID,
-		chunkQueue:     chunkQueue,
-		partialChannel: partialChannel,
-		running:        false,
-		queryProcessor: NewQueryProcessor(),
+		workerID:        workerID,
+		chunkQueue:      chunkQueue,
+		partialChannel:  partialChannel,
+		running:         false,
+		queryProcessor:  NewQueryProcessor(),
+		queryCompletion: make(map[string]bool),
 	}
 }
 
@@ -32,7 +35,7 @@ func (gbw *GroupByWorker) Start() {
 	fmt.Printf("\033[37m[WORKER %d] Started and waiting for chunks\033[0m\n", gbw.workerID)
 
 	for gbw.running {
-		chunk, ok := <-gbw.chunkQueue
+		chunkData, ok := <-gbw.chunkQueue
 		if !ok {
 			// Channel closed, worker should stop
 			fmt.Printf("\033[37m[WORKER %d] Chunk queue closed, stopping\033[0m\n", gbw.workerID)
@@ -41,17 +44,38 @@ func (gbw *GroupByWorker) Start() {
 		}
 
 		fmt.Printf("\033[37m[WORKER %d] RECEIVED CHUNK - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\033[0m\n",
-			gbw.workerID, chunk.ClientID, chunk.QueryType, chunk.Step, chunk.ChunkNumber, len(chunk.ChunkData), chunk.IsLastChunk)
-		fmt.Printf("\033[37m[WORKER %d] CHUNK DATA:\n%s\033[0m\n", gbw.workerID, chunk.ChunkData)
+			gbw.workerID, chunkData.ClientID, chunkData.QueryType, chunkData.Step, chunkData.ChunkNumber, len(chunkData.ChunkData), chunkData.IsLastChunk)
+		fmt.Printf("\033[37m[WORKER %d] CHUNK DATA:\n%s\033[0m\n", gbw.workerID, chunkData.ChunkData)
 
 		// Process the chunk
-		result := gbw.processChunk(chunk)
+		result := gbw.processChunk(chunkData)
 		if result != nil {
 			// Send result to partial reducer
 			gbw.partialChannel <- result
 			fmt.Printf("\033[37m[WORKER %d] SENT RESULT - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\033[0m\n",
 				gbw.workerID, result.ClientID, result.QueryType, result.Step, result.ChunkNumber, len(result.ChunkData), result.IsLastChunk)
 			fmt.Printf("\033[37m[WORKER %d] RESULT DATA:\n%s\033[0m\n", gbw.workerID, result.ChunkData)
+
+			// Check if this is the last chunk for this specific query
+			if result.IsLastChunk {
+				queryKey := fmt.Sprintf("%d_%s", result.QueryType, result.ClientID)
+				gbw.queryCompletion[queryKey] = true
+				fmt.Printf("\033[37m[WORKER %d] QUERY COMPLETED - QueryKey: %s\033[0m\n", gbw.workerID, queryKey)
+
+				// Send a special completion signal to partial reducer for this query
+				completionChunk := &chunk.Chunk{
+					ClientID:    result.ClientID,
+					QueryType:   result.QueryType,
+					TableID:     0,
+					ChunkSize:   0,
+					ChunkNumber: -1, // Special marker for completion
+					IsLastChunk: true,
+					Step:        result.Step,
+					ChunkData:   "", // Empty data for completion signal
+				}
+				gbw.partialChannel <- completionChunk
+				fmt.Printf("\033[37m[WORKER %d] SENT QUERY COMPLETION SIGNAL - QueryKey: %s\033[0m\n", gbw.workerID, queryKey)
+			}
 		}
 	}
 
