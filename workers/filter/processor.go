@@ -1,12 +1,143 @@
-package main
+package filter
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
+
+func filterYearAndHour(line string, ts_pos int) bool {
+	fields := strings.Split(line, ",")
+	if len(fields) < ts_pos+1 {
+		fmt.Printf("Filter Worker: Malformed record (expected at least %d fields): %s\n", ts_pos+1, line)
+		return false
+	}
+
+	ts := strings.TrimSpace(fields[ts_pos])
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.Local)
+	if err != nil {
+		fmt.Printf("Filter Worker: Failed to parse timestamp '%s': %v\n", ts, err)
+		return false
+	}
+	y := t.Year()
+	hr := t.Hour()
+	return (y == 2024 || y == 2025) && (hr >= 6 && hr <= 23)
+}
+
+func filterYear(line string, ts_pos int) bool {
+	fields := strings.Split(line, ",")
+	if len(fields) < ts_pos+1 {
+		fmt.Printf("Filter Worker: Malformed record (expected at least %d fields): %s\n", ts_pos+1, line)
+		return false
+	}
+
+	ts := strings.TrimSpace(fields[ts_pos])
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.Local)
+	if err != nil {
+		fmt.Printf("Filter Worker: Failed to parse timestamp '%s': %v\n", ts, err)
+		return false
+	}
+	y := t.Year()
+	return (y == 2024 || y == 2025)
+}
+
+func filterAmmount(line string, amm_pos int) bool {
+	fields := strings.Split(line, ",")
+	if len(fields) < amm_pos+1 {
+		fmt.Printf("Filter Worker: Malformed record (expected at least %d fields): %s\n", amm_pos+1, line)
+		return false
+	}
+
+	amm, err := strconv.Atoi(strings.TrimSpace(fields[amm_pos]))
+	if err != nil {
+		fmt.Printf("Filter Worker: Failed to parse integer from field[%d] '%s': %v\n", amm_pos, fields[amm_pos], err)
+		return false
+	}
+	return amm >= 75
+}
+
+func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware.MessageMiddlewareError) {
+	var responseBuilder strings.Builder
+	responseSize := 0
+	switch queryType {
+	case chunk.QueryType1:
+
+		for _, l := range strings.Split(data, "\n") {
+
+			if l == "" {
+				continue
+			}
+			pass := filterYearAndHour(l, 8) && filterAmmount(l, 7)
+			if pass {
+				responseBuilder.WriteString(l)
+				responseBuilder.WriteByte('\n')
+				responseSize += 1
+			}
+		}
+	case chunk.QueryType2:
+
+		for _, l := range strings.Split(data, "\n") {
+
+			if l == "" {
+				continue
+			}
+			pass := filterYear(l, 5)
+			if pass {
+				responseBuilder.WriteString(l)
+				responseBuilder.WriteByte('\n')
+				responseSize += 1
+			}
+		}
+	case chunk.QueryType3:
+		for _, l := range strings.Split(data, "\n") {
+
+			if l == "" {
+				continue
+			}
+			pass := filterYearAndHour(l, 8)
+			if pass {
+				responseBuilder.WriteString(l)
+				responseBuilder.WriteByte('\n')
+				responseSize += 1
+			}
+		}
+	case chunk.QueryType4:
+		for _, l := range strings.Split(data, "\n") {
+
+			if l == "" {
+				continue
+			}
+			pass := filterYear(l, 8)
+			if pass {
+				responseBuilder.WriteString(l)
+				responseBuilder.WriteByte('\n')
+				responseSize += 1
+			}
+		}
+
+	default:
+		fmt.Printf("Filter Worker: Unknown QueryType: %d\n", queryType)
+		return chunk.Chunk{}, middleware.MessageMiddlewareMessageError
+	}
+
+	var chunkMsg chunk.Chunk
+	chunkMsg.ClientID = "1"
+	chunkMsg.QueryType = queryType
+	chunkMsg.TableID = 1
+	chunkMsg.ChunkNumber = 0
+	chunkMsg.IsLastChunk = true
+	chunkMsg.Step = step
+	chunkMsg.ChunkData = responseBuilder.String()
+	chunkMsg.ChunkSize = responseSize
+
+	return chunkMsg, 0
+
+}
 
 // processMessage processes a single message
 func (fw *FilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
@@ -18,15 +149,17 @@ func (fw *FilterWorker) processMessage(delivery amqp.Delivery) middleware.Messag
 		fmt.Printf("Filter Worker: Failed to deserialize chunk message: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
-
 	// Process the chunk (filter logic would go here)
 	fmt.Printf("Filter Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
 		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber)
 
-	// TODO: Implement actual filtering logic here
+	responseChunk, msgErr := FilterLogic(chunkMsg.Step, chunkMsg.QueryType, chunkMsg.ChunkData)
+	if msgErr != 0 {
+		fmt.Printf("Filter Worker: Failed to apply filter logic: %v\n", msgErr)
+		return msgErr
+	}
 
-	// Send reply back to orchestrator
-	return fw.sendReply(chunkMsg)
+	return fw.sendReply(&responseChunk)
 }
 
 // sendReply sends a processed chunk as a reply back to the orchestrator
