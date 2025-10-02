@@ -1,4 +1,4 @@
-package filter
+package main
 
 import (
 	"fmt"
@@ -26,6 +26,8 @@ func filterYearAndHour(line string, ts_pos int) bool {
 	}
 	y := t.Year()
 	hr := t.Hour()
+	fmt.Printf("Filter Worker: Year: %d, Hour: %d\n", y, hr)
+	fmt.Printf("Filter Worker: Condition: %t\n", (y == 2024 || y == 2025) && (hr >= 6 && hr <= 23))
 	return (y == 2024 || y == 2025) && (hr >= 6 && hr <= 23)
 }
 
@@ -53,23 +55,26 @@ func filterAmmount(line string, amm_pos int) bool {
 		return false
 	}
 
-	amm, err := strconv.Atoi(strings.TrimSpace(fields[amm_pos]))
+	amm, err := strconv.ParseFloat(strings.TrimSpace(fields[amm_pos]), 64)
+
+	fmt.Printf("Filter Worker: Ammount: %f\n", amm)
 	if err != nil {
-		fmt.Printf("Filter Worker: Failed to parse integer from field[%d] '%s': %v\n", amm_pos, fields[amm_pos], err)
+		fmt.Printf("Filter Worker: Failed to parse float from field[%d] '%s': %v\n", amm_pos, fields[amm_pos], err)
 		return false
 	}
+	fmt.Printf("Filter Worker: Condition: %t\n", amm >= 75)
 	return amm >= 75
 }
 
-func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware.MessageMiddlewareError) {
+func FilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMiddlewareError) {
 	var responseBuilder strings.Builder
 	responseSize := 0
-	switch queryType {
+	switch chunkMsg.QueryType {
 	case chunk.QueryType1:
-
-		for _, l := range strings.Split(data, "\n") {
-
-			if l == "" {
+		lines := strings.Split(chunkMsg.ChunkData, "\n")
+		// Skip header row (first line) and process data rows
+		for i, l := range lines {
+			if i == 0 || l == "" {
 				continue
 			}
 			pass := filterYearAndHour(l, 8) && filterAmmount(l, 7)
@@ -80,10 +85,10 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 			}
 		}
 	case chunk.QueryType2:
-
-		for _, l := range strings.Split(data, "\n") {
-
-			if l == "" {
+		lines := strings.Split(chunkMsg.ChunkData, "\n")
+		// Skip header row (first line) and process data rows
+		for i, l := range lines {
+			if i == 0 || l == "" {
 				continue
 			}
 			pass := filterYear(l, 5)
@@ -94,9 +99,10 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 			}
 		}
 	case chunk.QueryType3:
-		for _, l := range strings.Split(data, "\n") {
-
-			if l == "" {
+		lines := strings.Split(chunkMsg.ChunkData, "\n")
+		// Skip header row (first line) and process data rows
+		for i, l := range lines {
+			if i == 0 || l == "" {
 				continue
 			}
 			pass := filterYearAndHour(l, 8)
@@ -107,9 +113,10 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 			}
 		}
 	case chunk.QueryType4:
-		for _, l := range strings.Split(data, "\n") {
-
-			if l == "" {
+		lines := strings.Split(chunkMsg.ChunkData, "\n")
+		// Skip header row (first line) and process data rows
+		for i, l := range lines {
+			if i == 0 || l == "" {
 				continue
 			}
 			pass := filterYear(l, 8)
@@ -121,21 +128,17 @@ func FilterLogic(step int, queryType byte, data string) (chunk.Chunk, middleware
 		}
 
 	default:
-		fmt.Printf("Filter Worker: Unknown QueryType: %d\n", queryType)
+		fmt.Printf("Filter Worker: Unknown QueryType: %d\n", chunkMsg.QueryType)
 		return chunk.Chunk{}, middleware.MessageMiddlewareMessageError
 	}
 
-	var chunkMsg chunk.Chunk
-	chunkMsg.ClientID = "1"
-	chunkMsg.QueryType = queryType
-	chunkMsg.TableID = 1
-	chunkMsg.ChunkNumber = 0
-	chunkMsg.IsLastChunk = true
-	chunkMsg.Step = step
 	chunkMsg.ChunkData = responseBuilder.String()
 	chunkMsg.ChunkSize = responseSize
 
-	return chunkMsg, 0
+	fmt.Printf("Filter Worker: Response Size: %d\n", responseSize)
+	fmt.Printf("Filter Worker: Response: %s\n", responseBuilder.String())
+
+	return *chunkMsg, 0
 
 }
 
@@ -153,7 +156,7 @@ func (fw *FilterWorker) processMessage(delivery amqp.Delivery) middleware.Messag
 	fmt.Printf("Filter Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
 		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber)
 
-	responseChunk, msgErr := FilterLogic(chunkMsg.Step, chunkMsg.QueryType, chunkMsg.ChunkData)
+	responseChunk, msgErr := FilterLogic(chunkMsg)
 	if msgErr != 0 {
 		fmt.Printf("Filter Worker: Failed to apply filter logic: %v\n", msgErr)
 		return msgErr
