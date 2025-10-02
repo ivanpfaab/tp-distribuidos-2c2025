@@ -67,7 +67,7 @@ func (c *Consumers) declareDataHandlerQueue(config *middleware.ConnectionConfig)
 	defer queueConsumer.Close()
 
 	// Declare the queue (same parameters as data handler)
-	if err := queueConsumer.DeclareQueue(true, false, false, false); err != 0 {
+	if err := queueConsumer.DeclareQueue(false, false, false, false); err != 0 {
 		return err
 	}
 
@@ -87,7 +87,7 @@ func (c *Consumers) declareReplyQueue(config *middleware.ConnectionConfig) middl
 	defer queueConsumer.Close()
 
 	// Declare the queue (same parameters as data handler)
-	if err := queueConsumer.DeclareQueue(true, false, false, false); err != 0 {
+	if err := queueConsumer.DeclareQueue(false, false, false, false); err != 0 {
 		return err
 	}
 

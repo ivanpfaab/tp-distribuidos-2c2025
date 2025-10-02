@@ -50,6 +50,13 @@ type ReferenceData struct {
 	mutex     sync.RWMutex
 }
 
+// ReferenceDataFiles tracks which reference data files have been received
+type ReferenceDataFiles struct {
+	receivedFiles map[string]bool // fileID -> received
+	expectedFiles map[string]int  // queryType -> expected count
+	mutex         sync.RWMutex
+}
+
 // ChunkQueue stores pending chunks waiting for reference data
 type ChunkQueue struct {
 	chunks []*chunk.Chunk
@@ -61,6 +68,16 @@ var referenceData = &ReferenceData{
 	menuItems: make(map[string]*MenuItem),
 	stores:    make(map[string]*Store),
 	users:     make(map[string]*User),
+}
+
+// Global reference data files tracking
+var referenceDataFiles = &ReferenceDataFiles{
+	receivedFiles: make(map[string]bool),
+	expectedFiles: map[string]int{
+		"menu_items": 1, // MN01
+		"stores":     1, // ST01
+		"users":      2, // US01, US02 (users_202401.csv, users_202501.csv)
+	},
 }
 
 // Global chunk queue for pending chunks
@@ -87,6 +104,61 @@ func (cq *ChunkQueue) GetAndClearChunks() []*chunk.Chunk {
 	return chunks
 }
 
+// Helper functions for reference data files tracking
+func (rdf *ReferenceDataFiles) MarkFileReceived(fileID string) {
+	rdf.mutex.Lock()
+	defer rdf.mutex.Unlock()
+	rdf.receivedFiles[fileID] = true
+	fmt.Printf("Join Worker: Marked file %s as received\n", fileID)
+}
+
+func (rdf *ReferenceDataFiles) GetReceivedCountForQueryType(queryType uint8) int {
+	rdf.mutex.RLock()
+	defer rdf.mutex.RUnlock()
+
+	var prefix string
+	switch queryType {
+	case 2:
+		prefix = "MN" // menu_items
+	case 3:
+		prefix = "ST" // stores
+	case 4:
+		prefix = "US" // users
+	default:
+		return 0
+	}
+
+	count := 0
+	for fileID := range rdf.receivedFiles {
+		if strings.HasPrefix(fileID, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+func (rdf *ReferenceDataFiles) GetExpectedCountForQueryType(queryType uint8) int {
+	rdf.mutex.RLock()
+	defer rdf.mutex.RUnlock()
+
+	var key string
+	switch queryType {
+	case 2:
+		key = "menu_items"
+	case 3:
+		key = "stores"
+	case 4:
+		key = "users"
+	default:
+		return 0
+	}
+
+	if expected, exists := rdf.expectedFiles[key]; exists {
+		return expected
+	}
+	return 0
+}
+
 // Helper function to check if reference data is ready for a query type
 func isReferenceDataReady(queryType uint8) bool {
 	referenceData.mutex.RLock()
@@ -95,13 +167,19 @@ func isReferenceDataReady(queryType uint8) bool {
 	switch queryType {
 	case 2:
 		// Query 2: Need menu_items for item_id joins
-		return len(referenceData.menuItems) > 0
+		return len(referenceData.menuItems) > 0 &&
+			referenceDataFiles.GetReceivedCountForQueryType(queryType) >= referenceDataFiles.GetExpectedCountForQueryType(queryType)
 	case 3:
 		// Query 3: Need stores for store_id joins
-		return len(referenceData.stores) > 0
+		return len(referenceData.stores) > 0 &&
+			referenceDataFiles.GetReceivedCountForQueryType(queryType) >= referenceDataFiles.GetExpectedCountForQueryType(queryType)
 	case 4:
-		// Query 4: Need users for user_id joins
-		return len(referenceData.users) > 0
+		// Query 4: Need users for user_id joins - wait for ALL user files
+		receivedCount := referenceDataFiles.GetReceivedCountForQueryType(queryType)
+		expectedCount := referenceDataFiles.GetExpectedCountForQueryType(queryType)
+		fmt.Printf("Join Worker: Query 4 readiness check - Received: %d, Expected: %d, Users loaded: %d\n",
+			receivedCount, expectedCount, len(referenceData.users))
+		return len(referenceData.users) > 0 && receivedCount >= expectedCount
 	default:
 		return false
 	}
@@ -232,27 +310,29 @@ func (jw *JoinWorker) handleReferenceDataCSVMessage(message string) error {
 
 	fmt.Printf("Join Worker: Reference data CSV for FileID: %s (size: %d bytes)\n", fileID, len(csvData))
 
+	// Mark this file as received
+	referenceDataFiles.MarkFileReceived(fileID)
+
 	// Parse and load the reference data based on fileID
-	switch fileID {
-	case "MN01":
+	if strings.HasPrefix(fileID, "MN") {
 		fmt.Printf("Join Worker: Parsing menu items CSV data\n")
 		if err := jw.parseMenuItemsData(csvData); err != nil {
 			return fmt.Errorf("failed to parse menu items CSV data: %w", err)
 		}
 		fmt.Printf("Join Worker: Menu items CSV data parsed successfully\n")
-	case "ST01":
+	} else if strings.HasPrefix(fileID, "ST") {
 		fmt.Printf("Join Worker: Parsing stores CSV data\n")
 		if err := jw.parseStoresData(csvData); err != nil {
 			return fmt.Errorf("failed to parse stores CSV data: %w", err)
 		}
 		fmt.Printf("Join Worker: Stores CSV data parsed successfully\n")
-	case "US01":
+	} else if strings.HasPrefix(fileID, "US") {
 		fmt.Printf("Join Worker: Parsing users CSV data\n")
 		if err := jw.parseUsersData(csvData); err != nil {
 			return fmt.Errorf("failed to parse users CSV data: %w", err)
 		}
 		fmt.Printf("Join Worker: Users CSV data parsed successfully\n")
-	default:
+	} else {
 		fmt.Printf("Join Worker: Unknown reference data fileID: %s\n", fileID)
 		return fmt.Errorf("unknown reference data fileID: %s", fileID)
 	}
@@ -284,6 +364,34 @@ func (jw *JoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, error) {
 func (jw *JoinWorker) joinTransactionItemsWithMenuItems(chunkMsg *chunk.Chunk) (*chunk.Chunk, error) {
 	fmt.Printf("Join Worker: Joining transaction_items (FileID: %s) with menu_items\n", chunkMsg.FileID)
 
+	// Check if this is grouped data from GroupBy (Step 3) or raw data
+	if jw.isGroupedData(chunkMsg.ChunkData) {
+		fmt.Printf("Join Worker: Received grouped data, joining with menu items\n")
+		// Parse the grouped data from GroupBy
+		groupedData, err := jw.parseGroupedTransactionItemsData(string(chunkMsg.ChunkData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse grouped transaction items data: %w", err)
+		}
+
+		// Perform the join with grouped data
+		joinedData := jw.performGroupedTransactionItemMenuJoin(groupedData)
+
+		// Create new chunk with joined data
+		joinedChunk := &chunk.Chunk{
+			ClientID:    chunkMsg.ClientID,
+			FileID:      chunkMsg.FileID,
+			QueryType:   chunkMsg.QueryType,
+			ChunkNumber: chunkMsg.ChunkNumber,
+			IsLastChunk: chunkMsg.IsLastChunk,
+			Step:        chunkMsg.Step,
+			ChunkSize:   len(joinedData),
+			TableID:     chunkMsg.TableID,
+			ChunkData:   joinedData,
+		}
+
+		return joinedChunk, nil
+	}
+
 	// Parse the transaction items data
 	transactionItemsData, err := jw.parseTransactionItemsData(string(chunkMsg.ChunkData))
 	if err != nil {
@@ -313,6 +421,34 @@ func (jw *JoinWorker) joinTransactionItemsWithMenuItems(chunkMsg *chunk.Chunk) (
 func (jw *JoinWorker) joinTransactionsWithStores(chunkMsg *chunk.Chunk) (*chunk.Chunk, error) {
 	fmt.Printf("Join Worker: Joining transactions (FileID: %s) with stores\n", chunkMsg.FileID)
 
+	// Check if this is grouped data from GroupBy (Step 3) or raw data
+	if jw.isGroupedData(chunkMsg.ChunkData) {
+		fmt.Printf("Join Worker: Received grouped data, joining with stores\n")
+		// Parse the grouped data from GroupBy
+		groupedData, err := jw.parseGroupedTransactionData(string(chunkMsg.ChunkData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse grouped transaction data: %w", err)
+		}
+
+		// Perform the join with grouped data
+		joinedData := jw.performGroupedTransactionStoreJoin(groupedData)
+
+		// Create new chunk with joined data
+		joinedChunk := &chunk.Chunk{
+			ClientID:    chunkMsg.ClientID,
+			FileID:      chunkMsg.FileID,
+			QueryType:   chunkMsg.QueryType,
+			ChunkNumber: chunkMsg.ChunkNumber,
+			IsLastChunk: chunkMsg.IsLastChunk,
+			Step:        chunkMsg.Step,
+			ChunkSize:   len(joinedData),
+			TableID:     chunkMsg.TableID,
+			ChunkData:   joinedData,
+		}
+
+		return joinedChunk, nil
+	}
+
 	// Parse the transaction data
 	transactionData, err := jw.parseTransactionData(string(chunkMsg.ChunkData))
 	if err != nil {
@@ -341,6 +477,34 @@ func (jw *JoinWorker) joinTransactionsWithStores(chunkMsg *chunk.Chunk) (*chunk.
 // joinTransactionsWithUsers joins transactions with users on user_id
 func (jw *JoinWorker) joinTransactionsWithUsers(chunkMsg *chunk.Chunk) (*chunk.Chunk, error) {
 	fmt.Printf("Join Worker: Joining transactions (FileID: %s) with users\n", chunkMsg.FileID)
+
+	// Check if this is grouped data from GroupBy (Step 3) or raw data
+	if jw.isGroupedData(chunkMsg.ChunkData) {
+		fmt.Printf("Join Worker: Received grouped data, joining with users\n")
+		// Parse the grouped data from GroupBy
+		groupedData, err := jw.parseGroupedUserTransactionData(string(chunkMsg.ChunkData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse grouped user transaction data: %w", err)
+		}
+
+		// Perform the join with grouped data
+		joinedData := jw.performGroupedTransactionUserJoin(groupedData)
+
+		// Create new chunk with joined data
+		joinedChunk := &chunk.Chunk{
+			ClientID:    chunkMsg.ClientID,
+			FileID:      chunkMsg.FileID,
+			QueryType:   chunkMsg.QueryType,
+			ChunkNumber: chunkMsg.ChunkNumber,
+			IsLastChunk: chunkMsg.IsLastChunk,
+			Step:        chunkMsg.Step,
+			ChunkSize:   len(joinedData),
+			TableID:     chunkMsg.TableID,
+			ChunkData:   joinedData,
+		}
+
+		return joinedChunk, nil
+	}
 
 	// Parse the transaction data
 	transactionData, err := jw.parseTransactionData(string(chunkMsg.ChunkData))
@@ -615,6 +779,221 @@ func (jw *JoinWorker) performTransactionStoreJoin(transactions []map[string]stri
 	return result.String()
 }
 
+// isGroupedData checks if the data is grouped data from GroupBy
+func (jw *JoinWorker) isGroupedData(data string) bool {
+	// Check if the data has the grouped schema (year,month,item_id,quantity,subtotal,count)
+	// or (year,semester,store_id,total_final_amount,count) or (user_id,store_id,count)
+	lines := strings.Split(data, "\n")
+	if len(lines) < 1 {
+		return false
+	}
+
+	header := lines[0]
+	// Check for grouped data headers
+	// Query 2: year,month,item_id,quantity,subtotal,count
+	// Query 3: year,semester,store_id,total_final_amount,count
+	// Query 4: user_id,store_id,count
+	return (strings.Contains(header, "year") && strings.Contains(header, "count")) ||
+		(strings.Contains(header, "user_id") && strings.Contains(header, "store_id") && strings.Contains(header, "count"))
+}
+
+// parseGroupedTransactionItemsData parses grouped transaction items data from GroupBy
+func (jw *JoinWorker) parseGroupedTransactionItemsData(csvData string) ([]map[string]string, error) {
+	reader := csv.NewReader(strings.NewReader(csvData))
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CSV: %w", err)
+	}
+
+	var groupedItems []map[string]string
+
+	// Skip header row
+	for i := 1; i < len(records); i++ {
+		record := records[i]
+		if len(record) >= 6 {
+			item := map[string]string{
+				"year":     record[0],
+				"month":    record[1],
+				"item_id":  record[2],
+				"quantity": record[3],
+				"subtotal": record[4],
+				"count":    record[5],
+			}
+			groupedItems = append(groupedItems, item)
+		}
+	}
+
+	return groupedItems, nil
+}
+
+// performGroupedTransactionItemMenuJoin performs the join between grouped transaction items and menu items
+func (jw *JoinWorker) performGroupedTransactionItemMenuJoin(groupedItems []map[string]string) string {
+	var result strings.Builder
+
+	// Write header for joined grouped data
+	result.WriteString("year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal\n")
+
+	referenceData.mutex.RLock()
+	defer referenceData.mutex.RUnlock()
+
+	for _, item := range groupedItems {
+		itemID := item["item_id"]
+		if menuItem, exists := referenceData.menuItems[itemID]; exists {
+			// Join successful - write all fields
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+				item["year"],
+				item["month"],
+				item["item_id"],
+				item["quantity"],
+				item["subtotal"],
+				item["count"],
+				menuItem.ItemName,
+				menuItem.Category,
+				menuItem.Price,
+				menuItem.IsSeasonal,
+			))
+		} else {
+			// Join failed - write original data with empty joined fields
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,,,,\n",
+				item["year"],
+				item["month"],
+				item["item_id"],
+				item["quantity"],
+				item["subtotal"],
+				item["count"],
+			))
+		}
+	}
+
+	return result.String()
+}
+
+// parseGroupedTransactionData parses grouped transaction data from GroupBy (Query Type 3)
+func (jw *JoinWorker) parseGroupedTransactionData(csvData string) ([]map[string]string, error) {
+	reader := csv.NewReader(strings.NewReader(csvData))
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CSV: %w", err)
+	}
+
+	var groupedTransactions []map[string]string
+
+	// Skip header row
+	for i := 1; i < len(records); i++ {
+		record := records[i]
+		if len(record) >= 5 {
+			transaction := map[string]string{
+				"year":               record[0],
+				"semester":           record[1],
+				"store_id":           record[2],
+				"total_final_amount": record[3],
+				"count":              record[4],
+			}
+			groupedTransactions = append(groupedTransactions, transaction)
+		}
+	}
+
+	return groupedTransactions, nil
+}
+
+// performGroupedTransactionStoreJoin performs the join between grouped transactions and stores
+func (jw *JoinWorker) performGroupedTransactionStoreJoin(groupedTransactions []map[string]string) string {
+	var result strings.Builder
+
+	// Write header for joined grouped data
+	result.WriteString("year,semester,store_id,total_final_amount,count,store_name,street,postal_code,city,state,latitude,longitude\n")
+
+	referenceData.mutex.RLock()
+	defer referenceData.mutex.RUnlock()
+
+	for _, transaction := range groupedTransactions {
+		storeID := transaction["store_id"]
+		if store, exists := referenceData.stores[storeID]; exists {
+			// Join successful - write all fields
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+				transaction["year"],
+				transaction["semester"],
+				transaction["store_id"],
+				transaction["total_final_amount"],
+				transaction["count"],
+				store.StoreName,
+				store.Street,
+				store.PostalCode,
+				store.City,
+				store.State,
+				store.Latitude,
+				store.Longitude,
+			))
+		} else {
+			// Join failed - write original data with empty joined fields
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,,,,,,,\n",
+				transaction["year"],
+				transaction["semester"],
+				transaction["store_id"],
+				transaction["total_final_amount"],
+				transaction["count"],
+			))
+		}
+	}
+
+	return result.String()
+}
+
+// parseGroupedUserTransactionData parses grouped user transaction data from GroupBy (Query Type 4)
+func (jw *JoinWorker) parseGroupedUserTransactionData(csvData string) ([]map[string]string, error) {
+	reader := csv.NewReader(strings.NewReader(csvData))
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CSV: %w", err)
+	}
+
+	var groupedUserTransactions []map[string]string
+
+	// Skip header row
+	for i := 1; i < len(records); i++ {
+		record := records[i]
+		if len(record) >= 3 {
+			transaction := map[string]string{
+				"user_id":  record[0],
+				"store_id": record[1],
+				"count":    record[2],
+			}
+			groupedUserTransactions = append(groupedUserTransactions, transaction)
+		}
+	}
+
+	return groupedUserTransactions, nil
+}
+
+// performGroupedTransactionUserJoin performs the join between grouped transactions and users
+func (jw *JoinWorker) performGroupedTransactionUserJoin(groupedUserTransactions []map[string]string) string {
+	var result strings.Builder
+
+	// Write header for joined grouped data
+	result.WriteString("user_id,store_id,count,gender,birthdate,registered_at\n")
+
+	referenceData.mutex.RLock()
+	defer referenceData.mutex.RUnlock()
+
+	for _, transaction := range groupedUserTransactions {
+		userID := transaction["user_id"]
+		if user, exists := referenceData.users[userID]; exists {
+			// INNER JOIN: Only include records where there's a match
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s\n",
+				transaction["user_id"],
+				transaction["store_id"],
+				transaction["count"],
+				user.Gender,
+				user.Birthdate,
+				user.RegisteredAt,
+			))
+		}
+		// INNER JOIN: Skip records where there's no match (don't write anything)
+	}
+
+	return result.String()
+}
+
 // performTransactionUserJoin performs the join between transactions and users
 func (jw *JoinWorker) performTransactionUserJoin(transactions []map[string]string) string {
 	var result strings.Builder
@@ -628,7 +1007,7 @@ func (jw *JoinWorker) performTransactionUserJoin(transactions []map[string]strin
 	for _, transaction := range transactions {
 		userID := transaction["user_id"]
 		if user, exists := referenceData.users[userID]; exists {
-			// Join successful - write all fields
+			// INNER JOIN: Only include records where there's a match
 			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 				transaction["transaction_id"],
 				transaction["store_id"],
@@ -643,20 +1022,8 @@ func (jw *JoinWorker) performTransactionUserJoin(transactions []map[string]strin
 				user.Birthdate,
 				user.RegisteredAt,
 			))
-		} else {
-			// Join failed - write original data with empty joined fields
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,,,\n",
-				transaction["transaction_id"],
-				transaction["store_id"],
-				transaction["payment_method_id"],
-				transaction["voucher_id"],
-				transaction["user_id"],
-				transaction["original_amount"],
-				transaction["discount_applied"],
-				transaction["final_amount"],
-				transaction["created_at"],
-			))
 		}
+		// INNER JOIN: Skip records where there's no match (don't write anything)
 	}
 
 	return result.String()

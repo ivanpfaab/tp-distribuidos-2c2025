@@ -56,8 +56,8 @@ func (dww *DataWriterWorker) DeclareQueue() middleware.MessageMiddlewareError {
 	}
 	defer queueProducer.Close()
 
-	// Declare the queue (durable, not auto-delete, not exclusive, wait for confirmation)
-	if err := queueProducer.DeclareQueue(true, false, false, false); err != 0 {
+	// Declare the queue (non-durable, not auto-delete, not exclusive, wait for confirmation)
+	if err := queueProducer.DeclareQueue(false, false, false, false); err != 0 {
 		return err
 	}
 

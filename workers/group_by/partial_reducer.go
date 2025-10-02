@@ -47,8 +47,8 @@ func (gbpr *GroupByPartialReducer) Start() {
 		resultChunk, ok := <-gbpr.workerChannel
 		if !ok {
 			// Worker channel closed, worker finished
-			fmt.Printf("\033[33m[PARTIAL REDUCER %d] Worker finished, applying reduction for all queries\033[0m\n", gbpr.reducerID)
-			gbpr.applyReductionForAllQueries()
+			//fmt.Printf("\033[33m[PARTIAL REDUCER %d] Worker finished, applying reduction for all queries\033[0m\n", gbpr.reducerID)
+			// gbpr.applyReductionForAllQueries()
 			gbpr.running = false
 			break
 		}
@@ -67,7 +67,9 @@ func (gbpr *GroupByPartialReducer) Start() {
 				fmt.Printf("\033[33m[PARTIAL REDUCER %d] APPLYING REDUCTION FOR QUERY - QueryKey: %s\033[0m\n", gbpr.reducerID, queryKey)
 				gbpr.applyReductionForQuery(queryKey, queryState)
 			} else {
-				fmt.Printf("\033[33m[PARTIAL REDUCER %d] WARNING - No data found for completed query: %s\033[0m\n", gbpr.reducerID, queryKey)
+				fmt.Printf("\033[33m[PARTIAL REDUCER %d] WARNING - No data found for completed query: %s, sending empty result\033[0m\n", gbpr.reducerID, queryKey)
+				// Send empty result to final reducer so it can collect from all partial reducers
+				gbpr.sendEmptyResult(resultChunk)
 			}
 		} else {
 			// Store the result from worker
@@ -176,6 +178,30 @@ func (gbpr *GroupByPartialReducer) applyReductionForQuery(queryKey string, query
 	// Clear collected data for this query
 	queryState.collectedData = make([]string, 0)
 	queryState.workerFinished = true
+}
+
+// sendEmptyResult sends an empty result to the final reducer for queries with no data
+func (gbpr *GroupByPartialReducer) sendEmptyResult(completionChunk *chunk.Chunk) {
+	fmt.Printf("\033[33m[PARTIAL REDUCER %d] SENDING EMPTY RESULT - QueryType: %d, ClientID: %s\033[0m\n",
+		gbpr.reducerID, completionChunk.QueryType, completionChunk.ClientID)
+
+	// Create empty result chunk
+	emptyResultChunk := chunk.NewChunk(
+		completionChunk.ClientID,
+		completionChunk.FileID,
+		completionChunk.QueryType,
+		0,     // ChunkNumber
+		false, // IsLastChunk
+		completionChunk.Step,
+		0, // ChunkSize
+		completionChunk.TableID,
+		"", // Empty data
+	)
+
+	// Send empty result to final reducer
+	gbpr.reducerChannel <- emptyResultChunk
+	fmt.Printf("\033[33m[PARTIAL REDUCER %d] SENT EMPTY RESULT - QueryType: %d, ClientID: %s\033[0m\n",
+		gbpr.reducerID, completionChunk.QueryType, completionChunk.ClientID)
 }
 
 // Stop stops the partial reducer

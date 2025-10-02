@@ -29,6 +29,17 @@ type GroupByOrchestrator struct {
 	reducerChannel  chan *chunk.Chunk
 	done            chan bool
 	wg              sync.WaitGroup
+
+	// EOS signaling components
+	eosSignalIn    chan EOSMessage
+	eosTransmitter *EOSTransmitter
+
+	// Query-specific coordination
+	queryCompletion map[string]int // key: "queryType_clientID", value: completed workers count
+
+	// Result channel management
+	resultChannels map[string]chan *chunk.Chunk // key: "clientID_queryType", value: result channel
+	resultMutex    sync.RWMutex
 }
 
 // NewGroupByOrchestrator creates a new orchestrator with RabbitMQ integration
@@ -71,6 +82,9 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 		partialChannels[i] = make(chan *chunk.Chunk)
 	}
 
+	// Create EOS signaling channel
+	eosSignalIn := make(chan EOSMessage, numWorkers)
+
 	orchestrator := &GroupByOrchestrator{
 		// RabbitMQ components
 		consumer:      consumer,
@@ -84,12 +98,25 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 		partialChannels: partialChannels,
 		reducerChannel:  reducerChannel,
 		done:            make(chan bool),
+
+		// EOS signaling components
+		eosSignalIn: eosSignalIn,
+
+		// Query-specific coordination
+		queryCompletion: make(map[string]int),
+
+		// Result channel management
+		resultChannels: make(map[string]chan *chunk.Chunk),
 	}
+
+	// Create EOS transmitter first (needed for workers)
+	orchestrator.eosTransmitter = NewEOSTransmitter(eosSignalIn, numWorkers)
 
 	// Create workers
 	orchestrator.workers = make([]*GroupByWorker, numWorkers)
 	for i := 0; i < numWorkers; i++ {
-		orchestrator.workers[i] = NewGroupByWorker(i, chunkQueue, workerChannels[i])
+		eosChannel := orchestrator.eosTransmitter.GetWorkerChannel(i)
+		orchestrator.workers[i] = NewGroupByWorker(i, chunkQueue, workerChannels[i], eosChannel, orchestrator.eosTransmitter)
 	}
 
 	// Create partial reducers
@@ -131,6 +158,20 @@ func (gbo *GroupByOrchestrator) Start() middleware.MessageMiddlewareError {
 	go func() {
 		defer gbo.wg.Done()
 		gbo.reducer.Start()
+	}()
+
+	// Start EOS transmitter
+	gbo.wg.Add(1)
+	go func() {
+		defer gbo.wg.Done()
+		gbo.eosTransmitter.Start()
+	}()
+
+	// Start result dispatcher
+	gbo.wg.Add(1)
+	go func() {
+		defer gbo.wg.Done()
+		gbo.startResultDispatcher()
 	}()
 
 	// Start listening for messages from RabbitMQ (if consumer is available)
@@ -220,22 +261,27 @@ func (gbo *GroupByOrchestrator) processMessage(delivery amqp.Delivery) middlewar
 
 // waitForResult waits for the final result from the distributed processing
 func (gbo *GroupByOrchestrator) waitForResult(originalChunk *chunk.Chunk) {
-	fmt.Printf("GroupBy Orchestrator: Waiting for result for ClientID: %s, ChunkNumber: %d\n",
-		originalChunk.ClientID, originalChunk.ChunkNumber)
+	fmt.Printf("GroupBy Orchestrator: Waiting for result for ClientID: %s, QueryType: %d, ChunkNumber: %d\n",
+		originalChunk.ClientID, originalChunk.QueryType, originalChunk.ChunkNumber)
 
-	// Listen for results from the reducer
-	for resultChunk := range gbo.reducerChannel {
-		// Check if this result matches our original chunk
-		if resultChunk.ClientID == originalChunk.ClientID && resultChunk.QueryType == originalChunk.QueryType {
-			fmt.Printf("GroupBy Orchestrator: Received final result - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\n",
-				resultChunk.ClientID, resultChunk.QueryType, resultChunk.Step, resultChunk.ChunkNumber, len(resultChunk.ChunkData), resultChunk.IsLastChunk)
-			fmt.Printf("GroupBy Orchestrator: FINAL RESULT DATA:\n%s\n", resultChunk.ChunkData)
+	// Create a unique result channel for this specific query
+	resultChan := make(chan *chunk.Chunk, 1)
 
-			// Send the result back to the query orchestrator
-			gbo.sendReply(resultChunk)
-			break
-		}
-	}
+	// Register this result channel with the orchestrator
+	gbo.registerResultChannel(originalChunk.ClientID, originalChunk.QueryType, resultChan)
+
+	// Wait for our specific result
+	resultChunk := <-resultChan
+	fmt.Printf("GroupBy Orchestrator: Received final result - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\n",
+		resultChunk.ClientID, resultChunk.QueryType, resultChunk.Step, resultChunk.ChunkNumber, len(resultChunk.ChunkData), resultChunk.IsLastChunk)
+	fmt.Printf("GroupBy Orchestrator: FINAL RESULT DATA:\n%s\n", resultChunk.ChunkData)
+
+	// Send reply regardless of data size - empty results are valid for some queries
+	fmt.Printf("GroupBy Orchestrator: Sending reply (Size: %d)\n", len(resultChunk.ChunkData))
+	gbo.sendReply(resultChunk)
+
+	// Clean up the result channel
+	gbo.unregisterResultChannel(originalChunk.ClientID, originalChunk.QueryType)
 }
 
 // sendReply sends a processed chunk as a reply back to the orchestrator
@@ -277,9 +323,9 @@ func (gbo *GroupByOrchestrator) ProcessChunk(chunk *chunk.Chunk) {
 		fmt.Printf("\033[35m[ORCHESTRATOR] QUEUED CHUNK %d (after delay)\033[0m\n", chunk.ChunkNumber)
 	}
 
-	// Note: We don't immediately signal completion here anymore
-	// The orchestrator will wait for explicit FinishProcessing() call
-	// This allows multiple queries to be processed simultaneously
+	// Note: EOS signals are now sent by workers when they process the last chunk
+	// This avoids race conditions where workers might receive EOS signals before
+	// they finish processing all chunks from the shared queue
 }
 
 // FinishProcessing signals that all chunks have been sent and workers should finish
@@ -308,4 +354,53 @@ func (gbo *GroupByOrchestrator) ResetForNextQuery() {
 // GetResultChannel returns the channel where final results are sent
 func (gbo *GroupByOrchestrator) GetResultChannel() <-chan *chunk.Chunk {
 	return gbo.reducerChannel
+}
+
+// registerResultChannel registers a result channel for a specific query
+func (gbo *GroupByOrchestrator) registerResultChannel(clientID string, queryType byte, resultChan chan *chunk.Chunk) {
+	gbo.resultMutex.Lock()
+	defer gbo.resultMutex.Unlock()
+
+	key := fmt.Sprintf("%s_%d", clientID, queryType)
+	gbo.resultChannels[key] = resultChan
+	fmt.Printf("GroupBy Orchestrator: Registered result channel for %s\n", key)
+}
+
+// unregisterResultChannel unregisters a result channel for a specific query
+func (gbo *GroupByOrchestrator) unregisterResultChannel(clientID string, queryType byte) {
+	gbo.resultMutex.Lock()
+	defer gbo.resultMutex.Unlock()
+
+	key := fmt.Sprintf("%s_%d", clientID, queryType)
+	if resultChan, exists := gbo.resultChannels[key]; exists {
+		close(resultChan)
+		delete(gbo.resultChannels, key)
+		fmt.Printf("GroupBy Orchestrator: Unregistered result channel for %s\n", key)
+	}
+}
+
+// startResultDispatcher dispatches results from the reducer channel to the appropriate waiting goroutines
+func (gbo *GroupByOrchestrator) startResultDispatcher() {
+	fmt.Println("GroupBy Orchestrator: Starting result dispatcher...")
+
+	for resultChunk := range gbo.reducerChannel {
+		gbo.resultMutex.RLock()
+
+		key := fmt.Sprintf("%s_%d", resultChunk.ClientID, resultChunk.QueryType)
+		if resultChan, exists := gbo.resultChannels[key]; exists {
+			// Send result to the waiting goroutine
+			select {
+			case resultChan <- resultChunk:
+				fmt.Printf("GroupBy Orchestrator: Dispatched result to %s\n", key)
+			default:
+				fmt.Printf("GroupBy Orchestrator: WARNING - Result channel for %s is full\n", key)
+			}
+		} else {
+			fmt.Printf("GroupBy Orchestrator: WARNING - No waiting goroutine found for %s\n", key)
+		}
+
+		gbo.resultMutex.RUnlock()
+	}
+
+	fmt.Println("GroupBy Orchestrator: Result dispatcher stopped")
 }

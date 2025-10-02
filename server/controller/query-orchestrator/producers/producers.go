@@ -7,11 +7,10 @@ import (
 
 // Producers manages all exchange producers for the query orchestrator
 type Producers struct {
-	FilterProducer     *exchange.ExchangeMiddleware
-	AggregatorProducer *exchange.ExchangeMiddleware
-	JoinProducer       *exchange.ExchangeMiddleware
-	GroupByProducer    *exchange.ExchangeMiddleware
-	StreamingProducer  *exchange.ExchangeMiddleware
+	FilterProducer    *exchange.ExchangeMiddleware
+	JoinProducer      *exchange.ExchangeMiddleware
+	GroupByProducer   *exchange.ExchangeMiddleware
+	StreamingProducer *exchange.ExchangeMiddleware
 }
 
 // NewProducers creates a new Producers instance
@@ -28,16 +27,6 @@ func (p *Producers) Initialize(config *middleware.ConnectionConfig) middleware.M
 		config,
 	)
 	if p.FilterProducer == nil {
-		return middleware.MessageMiddlewareDisconnectedError
-	}
-
-	// Initialize Aggregator producer
-	p.AggregatorProducer = exchange.NewMessageMiddlewareExchange(
-		"aggregator-exchange",
-		[]string{"aggregator"},
-		config,
-	)
-	if p.AggregatorProducer == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
@@ -81,11 +70,6 @@ func (p *Producers) DeclareExchanges() middleware.MessageMiddlewareError {
 		return err
 	}
 
-	// Declare Aggregator exchange
-	if err := p.AggregatorProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
-		return err
-	}
-
 	// Declare Join exchange
 	if err := p.JoinProducer.DeclareExchange("topic", true, false, false, false); err != 0 {
 		return err
@@ -114,12 +98,6 @@ func (p *Producers) Close() middleware.MessageMiddlewareError {
 		}
 	}
 
-	if p.AggregatorProducer != nil {
-		if err := p.AggregatorProducer.Close(); err != 0 {
-			lastErr = err
-		}
-	}
-
 	if p.JoinProducer != nil {
 		if err := p.JoinProducer.Close(); err != 0 {
 			lastErr = err
@@ -144,11 +122,6 @@ func (p *Producers) Close() middleware.MessageMiddlewareError {
 // SendToFilter sends a message to the filter exchange
 func (p *Producers) SendToFilter(data []byte) middleware.MessageMiddlewareError {
 	return p.FilterProducer.Send(data, []string{"filter"})
-}
-
-// SendToAggregator sends a message to the aggregator exchange
-func (p *Producers) SendToAggregator(data []byte) middleware.MessageMiddlewareError {
-	return p.AggregatorProducer.Send(data, []string{"aggregator"})
 }
 
 // SendToJoin sends a message to the join exchange

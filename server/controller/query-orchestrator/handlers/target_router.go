@@ -31,14 +31,10 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 		case 1:
 			return "filter"
 		case 2:
-			return "aggregator"
-		case 3:
 			return "groupby"
-		case 4:
-			return "filter"
-		case 5:
+		case 3:
 			return "join"
-		case 6:
+		case 4:
 			return "streaming"
 		}
 	case 3:
@@ -46,12 +42,10 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 		case 1:
 			return "filter"
 		case 2:
-			return "aggregator"
-		case 3:
 			return "groupby"
-		case 4:
+		case 3:
 			return "join"
-		case 5:
+		case 4:
 			return "streaming"
 		}
 	case 4:
@@ -61,11 +55,62 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 		case 2:
 			return "groupby"
 		case 3:
-			return "filter"
-		case 4:
 			return "join"
-		case 5:
+		case 4:
 			return "streaming"
+		}
+	}
+
+	// Default case - could be an error or default routing
+	return "unknown"
+}
+
+// DetermineNextTarget returns the next target node based on QueryType and current Step
+// This is used for processing replies and determining the next step in the pipeline
+func (tr *TargetRouter) DetermineNextTarget(queryType uint8, currentStep int) string {
+	fmt.Println("QueryType: ", queryType)
+	fmt.Println("Current Step: ", currentStep)
+
+	switch queryType {
+	case 1:
+		switch currentStep {
+		case 1:
+			return "streaming" // Filter -> Streaming
+		case 2:
+			return "unknown" // Already at final step
+		}
+	case 2:
+		switch currentStep {
+		case 1:
+			return "groupby" // Filter -> GroupBy
+		case 2:
+			return "join" // GroupBy -> Join
+		case 3:
+			return "streaming" // Join -> Streaming
+		case 4:
+			return "unknown" // Already at final step
+		}
+	case 3:
+		switch currentStep {
+		case 1:
+			return "groupby" // Filter -> GroupBy
+		case 2:
+			return "join" // GroupBy -> Join
+		case 3:
+			return "streaming" // Join -> Streaming
+		case 4:
+			return "unknown" // Already at final step
+		}
+	case 4:
+		switch currentStep {
+		case 1:
+			return "groupby" // Filter -> GroupBy
+		case 2:
+			return "join" // GroupBy -> Join
+		case 3:
+			return "streaming" // Join -> Streaming
+		case 4:
+			return "unknown" // Already at final step
 		}
 	}
 
