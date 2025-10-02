@@ -102,6 +102,9 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 		queryCompletion: make(map[string]int),
 	}
 
+	// Create EOS transmitter first (needed for workers)
+	orchestrator.eosTransmitter = NewEOSTransmitter(eosSignalIn, numWorkers)
+
 	// Create workers
 	orchestrator.workers = make([]*GroupByWorker, numWorkers)
 	for i := 0; i < numWorkers; i++ {
@@ -117,9 +120,6 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 
 	// Create final reducer
 	orchestrator.reducer = NewGroupByReducer(partialChannels, reducerChannel)
-
-	// Create EOS transmitter
-	orchestrator.eosTransmitter = NewEOSTransmitter(eosSignalIn, numWorkers)
 
 	return orchestrator, nil
 }
@@ -258,15 +258,11 @@ func (gbo *GroupByOrchestrator) waitForResult(originalChunk *chunk.Chunk) {
 				resultChunk.ClientID, resultChunk.QueryType, resultChunk.Step, resultChunk.ChunkNumber, len(resultChunk.ChunkData), resultChunk.IsLastChunk)
 			fmt.Printf("GroupBy Orchestrator: FINAL RESULT DATA:\n%s\n", resultChunk.ChunkData)
 
-			// Only send reply if the result has actual data (Size > 0)
-			// This prevents sending empty results that come from completion signals
-			if len(resultChunk.ChunkData) > 0 {
-				fmt.Printf("GroupBy Orchestrator: Sending reply with actual data (Size: %d)\n", len(resultChunk.ChunkData))
-				gbo.sendReply(resultChunk)
-				break
-			} else {
-				fmt.Printf("GroupBy Orchestrator: Ignoring empty result, waiting for data...\n")
-			}
+			// Send reply regardless of data size - empty results are valid for some queries
+			// The downstream services (streaming/join) can handle empty results appropriately
+			fmt.Printf("GroupBy Orchestrator: Sending reply (Size: %d)\n", len(resultChunk.ChunkData))
+			gbo.sendReply(resultChunk)
+			break
 		}
 	}
 }

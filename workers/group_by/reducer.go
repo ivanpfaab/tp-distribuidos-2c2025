@@ -98,17 +98,31 @@ func (gbr *GroupByReducer) listenToPartialReducer(partialChannel <-chan *chunk.C
 				resultChunk.QueryType, resultChunk.Step, resultChunk.ClientID)
 		}
 
-		// Store the result from partial reducer
-		lines := strings.Split(resultChunk.ChunkData, "\n")
-		for _, line := range lines {
-			if strings.TrimSpace(line) != "" {
-				gbr.queryStates[queryKey].collectedData = append(gbr.queryStates[queryKey].collectedData, line)
+		// Store the result from partial reducer (only if it has actual data)
+		if len(strings.TrimSpace(resultChunk.ChunkData)) > 0 {
+			lines := strings.Split(resultChunk.ChunkData, "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					gbr.queryStates[queryKey].collectedData = append(gbr.queryStates[queryKey].collectedData, line)
+				}
 			}
 		}
 
 		gbr.queryStates[queryKey].receivedResults++
+
+		// Count lines for logging
+		lineCount := 0
+		if len(strings.TrimSpace(resultChunk.ChunkData)) > 0 {
+			lines := strings.Split(resultChunk.ChunkData, "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					lineCount++
+				}
+			}
+		}
+
 		fmt.Printf("\033[32m[FINAL REDUCER] COLLECTED - From Partial %d (%d/%d) - Lines: %d, Total: %d for QueryType %d\033[0m\n",
-			reducerID, gbr.queryStates[queryKey].receivedResults, gbr.queryStates[queryKey].expectedResults, len(lines), len(gbr.queryStates[queryKey].collectedData), resultChunk.QueryType)
+			reducerID, gbr.queryStates[queryKey].receivedResults, gbr.queryStates[queryKey].expectedResults, lineCount, len(gbr.queryStates[queryKey].collectedData), resultChunk.QueryType)
 
 		// Check if we have received all expected results for this query and haven't processed it yet
 		if gbr.queryStates[queryKey].receivedResults >= gbr.queryStates[queryKey].expectedResults && !gbr.queryStates[queryKey].processed {

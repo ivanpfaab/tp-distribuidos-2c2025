@@ -524,10 +524,12 @@ func (qp *QueryProcessor) processQueryType4Raw(chunkData *chunk.Chunk) []QueryTy
 		}
 
 		// Parse using schema-driven column mapping
-		userID, err := strconv.Atoi(record[colMap["user_id"]])
+		// user_id might be a float, so parse as float first then convert to int
+		userIDFloat, err := strconv.ParseFloat(record[colMap["user_id"]], 64)
 		if err != nil {
 			continue
 		}
+		userID := int(userIDFloat)
 
 		storeID, err := strconv.Atoi(record[colMap["store_id"]])
 		if err != nil {
@@ -601,10 +603,12 @@ func (qp *QueryProcessor) processQueryType4Grouped(chunkData *chunk.Chunk) []Que
 		}
 
 		// Parse using schema-driven column mapping
-		userID, err := strconv.Atoi(record[colMap["user_id"]])
+		// user_id might be a float, so parse as float first then convert to int
+		userIDFloat, err := strconv.ParseFloat(record[colMap["user_id"]], 64)
 		if err != nil {
 			continue
 		}
+		userID := int(userIDFloat)
 
 		storeID, err := strconv.Atoi(record[colMap["store_id"]])
 		if err != nil {
