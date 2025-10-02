@@ -71,6 +71,9 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 	// Convert results to CSV format
 	resultData := gbw.queryProcessor.ResultsToCSV(results, int(chunkData.QueryType))
 
+	// Get the number of groups for logging
+	numGroups := getResultLength(results, int(chunkData.QueryType))
+
 	// Create result chunk
 	resultChunk := &chunk.Chunk{
 		ClientID:    chunkData.ClientID,
@@ -83,7 +86,7 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 	}
 
 	fmt.Printf("\033[37m[WORKER %d] COMPLETED - ChunkNumber: %d, Groups: %d, Size: %d bytes\033[0m\n",
-		gbw.workerID, chunkData.ChunkNumber, len(results), len(resultData))
+		gbw.workerID, chunkData.ChunkNumber, numGroups, len(resultData))
 
 	return resultChunk
 }
@@ -91,4 +94,18 @@ func (gbw *GroupByWorker) processChunk(chunkData *chunk.Chunk) *chunk.Chunk {
 // Stop stops the worker
 func (gbw *GroupByWorker) Stop() {
 	gbw.running = false
+}
+
+// getResultLength returns the length of results based on query type
+func getResultLength(results interface{}, queryType int) int {
+	switch queryType {
+	case 2:
+		return len(results.([]QueryType2Result))
+	case 3:
+		return len(results.([]QueryType3Result))
+	case 4:
+		return len(results.([]QueryType4Result))
+	default:
+		return 0
+	}
 }

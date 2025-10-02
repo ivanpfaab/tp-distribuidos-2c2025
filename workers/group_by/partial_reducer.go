@@ -111,6 +111,10 @@ func (gbpr *GroupByPartialReducer) applyReduction() {
 
 	// Convert results to CSV format
 	resultData := gbpr.queryProcessor.ResultsToCSV(results, int(gbpr.queryType))
+
+	// Get the number of groups for logging
+	numGroups := getResultLength(results, int(gbpr.queryType))
+
 	resultChunk := &chunk.Chunk{
 		ClientID:    gbpr.clientID,
 		QueryType:   gbpr.queryType,
@@ -125,7 +129,7 @@ func (gbpr *GroupByPartialReducer) applyReduction() {
 	// Send result to final reducer
 	gbpr.reducerChannel <- resultChunk
 	fmt.Printf("\033[33m[PARTIAL REDUCER %d] SENT RESULT - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Groups: %d, Size: %d, IsLastChunk: %t\033[0m\n",
-		gbpr.reducerID, gbpr.clientID, gbpr.queryType, gbpr.step, resultChunk.ChunkNumber, len(results), len(resultData), resultChunk.IsLastChunk)
+		gbpr.reducerID, gbpr.clientID, gbpr.queryType, gbpr.step, resultChunk.ChunkNumber, numGroups, len(resultData), resultChunk.IsLastChunk)
 	fmt.Printf("\033[33m[PARTIAL REDUCER %d] REDUCED DATA:\n%s\033[0m\n", gbpr.reducerID, resultData)
 
 	// Clear collected data for next query

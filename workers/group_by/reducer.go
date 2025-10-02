@@ -142,6 +142,10 @@ func (gbr *GroupByReducer) applyFinalReduction() {
 
 	// Convert results to CSV format
 	resultData := gbr.queryProcessor.ResultsToCSV(results, int(gbr.queryType))
+
+	// Get the number of groups for logging
+	numGroups := getResultLength(results, int(gbr.queryType))
+
 	resultChunk := &chunk.Chunk{
 		ClientID:    gbr.clientID,
 		QueryType:   gbr.queryType,
@@ -156,7 +160,7 @@ func (gbr *GroupByReducer) applyFinalReduction() {
 	// Send final result
 	gbr.resultChannel <- resultChunk
 	fmt.Printf("\033[32m[FINAL REDUCER] SENT RESULT - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Groups: %d, Size: %d, IsLastChunk: %t\033[0m\n",
-		gbr.clientID, gbr.queryType, gbr.step, resultChunk.ChunkNumber, len(results), len(resultData), resultChunk.IsLastChunk)
+		gbr.clientID, gbr.queryType, gbr.step, resultChunk.ChunkNumber, numGroups, len(resultData), resultChunk.IsLastChunk)
 	fmt.Printf("\033[32m[FINAL REDUCER] FINAL DATA:\n%s\033[0m\n", resultData)
 
 	// Clear collected data for next query

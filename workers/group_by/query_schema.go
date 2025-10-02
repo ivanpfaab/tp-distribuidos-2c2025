@@ -10,15 +10,27 @@ const (
 	GroupedData
 )
 
-// QueryType1Schemas defines the schemas for QueryType 1 (transaction_items)
-type QueryType1Schemas struct {
+// QueryType2Schemas defines the schemas for QueryType 2 (transaction_items - group by year, month, item_id)
+type QueryType2Schemas struct {
 	RawSchema     []string
 	GroupedSchema []string
 }
 
-// GetQueryType1Schemas returns the schemas for QueryType 1
-func GetQueryType1Schemas() QueryType1Schemas {
-	return QueryType1Schemas{
+// QueryType3Schemas defines the schemas for QueryType 3 (transactions - group by year, semester, store_id)
+type QueryType3Schemas struct {
+	RawSchema     []string
+	GroupedSchema []string
+}
+
+// QueryType4Schemas defines the schemas for QueryType 4 (transactions - group by user_id, store_id)
+type QueryType4Schemas struct {
+	RawSchema     []string
+	GroupedSchema []string
+}
+
+// GetQueryType2Schemas returns the schemas for QueryType 2
+func GetQueryType2Schemas() QueryType2Schemas {
+	return QueryType2Schemas{
 		RawSchema: []string{
 			"transaction_id",
 			"item_id",
@@ -38,11 +50,72 @@ func GetQueryType1Schemas() QueryType1Schemas {
 	}
 }
 
+// GetQueryType3Schemas returns the schemas for QueryType 3
+func GetQueryType3Schemas() QueryType3Schemas {
+	return QueryType3Schemas{
+		RawSchema: []string{
+			"transaction_id",
+			"store_id",
+			"payment_method_id",
+			"voucher_id",
+			"user_id",
+			"original_amount",
+			"discount_applied",
+			"final_amount",
+			"created_at",
+		},
+		GroupedSchema: []string{
+			"year",
+			"semester",
+			"store_id",
+			"total_final_amount",
+			"count",
+		},
+	}
+}
+
+// GetQueryType4Schemas returns the schemas for QueryType 4
+func GetQueryType4Schemas() QueryType4Schemas {
+	return QueryType4Schemas{
+		RawSchema: []string{
+			"transaction_id",
+			"store_id",
+			"payment_method_id",
+			"voucher_id",
+			"user_id",
+			"original_amount",
+			"discount_applied",
+			"final_amount",
+			"created_at",
+		},
+		GroupedSchema: []string{
+			"user_id",
+			"store_id",
+			"count",
+		},
+	}
+}
+
 // GetSchemaForQueryType returns the appropriate schema for a given query type and data type
 func GetSchemaForQueryType(queryType int, dataType DataSchema) []string {
 	switch queryType {
 	case 1:
-		schemas := GetQueryType1Schemas()
+		// QueryType 1 has no group by - return empty schema
+		return []string{}
+	case 2:
+		schemas := GetQueryType2Schemas()
+		if dataType == RawData {
+			return schemas.RawSchema
+		}
+		return schemas.GroupedSchema
+	case 3:
+		schemas := GetQueryType3Schemas()
+		if dataType == RawData {
+			return schemas.RawSchema
+		}
+		return schemas.GroupedSchema
+	case 4:
+		schemas := GetQueryType4Schemas()
 		if dataType == RawData {
 			return schemas.RawSchema
 		}
@@ -50,51 +123,4 @@ func GetSchemaForQueryType(queryType int, dataType DataSchema) []string {
 	default:
 		return []string{}
 	}
-}
-
-// IsGroupedData checks if the data appears to be grouped based on its schema
-func IsGroupedData(data string, queryType int) bool {
-	if queryType != 1 {
-		return false
-	}
-
-	// Check if the first line contains grouped schema indicators
-	groupedSchema := GetQueryType1Schemas().GroupedSchema
-	firstLine := data
-	if len(data) > 0 {
-		// Get first line
-		for i, char := range data {
-			if char == '\n' {
-				firstLine = data[:i]
-				break
-			}
-		}
-	}
-
-	// Check if it contains grouped schema fields
-	for _, field := range groupedSchema {
-		if !contains(firstLine, field) {
-			return false
-		}
-	}
-	return true
-}
-
-// contains checks if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		(len(s) > len(substr) &&
-			(s[:len(substr)] == substr ||
-				s[len(s)-len(substr):] == substr ||
-				containsMiddle(s, substr))))
-}
-
-// containsMiddle checks if substr is contained in the middle of s
-func containsMiddle(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
