@@ -113,10 +113,10 @@ func (jw *JoinWorker) processMessage(delivery amqp.Delivery) middleware.MessageM
 
 	// Check if this is a reference data message from the writer
 	messageBody := string(delivery.Body)
-	if strings.HasPrefix(messageBody, "REFERENCE_DATA_READY:") {
-		// Handle reference data message
-		if err := jw.handleReferenceDataMessage(messageBody); err != nil {
-			fmt.Printf("Join Worker: Failed to handle reference data message: %v\n", err)
+	if strings.HasPrefix(messageBody, "REFERENCE_DATA_CSV:") {
+		// Handle reference data CSV message
+		if err := jw.handleReferenceDataCSVMessage(messageBody); err != nil {
+			fmt.Printf("Join Worker: Failed to handle reference data CSV message: %v\n", err)
 			return middleware.MessageMiddlewareMessageError
 		}
 
@@ -167,9 +167,23 @@ func (jw *JoinWorker) processQueuedChunks() {
 		fmt.Printf("Join Worker: Processing queued chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
 			chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
 
-		if err := jw.processChunk(chunkMsg); err != 0 {
-			fmt.Printf("Join Worker: Failed to process queued chunk: %v\n", err)
-			// Continue processing other chunks even if one fails
+		// Check if reference data is ready for this query type
+		if !isReferenceDataReady(chunkMsg.QueryType) {
+			fmt.Printf("Join Worker: Reference data still not ready for QueryType: %d, re-queuing chunk\n", chunkMsg.QueryType)
+			chunkQueue.AddChunk(chunkMsg)
+			continue
+		}
+
+		// Perform the join operation
+		joinedChunk, err := jw.performJoin(chunkMsg)
+		if err != nil {
+			fmt.Printf("Join Worker: Failed to perform join on queued chunk: %v\n", err)
+			continue
+		}
+
+		// Send reply back to orchestrator
+		if err := jw.sendReply(joinedChunk); err != 0 {
+			fmt.Printf("Join Worker: Failed to send reply for queued chunk: %v\n", err)
 		}
 	}
 }
@@ -197,128 +211,52 @@ func (jw *JoinWorker) sendReply(chunkMsg *chunk.Chunk) middleware.MessageMiddlew
 	return 0
 }
 
-// handleReferenceDataMessage handles reference data messages from the writer
-func (jw *JoinWorker) handleReferenceDataMessage(message string) error {
-	fmt.Printf("Join Worker: Received reference data message: %s\n", message)
+// handleReferenceDataCSVMessage handles reference data CSV messages from the writer
+func (jw *JoinWorker) handleReferenceDataCSVMessage(message string) error {
+	fmt.Printf("Join Worker: Received reference data CSV message\n")
 
-	// Parse the message format: "REFERENCE_DATA_READY:fileID:chunk_N" or "REFERENCE_DATA_READY:fileID:N_chunks"
-	parts := strings.Split(message, ":")
-	if len(parts) != 3 || parts[0] != "REFERENCE_DATA_READY" {
-		return fmt.Errorf("invalid reference data message format")
+	// Parse the message format: "REFERENCE_DATA_CSV:fileID:csvData"
+	// Find the first two colons to split properly
+	firstColon := strings.Index(message, ":")
+	if firstColon == -1 {
+		return fmt.Errorf("invalid reference data CSV message format - no first colon")
 	}
 
-	fileID := parts[1]
-	chunkInfo := parts[2]
+	secondColon := strings.Index(message[firstColon+1:], ":")
+	if secondColon == -1 {
+		return fmt.Errorf("invalid reference data CSV message format - no second colon")
+	}
 
-	fmt.Printf("Join Worker: Reference data ready for FileID: %s, ChunkInfo: %s\n", fileID, chunkInfo)
+	fileID := message[firstColon+1 : firstColon+1+secondColon]
+	csvData := message[firstColon+1+secondColon+1:]
 
-	// Load the reference data based on fileID
+	fmt.Printf("Join Worker: Reference data CSV for FileID: %s (size: %d bytes)\n", fileID, len(csvData))
+
+	// Parse and load the reference data based on fileID
 	switch fileID {
 	case "MN01":
-		fmt.Printf("Join Worker: Loading menu items reference data\n")
-		if err := jw.loadMenuItemsData(); err != nil {
-			return fmt.Errorf("failed to load menu items data: %w", err)
+		fmt.Printf("Join Worker: Parsing menu items CSV data\n")
+		if err := jw.parseMenuItemsData(csvData); err != nil {
+			return fmt.Errorf("failed to parse menu items CSV data: %w", err)
 		}
-		fmt.Printf("Join Worker: Menu items reference data loaded successfully\n")
+		fmt.Printf("Join Worker: Menu items CSV data parsed successfully\n")
 	case "ST01":
-		fmt.Printf("Join Worker: Loading stores reference data\n")
-		if err := jw.loadStoresData(); err != nil {
-			return fmt.Errorf("failed to load stores data: %w", err)
+		fmt.Printf("Join Worker: Parsing stores CSV data\n")
+		if err := jw.parseStoresData(csvData); err != nil {
+			return fmt.Errorf("failed to parse stores CSV data: %w", err)
 		}
-		fmt.Printf("Join Worker: Stores reference data loaded successfully\n")
+		fmt.Printf("Join Worker: Stores CSV data parsed successfully\n")
 	case "US01":
-		fmt.Printf("Join Worker: Loading users reference data\n")
-		if err := jw.loadUsersData(); err != nil {
-			return fmt.Errorf("failed to load users data: %w", err)
+		fmt.Printf("Join Worker: Parsing users CSV data\n")
+		if err := jw.parseUsersData(csvData); err != nil {
+			return fmt.Errorf("failed to parse users CSV data: %w", err)
 		}
-		fmt.Printf("Join Worker: Users reference data loaded successfully\n")
+		fmt.Printf("Join Worker: Users CSV data parsed successfully\n")
 	default:
 		fmt.Printf("Join Worker: Unknown reference data fileID: %s\n", fileID)
 		return fmt.Errorf("unknown reference data fileID: %s", fileID)
 	}
 
-	return nil
-}
-
-// loadMenuItemsData loads menu items reference data
-func (jw *JoinWorker) loadMenuItemsData() error {
-	// For now, we'll create sample menu items data
-	// In a real implementation, this would fetch the actual CSV data from the data writer
-	sampleMenuItems := []MenuItem{
-		{ItemID: "1", ItemName: "Coffee", Category: "Beverages", Price: "6.0", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-		{ItemID: "2", ItemName: "Tea", Category: "Beverages", Price: "7.0", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-		{ItemID: "3", ItemName: "Sandwich", Category: "Food", Price: "8.0", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-		{ItemID: "4", ItemName: "Salad", Category: "Food", Price: "9.0", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-		{ItemID: "5", ItemName: "Cake", Category: "Dessert", Price: "9.0", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-		{ItemID: "6", ItemName: "Cookie", Category: "Dessert", Price: "9.5", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-		{ItemID: "7", ItemName: "Muffin", Category: "Dessert", Price: "9.0", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-		{ItemID: "8", ItemName: "Smoothie", Category: "Beverages", Price: "10.0", IsSeasonal: "false", AvailableFrom: "", AvailableTo: ""},
-	}
-
-	referenceData.mutex.Lock()
-	defer referenceData.mutex.Unlock()
-
-	for _, item := range sampleMenuItems {
-		referenceData.menuItems[item.ItemID] = &item
-	}
-
-	fmt.Printf("Join Worker: Loaded %d menu items\n", len(sampleMenuItems))
-	return nil
-}
-
-// loadStoresData loads stores reference data
-func (jw *JoinWorker) loadStoresData() error {
-	// For now, we'll create sample stores data
-	// In a real implementation, this would fetch the actual CSV data from the data writer
-	sampleStores := []Store{
-		{StoreID: "1", StoreName: "Downtown Store", Street: "Main St", PostalCode: "12345", City: "New York", State: "NY", Latitude: "40.7128", Longitude: "-74.0060"},
-		{StoreID: "2", StoreName: "Uptown Store", Street: "Broadway", PostalCode: "10001", City: "New York", State: "NY", Latitude: "40.7589", Longitude: "-73.9851"},
-		{StoreID: "3", StoreName: "Midtown Store", Street: "5th Ave", PostalCode: "10018", City: "New York", State: "NY", Latitude: "40.7505", Longitude: "-73.9934"},
-		{StoreID: "4", StoreName: "Central Store", Street: "Central Park", PostalCode: "10024", City: "New York", State: "NY", Latitude: "40.7829", Longitude: "-73.9654"},
-		{StoreID: "5", StoreName: "East Side Store", Street: "Lexington Ave", PostalCode: "10016", City: "New York", State: "NY", Latitude: "40.7489", Longitude: "-73.9857"},
-		{StoreID: "6", StoreName: "West Side Store", Street: "8th Ave", PostalCode: "10011", City: "New York", State: "NY", Latitude: "40.7505", Longitude: "-73.9934"},
-		{StoreID: "7", StoreName: "North Store", Street: "Harlem", PostalCode: "10026", City: "New York", State: "NY", Latitude: "40.8075", Longitude: "-73.9500"},
-		{StoreID: "8", StoreName: "South Store", Street: "Wall St", PostalCode: "10005", City: "New York", State: "NY", Latitude: "40.7074", Longitude: "-74.0113"},
-		{StoreID: "9", StoreName: "Brooklyn Store", Street: "Brooklyn Bridge", PostalCode: "11201", City: "Brooklyn", State: "NY", Latitude: "40.6892", Longitude: "-73.9442"},
-		{StoreID: "10", StoreName: "Queens Store", Street: "Queens Blvd", PostalCode: "11101", City: "Queens", State: "NY", Latitude: "40.7282", Longitude: "-73.7949"},
-	}
-
-	referenceData.mutex.Lock()
-	defer referenceData.mutex.Unlock()
-
-	for _, store := range sampleStores {
-		referenceData.stores[store.StoreID] = &store
-	}
-
-	fmt.Printf("Join Worker: Loaded %d stores\n", len(sampleStores))
-	return nil
-}
-
-// loadUsersData loads users reference data
-func (jw *JoinWorker) loadUsersData() error {
-	// For now, we'll create sample users data
-	// In a real implementation, this would fetch the actual CSV data from the data writer
-	sampleUsers := []User{
-		{UserID: "1", Gender: "M", Birthdate: "1990-01-01", RegisteredAt: "2023-01-01"},
-		{UserID: "2", Gender: "F", Birthdate: "1985-05-15", RegisteredAt: "2023-01-02"},
-		{UserID: "3", Gender: "M", Birthdate: "1992-03-20", RegisteredAt: "2023-01-03"},
-		{UserID: "4", Gender: "F", Birthdate: "1988-07-10", RegisteredAt: "2023-01-04"},
-		{UserID: "5", Gender: "M", Birthdate: "1995-11-25", RegisteredAt: "2023-01-05"},
-		{UserID: "6", Gender: "F", Birthdate: "1991-09-12", RegisteredAt: "2023-01-06"},
-		{UserID: "7", Gender: "M", Birthdate: "1987-04-08", RegisteredAt: "2023-01-07"},
-		{UserID: "8", Gender: "F", Birthdate: "1993-12-30", RegisteredAt: "2023-01-08"},
-		{UserID: "9", Gender: "M", Birthdate: "1989-06-18", RegisteredAt: "2023-01-09"},
-		{UserID: "10", Gender: "F", Birthdate: "1994-08-22", RegisteredAt: "2023-01-10"},
-	}
-
-	referenceData.mutex.Lock()
-	defer referenceData.mutex.Unlock()
-
-	for _, user := range sampleUsers {
-		referenceData.users[user.UserID] = &user
-	}
-
-	fmt.Printf("Join Worker: Loaded %d users\n", len(sampleUsers))
 	return nil
 }
 

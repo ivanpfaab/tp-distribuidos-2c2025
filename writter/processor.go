@@ -7,6 +7,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"strings"
 )
 
 // In-memory storage for chunks (for now)
@@ -115,58 +116,27 @@ func GetStorageStats() map[string]int {
 // isReferenceDataFile checks if the fileID corresponds to reference data
 func isReferenceDataFile(fileID string) bool {
 	// Reference data files that need to be sent to join worker:
-	// - ST01: stores.csv (for store_id joins in query 3)
-	// - MN01: menu_items.csv (for item_id joins in query 2)
-	// - US01: users_*.csv (for user_id joins in query 4)
-	return fileID == "ST01" || fileID == "MN01" || fileID == "US01"
+	// - ST: stores.csv (for store_id joins in query 3)
+	// - MN: menu_items.csv (for item_id joins in query 2)
+	// - US: users_*.csv (for user_id joins in query 4)
+	return strings.HasPrefix(fileID, "ST") || strings.HasPrefix(fileID, "MN") || strings.HasPrefix(fileID, "US")
 }
 
 // forwardReferenceDataToJoinWorker forwards reference data chunks directly to the join worker
-// TODO: In a future version, this should be enhanced to:
-// 1. Accumulate all chunks for a file before sending (for multi-chunk files)
-// 2. Send the actual CSV data instead of just a notification
-// 3. Handle chunk ordering and completeness validation
 func (dww *DataWriterWorker) forwardReferenceDataToJoinWorker(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	fmt.Printf("Data Writer: Forwarding reference data chunk for FileID: %s to join worker\n", chunkMsg.FileID)
 
-	// Create a simple notification message for the join worker
-	// In the future, this should send the actual CSV data
-	message := fmt.Sprintf("REFERENCE_DATA_READY:%s:chunk_%d", chunkMsg.FileID, chunkMsg.ChunkNumber)
+	// Send the actual CSV data to the join worker
+	// Format: "REFERENCE_DATA_CSV:fileID:csvData"
+	csvData := string(chunkMsg.ChunkData)
+	message := fmt.Sprintf("REFERENCE_DATA_CSV:%s:%s", chunkMsg.FileID, csvData)
 
-	// Send the reference data notification to the join worker
+	// Send the reference data CSV to the join worker
 	if err := dww.SendReferenceDataToJoinWorker(chunkMsg.FileID, []byte(message)); err != 0 {
-		fmt.Printf("Data Writer: Failed to send reference data to join worker: %v\n", err)
+		fmt.Printf("Data Writer: Failed to send reference data CSV to join worker: %v\n", err)
 		return err
 	}
 
-	fmt.Printf("Data Writer: Successfully sent reference data notification for FileID: %s\n", chunkMsg.FileID)
+	fmt.Printf("Data Writer: Successfully sent reference data CSV for FileID: %s (size: %d bytes)\n", chunkMsg.FileID, len(csvData))
 	return 0
-}
-
-// sendReferenceDataToJoinWorker sends all stored chunks for a reference data file to the join worker
-// DEPRECATED: This function is kept for backward compatibility but should be replaced by forwardReferenceDataToJoinWorker
-func (dww *DataWriterWorker) sendReferenceDataToJoinWorker(fileID, key string) middleware.MessageMiddlewareError {
-	fmt.Printf("Data Writer: === ENTERING sendReferenceDataToJoinWorker ===\n")
-	fmt.Printf("Data Writer: Preparing to send reference data for FileID: %s to join worker\n", fileID)
-	fmt.Printf("Data Writer: Key: %s, FileID: %s\n", key, fileID)
-
-	// Extract clientID from key (key format: "clientID_fileID")
-	clientID := key[:len(key)-len(fileID)-1] // Remove "_fileID" from the end
-	fmt.Printf("Data Writer: Extracted clientID: %s\n", clientID)
-
-	// Get all stored chunks for this file
-	chunks := GetStoredChunks(clientID, fileID)
-	if chunks == nil {
-		fmt.Printf("Data Writer: No chunks found for clientID: %s, fileID: %s\n", clientID, fileID)
-		fmt.Printf("Data Writer: Available keys in storage: %v\n", GetStorageStats())
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	fmt.Printf("Data Writer: Found %d chunks for clientID: %s, fileID: %s\n", len(chunks), clientID, fileID)
-
-	// For now, we'll send a simple message indicating the reference data is ready
-	// In a real implementation, this would serialize and send the actual CSV data
-	message := fmt.Sprintf("REFERENCE_DATA_READY:%s:%d_chunks", fileID, len(chunks))
-
-	return dww.SendReferenceDataToJoinWorker(fileID, []byte(message))
 }

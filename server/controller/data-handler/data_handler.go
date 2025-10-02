@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -78,18 +79,39 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 // isReferenceDataChunk checks if the chunk belongs to reference data files that need to be sent to writer
 func isReferenceDataChunk(fileID string) bool {
 	// Reference data files that need to be stored in writer for joins:
-	// - ST01: stores.csv (for store_id joins in query 3)
-	// - MN01: menu_items.csv (for item_id joins in query 2)
-	// - US01, US02: users_*.csv (for user_id joins in query 4)
-	return fileID == "ST01" || fileID == "MN01" || fileID == "US01" || fileID == "US02"
+	// - ST: stores.csv (for store_id joins in query 3)
+	// - MN: menu_items.csv (for item_id joins in query 2)
+	// - US, US: users_*.csv (for user_id joins in query 4)
+	return strings.HasPrefix(fileID, "ST") || strings.HasPrefix(fileID, "MN") || strings.HasPrefix(fileID, "US")
 }
 
 // isTransactionDataChunk checks if the chunk belongs to transaction data files
 func isTransactionDataChunk(fileID string) bool {
 	// Transaction data files:
-	// - TR01, TR02: transactions_*.csv (for store_id and user_id joins)
-	// - TI01, TI02: transaction_items_*.csv (for item_id joins)
-	return fileID == "TR01" || fileID == "TR02" || fileID == "TI01" || fileID == "TI02"
+	// - TR, TR: transactions_*.csv (for store_id and user_id joins)
+	// - TI, TI: transaction_items_*.csv (for item_id joins)
+	return strings.HasPrefix(fileID, "TR") || strings.HasPrefix(fileID, "TI")
+}
+
+// determineQueryType determines the query type based on the file ID
+func determineQueryType(fileID string) uint8 {
+	// Query type mapping based on file type:
+	// Query 2: transaction_items ↔ menu_items (on item_id)
+	// Query 3: transactions ↔ stores (on store_id)
+	// Query 4: transactions ↔ users (on user_id)
+
+	switch {
+	case strings.HasPrefix(fileID, "TI"):
+		// Transaction items files - Query 2 (item_id joins with menu_items)
+		return 2
+	case strings.HasPrefix(fileID, "TR"):
+		// Transaction files - Query 3 (store_id joins with stores)
+		// Note: For now, we'll use Query 3 for transactions.
+		return 3
+	default:
+		// Default to Query 3 for other transaction data files
+		return 3
+	}
 }
 
 // ProcessBatchMessage processes a batch message and creates chunks
@@ -111,11 +133,14 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	log.Printf("Data Handler: Processing batch - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
 		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.BatchData)
 
+	// Determine query type based on file type
+	queryType := determineQueryType(batchMsg.FileID)
+
 	// Create chunk from batch
 	chunkObj := chunk.NewChunk(
 		batchMsg.ClientID,       // clientID
 		batchMsg.FileID,         // fileID
-		2,                       // queryType (hardcoded for now)
+		queryType,               // queryType (determined by file type)
 		batchMsg.BatchNumber,    // chunkNumber
 		batchMsg.IsEOF,          // isLastChunk
 		0,                       // step (hardcoded to 0 as requested)
