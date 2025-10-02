@@ -38,7 +38,7 @@ test-protocol:
 
 test-filter:
 	@echo "Running filter worker tests..."
-	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/workers/filter_test.go
+	go test -v ./workers/filter_test.go
 
 # Clean up
 clean:
