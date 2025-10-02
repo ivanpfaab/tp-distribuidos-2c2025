@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -19,6 +20,9 @@ type DataHandler struct {
 
 	// Queue producer for sending chunks to query orchestrator
 	queueProducer *workerqueue.QueueMiddleware
+
+	// Queue producer for sending chunks to data writer
+	writerProducer *workerqueue.QueueMiddleware
 
 	// Configuration
 	config *middleware.ConnectionConfig
@@ -39,7 +43,7 @@ func NewDataHandlerForConnection(conn net.Conn, config *middleware.ConnectionCon
 	}
 }
 
-// Initialize sets up the queue producer for sending chunks to query orchestrator
+// Initialize sets up the queue producers for sending chunks to query orchestrator and data writer
 func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 	// Initialize queue producer for sending chunks to query orchestrator
 	dh.queueProducer = workerqueue.NewMessageMiddlewareQueue(
@@ -55,7 +59,59 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 		return err
 	}
 
+	// Initialize queue producer for sending chunks to data writer
+	dh.writerProducer = workerqueue.NewMessageMiddlewareQueue(
+		"data-writer-queue",
+		dh.config,
+	)
+	if dh.writerProducer == nil {
+		return middleware.MessageMiddlewareDisconnectedError
+	}
+
+	// Declare the writer producer queue
+	if err := dh.writerProducer.DeclareQueue(true, false, false, false); err != 0 {
+		return err
+	}
+
 	return 0
+}
+
+// isReferenceDataChunk checks if the chunk belongs to reference data files that need to be sent to writer
+func isReferenceDataChunk(fileID string) bool {
+	// Reference data files that need to be stored in writer for joins:
+	// - ST: stores.csv (for store_id joins in query 3)
+	// - MN: menu_items.csv (for item_id joins in query 2)
+	// - US, US: users_*.csv (for user_id joins in query 4)
+	return strings.HasPrefix(fileID, "ST") || strings.HasPrefix(fileID, "MN") || strings.HasPrefix(fileID, "US")
+}
+
+// isTransactionDataChunk checks if the chunk belongs to transaction data files
+func isTransactionDataChunk(fileID string) bool {
+	// Transaction data files:
+	// - TR, TR: transactions_*.csv (for store_id and user_id joins)
+	// - TI, TI: transaction_items_*.csv (for item_id joins)
+	return strings.HasPrefix(fileID, "TR") || strings.HasPrefix(fileID, "TI")
+}
+
+// determineQueryType determines the query type based on the file ID
+func determineQueryType(fileID string) uint8 {
+	// Query type mapping based on file type:
+	// Query 2: transaction_items ↔ menu_items (on item_id)
+	// Query 3: transactions ↔ stores (on store_id)
+	// Query 4: transactions ↔ users (on user_id)
+
+	switch {
+	case strings.HasPrefix(fileID, "TI"):
+		// Transaction items files - Query 2 (item_id joins with menu_items)
+		return 2
+	case strings.HasPrefix(fileID, "TR"):
+		// Transaction files - Query 3 (store_id joins with stores)
+		// Note: For now, we'll use Query 3 for transactions.
+		return 3
+	default:
+		// Default to Query 3 for other transaction data files
+		return 3
+	}
 }
 
 // ProcessBatchMessage processes a batch message and creates chunks
@@ -77,30 +133,92 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	log.Printf("Data Handler: Processing batch - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
 		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.BatchData)
 
-	// Create chunk from batch
-	chunkObj := chunk.NewChunk(
-		batchMsg.ClientID,       // clientID
-		batchMsg.FileID,        // fileID
-		2,                       // queryType (hardcoded for now)
-		batchMsg.BatchNumber,    // chunkNumber
-		batchMsg.IsEOF,          // isLastChunk
-		0,                       // step (hardcoded to 0 as requested)
-		len(batchMsg.BatchData), // chunkSize
-		1,                       // tableID (hardcoded for now)
-		batchMsg.BatchData,      // chunkData
-	)
+	// Route chunk based on file type
+	if isReferenceDataChunk(batchMsg.FileID) {
+		// Send reference data (stores, menu_items, users) to writer for join operations
+		queryType := determineQueryType(batchMsg.FileID)
 
-	// Create chunk message
-	chunkMsg := chunk.NewChunkMessage(chunkObj)
+		chunkObj := chunk.NewChunk(
+			batchMsg.ClientID,       // clientID
+			batchMsg.FileID,         // fileID
+			queryType,               // queryType (determined by file type)
+			batchMsg.BatchNumber,    // chunkNumber
+			batchMsg.IsEOF,          // isLastChunk
+			0,                       // step (hardcoded to 0 as requested)
+			len(batchMsg.BatchData), // chunkSize
+			1,                       // tableID (hardcoded for now)
+			batchMsg.BatchData,      // chunkData
+		)
 
-	// Send chunk to query orchestrator
-	if err := dh.SendChunk(chunkMsg); err != 0 {
-		log.Printf("Data Handler: Failed to send chunk: %v", err)
-		return fmt.Errorf("failed to send chunk: %v", err)
+		chunkMsg := chunk.NewChunkMessage(chunkObj)
+
+		if err := dh.SendChunkToWriter(chunkMsg); err != 0 {
+			log.Printf("Data Handler: Failed to send reference data chunk to writer: %v", err)
+			return fmt.Errorf("failed to send reference data chunk to writer: %v", err)
+		}
+		log.Printf("Data Handler: Sent reference data chunk to writer - ClientID: %s, FileID: %s, ChunkNumber: %d",
+			chunkObj.ClientID, chunkObj.FileID, chunkObj.ChunkNumber)
+
+	} else if isTransactionDataChunk(batchMsg.FileID) {
+		// Send transaction data to multiple queries
+		if strings.HasPrefix(batchMsg.FileID, "TR") {
+			// Transaction files need to be sent to queries 1, 3, and 4
+			queryTypes := []uint8{1, 3, 4}
+
+			for _, queryType := range queryTypes {
+				chunkObj := chunk.NewChunk(
+					batchMsg.ClientID,       // clientID
+					batchMsg.FileID,         // fileID
+					queryType,               // queryType (1, 3, or 4)
+					batchMsg.BatchNumber,    // chunkNumber
+					batchMsg.IsEOF,          // isLastChunk
+					0,                       // step (hardcoded to 0 as requested)
+					len(batchMsg.BatchData), // chunkSize
+					1,                       // tableID (hardcoded for now)
+					batchMsg.BatchData,      // chunkData
+				)
+
+				chunkMsg := chunk.NewChunkMessage(chunkObj)
+
+				if err := dh.SendChunk(chunkMsg); err != 0 {
+					log.Printf("Data Handler: Failed to send transaction data chunk to orchestrator (Query %d): %v", queryType, err)
+					return fmt.Errorf("failed to send transaction data chunk to orchestrator (Query %d): %v", queryType, err)
+				}
+				log.Printf("Data Handler: Sent transaction data chunk to orchestrator - ClientID: %s, FileID: %s, ChunkNumber: %d, QueryType: %d",
+					chunkObj.ClientID, chunkObj.FileID, chunkObj.ChunkNumber, queryType)
+			}
+		} else if strings.HasPrefix(batchMsg.FileID, "TI") {
+			// Transaction items files go to query 2
+			queryType := uint8(2)
+
+			chunkObj := chunk.NewChunk(
+				batchMsg.ClientID,       // clientID
+				batchMsg.FileID,         // fileID
+				queryType,               // queryType (2)
+				batchMsg.BatchNumber,    // chunkNumber
+				batchMsg.IsEOF,          // isLastChunk
+				0,                       // step (hardcoded to 0 as requested)
+				len(batchMsg.BatchData), // chunkSize
+				1,                       // tableID (hardcoded for now)
+				batchMsg.BatchData,      // chunkData
+			)
+
+			chunkMsg := chunk.NewChunkMessage(chunkObj)
+
+			if err := dh.SendChunk(chunkMsg); err != 0 {
+				log.Printf("Data Handler: Failed to send transaction items chunk to orchestrator: %v", err)
+				return fmt.Errorf("failed to send transaction items chunk to orchestrator: %v", err)
+			}
+			log.Printf("Data Handler: Sent transaction items chunk to orchestrator - ClientID: %s, FileID: %s, ChunkNumber: %d",
+				chunkObj.ClientID, chunkObj.FileID, chunkObj.ChunkNumber)
+		}
+	} else {
+		log.Printf("Data Handler: Unknown file type - ClientID: %s, FileID: %s, BatchNumber: %d",
+			batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
 	}
 
-	log.Printf("Data Handler: Created and sent chunk - ClientID: %s, ChunkNumber: %d, Step: %d, IsLastChunk: %t",
-		chunkObj.ClientID, chunkObj.ChunkNumber, chunkObj.Step, chunkObj.IsLastChunk)
+	log.Printf("Data Handler: Completed processing batch - ClientID: %s, FileID: %s, BatchNumber: %d, IsLastChunk: %t",
+		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.IsEOF)
 
 	return nil
 }
@@ -124,7 +242,7 @@ func (dh *DataHandler) Start() {
 
 // IsReady checks if the data handler is ready to process batches
 func (dh *DataHandler) IsReady() bool {
-	return dh.queueProducer != nil
+	return dh.queueProducer != nil && dh.writerProducer != nil
 }
 
 // SendChunk sends a chunk message to the query orchestrator
@@ -140,10 +258,34 @@ func (dh *DataHandler) SendChunk(chunkMsg *chunk.ChunkMessage) middleware.Messag
 	return dh.queueProducer.Send(messageData)
 }
 
+// SendChunkToWriter sends a chunk message to the data writer
+func (dh *DataHandler) SendChunkToWriter(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
+	// Serialize the chunk message
+	messageData, err := chunk.SerializeChunkMessage(chunkMsg)
+	if err != nil {
+		fmt.Printf("Failed to serialize chunk message for writer: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Send to writer queue
+	return dh.writerProducer.Send(messageData)
+}
+
 // Close closes all connections
 func (dh *DataHandler) Close() middleware.MessageMiddlewareError {
+	var err middleware.MessageMiddlewareError = 0
+
 	if dh.queueProducer != nil {
-		return dh.queueProducer.Close()
+		if closeErr := dh.queueProducer.Close(); closeErr != 0 {
+			err = closeErr
+		}
 	}
-	return 0
+
+	if dh.writerProducer != nil {
+		if closeErr := dh.writerProducer.Close(); closeErr != 0 {
+			err = closeErr
+		}
+	}
+
+	return err
 }

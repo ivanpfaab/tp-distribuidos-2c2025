@@ -39,6 +39,8 @@ services:
         condition: service_started
       streaming-service:
         condition: service_started
+      data-writer:
+        condition: service_started
     environment:
       - SERVER_PORT=8080
       - RABBITMQ_HOST=rabbitmq
@@ -158,6 +160,22 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
+
+  # Data writer service
+  data-writer:
+    build:
+      context: .
+      dockerfile: ./writter/Dockerfile
+    container_name: data-writer
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["data-flow", "orchestration"]
 
   # Testing (optional, can be run with profile)
   test-runner:
