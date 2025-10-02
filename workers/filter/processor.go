@@ -69,87 +69,104 @@ func filterAmmount(line string, amm_pos int) bool {
 func FilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMiddlewareError) {
 	var responseBuilder strings.Builder
 	responseSize := 0
-	switch chunkMsg.QueryType {
-	case chunk.QueryType1:
-		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Include header row for consistency
-		if len(lines) > 0 && lines[0] != "" {
-			responseBuilder.WriteString(lines[0])
-			responseBuilder.WriteByte('\n')
-		}
-		// Process data rows
-		for i, l := range lines {
-			if i == 0 || l == "" {
-				continue
-			}
-			pass := filterYearAndHour(l, 8) && filterAmmount(l, 7)
-			if pass {
-				responseBuilder.WriteString(l)
-				responseBuilder.WriteByte('\n')
-				responseSize += 1
-			}
-		}
-	case chunk.QueryType2:
-		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Include header row for Group By compatibility
-		if len(lines) > 0 && lines[0] != "" {
-			responseBuilder.WriteString(lines[0])
-			responseBuilder.WriteByte('\n')
-		}
-		// Process data rows
-		for i, l := range lines {
-			if i == 0 || l == "" {
-				continue
-			}
-			pass := filterYear(l, 5)
-			if pass {
-				responseBuilder.WriteString(l)
-				responseBuilder.WriteByte('\n')
-				responseSize += 1
-			}
-		}
-	case chunk.QueryType3:
-		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Include header row for Group By compatibility
-		if len(lines) > 0 && lines[0] != "" {
-			responseBuilder.WriteString(lines[0])
-			responseBuilder.WriteByte('\n')
-		}
-		// Process data rows
-		for i, l := range lines {
-			if i == 0 || l == "" {
-				continue
-			}
-			pass := filterYearAndHour(l, 8)
-			if pass {
-				responseBuilder.WriteString(l)
-				responseBuilder.WriteByte('\n')
-				responseSize += 1
-			}
-		}
-	case chunk.QueryType4:
-		lines := strings.Split(chunkMsg.ChunkData, "\n")
-		// Include header row for Group By compatibility
-		if len(lines) > 0 && lines[0] != "" {
-			responseBuilder.WriteString(lines[0])
-			responseBuilder.WriteByte('\n')
-		}
-		// Process data rows
-		for i, l := range lines {
-			if i == 0 || l == "" {
-				continue
-			}
-			pass := filterYear(l, 8)
-			if pass {
-				responseBuilder.WriteString(l)
-				responseBuilder.WriteByte('\n')
-				responseSize += 1
-			}
-		}
 
-	default:
-		fmt.Printf("Filter Worker: Unknown QueryType: %d\n", chunkMsg.QueryType)
-		return chunk.Chunk{}, middleware.MessageMiddlewareMessageError
+	// For steps 4 and 5, just pass through the data without filtering
+	// The final filtering will be done in the streaming worker
+	if chunkMsg.Step == 4 || chunkMsg.Step == 5 {
+		fmt.Printf("Filter Worker: Step %d - passing through data without filtering\n", chunkMsg.Step)
+		responseBuilder.WriteString(chunkMsg.ChunkData)
+		lines := strings.Split(chunkMsg.ChunkData, "\n")
+		// Count non-empty lines (excluding header)
+		for i, line := range lines {
+			if i > 0 && line != "" {
+				responseSize++
+			}
+		}
+	} else {
+		// Apply filtering logic for steps 1-3
+		switch chunkMsg.QueryType {
+		case chunk.QueryType1:
+			lines := strings.Split(chunkMsg.ChunkData, "\n")
+			// Include header row for consistency
+			if len(lines) > 0 && lines[0] != "" {
+				responseBuilder.WriteString(lines[0])
+				responseBuilder.WriteByte('\n')
+			}
+			// Process data rows
+			for i, l := range lines {
+				if i == 0 || l == "" {
+					continue
+				}
+				pass := filterYearAndHour(l, 8) && filterAmmount(l, 7)
+				if pass {
+					responseBuilder.WriteString(l)
+					responseBuilder.WriteByte('\n')
+					responseSize += 1
+				}
+			}
+		case chunk.QueryType2:
+			lines := strings.Split(chunkMsg.ChunkData, "\n")
+			// Include header row for Group By compatibility
+			if len(lines) > 0 && lines[0] != "" {
+				responseBuilder.WriteString(lines[0])
+				responseBuilder.WriteByte('\n')
+			}
+			// Process data rows
+			for i, l := range lines {
+				if i == 0 || l == "" {
+					continue
+				}
+				pass := filterYear(l, 5)
+				if pass {
+					responseBuilder.WriteString(l)
+					responseBuilder.WriteByte('\n')
+					responseSize += 1
+				}
+			}
+		case chunk.QueryType3:
+			lines := strings.Split(chunkMsg.ChunkData, "\n")
+			// Include header row for Group By compatibility
+			if len(lines) > 0 && lines[0] != "" {
+				responseBuilder.WriteString(lines[0])
+				responseBuilder.WriteByte('\n')
+			}
+			// Process data rows
+			for i, l := range lines {
+				if i == 0 || l == "" {
+					continue
+				}
+				pass := filterYearAndHour(l, 8)
+				if pass {
+					responseBuilder.WriteString(l)
+					responseBuilder.WriteByte('\n')
+					responseSize += 1
+				}
+			}
+		case chunk.QueryType4:
+			lines := strings.Split(chunkMsg.ChunkData, "\n")
+			// Include header row for Group By compatibility
+			if len(lines) > 0 && lines[0] != "" {
+				responseBuilder.WriteString(lines[0])
+				responseBuilder.WriteByte('\n')
+			}
+			// Process data rows
+			for i, l := range lines {
+				if i == 0 || l == "" {
+					continue
+				}
+				// Query 4 should process all years (2024 and 2025) - join will handle matching
+				pass := filterYear(l, 8)
+				if pass {
+					responseBuilder.WriteString(l)
+					responseBuilder.WriteByte('\n')
+					responseSize += 1
+				}
+			}
+
+		default:
+			fmt.Printf("Filter Worker: Unknown QueryType: %d\n", chunkMsg.QueryType)
+			return chunk.Chunk{}, middleware.MessageMiddlewareMessageError
+		}
 	}
 
 	chunkMsg.ChunkData = responseBuilder.String()
