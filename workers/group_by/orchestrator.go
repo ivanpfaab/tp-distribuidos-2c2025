@@ -36,7 +36,7 @@ type GroupByOrchestrator struct {
 
 	// Query-specific coordination
 	queryCompletion map[string]int // key: "queryType_clientID", value: completed workers count
-	
+
 	// Result channel management
 	resultChannels map[string]chan *chunk.Chunk // key: "clientID_queryType", value: result channel
 	resultMutex    sync.RWMutex
@@ -104,7 +104,7 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 
 		// Query-specific coordination
 		queryCompletion: make(map[string]int),
-		
+
 		// Result channel management
 		resultChannels: make(map[string]chan *chunk.Chunk),
 	}
@@ -266,10 +266,10 @@ func (gbo *GroupByOrchestrator) waitForResult(originalChunk *chunk.Chunk) {
 
 	// Create a unique result channel for this specific query
 	resultChan := make(chan *chunk.Chunk, 1)
-	
+
 	// Register this result channel with the orchestrator
 	gbo.registerResultChannel(originalChunk.ClientID, originalChunk.QueryType, resultChan)
-	
+
 	// Wait for our specific result
 	resultChunk := <-resultChan
 	fmt.Printf("GroupBy Orchestrator: Received final result - ClientID: %s, QueryType: %d, Step: %d, ChunkNumber: %d, Size: %d, IsLastChunk: %t\n",
@@ -279,7 +279,7 @@ func (gbo *GroupByOrchestrator) waitForResult(originalChunk *chunk.Chunk) {
 	// Send reply regardless of data size - empty results are valid for some queries
 	fmt.Printf("GroupBy Orchestrator: Sending reply (Size: %d)\n", len(resultChunk.ChunkData))
 	gbo.sendReply(resultChunk)
-	
+
 	// Clean up the result channel
 	gbo.unregisterResultChannel(originalChunk.ClientID, originalChunk.QueryType)
 }
@@ -360,7 +360,7 @@ func (gbo *GroupByOrchestrator) GetResultChannel() <-chan *chunk.Chunk {
 func (gbo *GroupByOrchestrator) registerResultChannel(clientID string, queryType byte, resultChan chan *chunk.Chunk) {
 	gbo.resultMutex.Lock()
 	defer gbo.resultMutex.Unlock()
-	
+
 	key := fmt.Sprintf("%s_%d", clientID, queryType)
 	gbo.resultChannels[key] = resultChan
 	fmt.Printf("GroupBy Orchestrator: Registered result channel for %s\n", key)
@@ -370,7 +370,7 @@ func (gbo *GroupByOrchestrator) registerResultChannel(clientID string, queryType
 func (gbo *GroupByOrchestrator) unregisterResultChannel(clientID string, queryType byte) {
 	gbo.resultMutex.Lock()
 	defer gbo.resultMutex.Unlock()
-	
+
 	key := fmt.Sprintf("%s_%d", clientID, queryType)
 	if resultChan, exists := gbo.resultChannels[key]; exists {
 		close(resultChan)
@@ -382,10 +382,10 @@ func (gbo *GroupByOrchestrator) unregisterResultChannel(clientID string, queryTy
 // startResultDispatcher dispatches results from the reducer channel to the appropriate waiting goroutines
 func (gbo *GroupByOrchestrator) startResultDispatcher() {
 	fmt.Println("GroupBy Orchestrator: Starting result dispatcher...")
-	
+
 	for resultChunk := range gbo.reducerChannel {
 		gbo.resultMutex.RLock()
-		
+
 		key := fmt.Sprintf("%s_%d", resultChunk.ClientID, resultChunk.QueryType)
 		if resultChan, exists := gbo.resultChannels[key]; exists {
 			// Send result to the waiting goroutine
@@ -398,9 +398,9 @@ func (gbo *GroupByOrchestrator) startResultDispatcher() {
 		} else {
 			fmt.Printf("GroupBy Orchestrator: WARNING - No waiting goroutine found for %s\n", key)
 		}
-		
+
 		gbo.resultMutex.RUnlock()
 	}
-	
+
 	fmt.Println("GroupBy Orchestrator: Result dispatcher stopped")
 }

@@ -50,6 +50,13 @@ type ReferenceData struct {
 	mutex     sync.RWMutex
 }
 
+// ReferenceDataFiles tracks which reference data files have been received
+type ReferenceDataFiles struct {
+	receivedFiles map[string]bool // fileID -> received
+	expectedFiles map[string]int  // queryType -> expected count
+	mutex         sync.RWMutex
+}
+
 // ChunkQueue stores pending chunks waiting for reference data
 type ChunkQueue struct {
 	chunks []*chunk.Chunk
@@ -61,6 +68,16 @@ var referenceData = &ReferenceData{
 	menuItems: make(map[string]*MenuItem),
 	stores:    make(map[string]*Store),
 	users:     make(map[string]*User),
+}
+
+// Global reference data files tracking
+var referenceDataFiles = &ReferenceDataFiles{
+	receivedFiles: make(map[string]bool),
+	expectedFiles: map[string]int{
+		"menu_items": 1, // MN01
+		"stores":     1, // ST01
+		"users":      2, // US01, US02 (users_202401.csv, users_202501.csv)
+	},
 }
 
 // Global chunk queue for pending chunks
@@ -87,6 +104,61 @@ func (cq *ChunkQueue) GetAndClearChunks() []*chunk.Chunk {
 	return chunks
 }
 
+// Helper functions for reference data files tracking
+func (rdf *ReferenceDataFiles) MarkFileReceived(fileID string) {
+	rdf.mutex.Lock()
+	defer rdf.mutex.Unlock()
+	rdf.receivedFiles[fileID] = true
+	fmt.Printf("Join Worker: Marked file %s as received\n", fileID)
+}
+
+func (rdf *ReferenceDataFiles) GetReceivedCountForQueryType(queryType uint8) int {
+	rdf.mutex.RLock()
+	defer rdf.mutex.RUnlock()
+
+	var prefix string
+	switch queryType {
+	case 2:
+		prefix = "MN" // menu_items
+	case 3:
+		prefix = "ST" // stores
+	case 4:
+		prefix = "US" // users
+	default:
+		return 0
+	}
+
+	count := 0
+	for fileID := range rdf.receivedFiles {
+		if strings.HasPrefix(fileID, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+func (rdf *ReferenceDataFiles) GetExpectedCountForQueryType(queryType uint8) int {
+	rdf.mutex.RLock()
+	defer rdf.mutex.RUnlock()
+
+	var key string
+	switch queryType {
+	case 2:
+		key = "menu_items"
+	case 3:
+		key = "stores"
+	case 4:
+		key = "users"
+	default:
+		return 0
+	}
+
+	if expected, exists := rdf.expectedFiles[key]; exists {
+		return expected
+	}
+	return 0
+}
+
 // Helper function to check if reference data is ready for a query type
 func isReferenceDataReady(queryType uint8) bool {
 	referenceData.mutex.RLock()
@@ -95,13 +167,19 @@ func isReferenceDataReady(queryType uint8) bool {
 	switch queryType {
 	case 2:
 		// Query 2: Need menu_items for item_id joins
-		return len(referenceData.menuItems) > 0
+		return len(referenceData.menuItems) > 0 &&
+			referenceDataFiles.GetReceivedCountForQueryType(queryType) >= referenceDataFiles.GetExpectedCountForQueryType(queryType)
 	case 3:
 		// Query 3: Need stores for store_id joins
-		return len(referenceData.stores) > 0
+		return len(referenceData.stores) > 0 &&
+			referenceDataFiles.GetReceivedCountForQueryType(queryType) >= referenceDataFiles.GetExpectedCountForQueryType(queryType)
 	case 4:
-		// Query 4: Need users for user_id joins
-		return len(referenceData.users) > 0
+		// Query 4: Need users for user_id joins - wait for ALL user files
+		receivedCount := referenceDataFiles.GetReceivedCountForQueryType(queryType)
+		expectedCount := referenceDataFiles.GetExpectedCountForQueryType(queryType)
+		fmt.Printf("Join Worker: Query 4 readiness check - Received: %d, Expected: %d, Users loaded: %d\n",
+			receivedCount, expectedCount, len(referenceData.users))
+		return len(referenceData.users) > 0 && receivedCount >= expectedCount
 	default:
 		return false
 	}
@@ -231,6 +309,9 @@ func (jw *JoinWorker) handleReferenceDataCSVMessage(message string) error {
 	csvData := message[firstColon+1+secondColon+1:]
 
 	fmt.Printf("Join Worker: Reference data CSV for FileID: %s (size: %d bytes)\n", fileID, len(csvData))
+
+	// Mark this file as received
+	referenceDataFiles.MarkFileReceived(fileID)
 
 	// Parse and load the reference data based on fileID
 	if strings.HasPrefix(fileID, "MN") {
@@ -709,7 +790,11 @@ func (jw *JoinWorker) isGroupedData(data string) bool {
 
 	header := lines[0]
 	// Check for grouped data headers
-	return strings.Contains(header, "year") && strings.Contains(header, "count")
+	// Query 2: year,month,item_id,quantity,subtotal,count
+	// Query 3: year,semester,store_id,total_final_amount,count
+	// Query 4: user_id,store_id,count
+	return (strings.Contains(header, "year") && strings.Contains(header, "count")) ||
+		(strings.Contains(header, "user_id") && strings.Contains(header, "store_id") && strings.Contains(header, "count"))
 }
 
 // parseGroupedTransactionItemsData parses grouped transaction items data from GroupBy
@@ -893,7 +978,7 @@ func (jw *JoinWorker) performGroupedTransactionUserJoin(groupedUserTransactions 
 	for _, transaction := range groupedUserTransactions {
 		userID := transaction["user_id"]
 		if user, exists := referenceData.users[userID]; exists {
-			// Join successful - write all fields
+			// INNER JOIN: Only include records where there's a match
 			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s\n",
 				transaction["user_id"],
 				transaction["store_id"],
@@ -902,14 +987,8 @@ func (jw *JoinWorker) performGroupedTransactionUserJoin(groupedUserTransactions 
 				user.Birthdate,
 				user.RegisteredAt,
 			))
-		} else {
-			// Join failed - write original data with empty joined fields
-			result.WriteString(fmt.Sprintf("%s,%s,%s,,,\n",
-				transaction["user_id"],
-				transaction["store_id"],
-				transaction["count"],
-			))
 		}
+		// INNER JOIN: Skip records where there's no match (don't write anything)
 	}
 
 	return result.String()
@@ -928,7 +1007,7 @@ func (jw *JoinWorker) performTransactionUserJoin(transactions []map[string]strin
 	for _, transaction := range transactions {
 		userID := transaction["user_id"]
 		if user, exists := referenceData.users[userID]; exists {
-			// Join successful - write all fields
+			// INNER JOIN: Only include records where there's a match
 			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 				transaction["transaction_id"],
 				transaction["store_id"],
@@ -943,20 +1022,8 @@ func (jw *JoinWorker) performTransactionUserJoin(transactions []map[string]strin
 				user.Birthdate,
 				user.RegisteredAt,
 			))
-		} else {
-			// Join failed - write original data with empty joined fields
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,,,\n",
-				transaction["transaction_id"],
-				transaction["store_id"],
-				transaction["payment_method_id"],
-				transaction["voucher_id"],
-				transaction["user_id"],
-				transaction["original_amount"],
-				transaction["discount_applied"],
-				transaction["final_amount"],
-				transaction["created_at"],
-			))
 		}
+		// INNER JOIN: Skip records where there's no match (don't write anything)
 	}
 
 	return result.String()
