@@ -24,10 +24,6 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 		case 1:
 			return "filter"
 		case 2:
-			return "filter"
-		case 3:
-			return "filter"
-		case 4:
 			return "streaming"
 		}
 	case 2:
@@ -50,14 +46,12 @@ func (tr *TargetRouter) DetermineTarget(queryType uint8, step int) string {
 		case 1:
 			return "filter"
 		case 2:
-			return "filter"
-		case 3:
 			return "aggregator"
-		case 4:
+		case 3:
 			return "groupby"
-		case 5:
+		case 4:
 			return "join"
-		case 6:
+		case 5:
 			return "streaming"
 		}
 	case 4:

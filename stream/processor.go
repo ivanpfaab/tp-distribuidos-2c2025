@@ -39,7 +39,7 @@ func (sw *StreamingWorker) printResult(chunkData *chunk.Chunk) {
 	fmt.Println("==================================================")
 	fmt.Println("STREAMING SERVICE - QUERY RESULT")
 	fmt.Println("==================================================")
-	fmt.Printf("Client ID: %s\n", chunkData.ClientID)
+	fmt.Printf("File ID: %s\n", chunkData.FileID)
 	fmt.Printf("Query Type: %d\n", chunkData.QueryType)
 	fmt.Printf("Table ID: %d\n", chunkData.TableID)
 	fmt.Printf("Chunk Number: %d\n", chunkData.ChunkNumber)
