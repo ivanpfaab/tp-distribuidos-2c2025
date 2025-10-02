@@ -125,6 +125,11 @@ func (gbpr *GroupByPartialReducer) applyReductionForAllQueries() {
 
 // applyReductionForQuery applies the group by operation to a specific query's collected data
 func (gbpr *GroupByPartialReducer) applyReductionForQuery(queryKey string, queryState *QueryState) {
+	// Skip already processed queries
+	if queryState.workerFinished {
+		return
+	}
+
 	fmt.Printf("\033[33m[PARTIAL REDUCER %d] APPLYING REDUCTION - Query: %s, Collected: %d lines\033[0m\n",
 		gbpr.reducerID, queryKey, len(queryState.collectedData))
 
@@ -170,6 +175,7 @@ func (gbpr *GroupByPartialReducer) applyReductionForQuery(queryKey string, query
 
 	// Clear collected data for this query
 	queryState.collectedData = make([]string, 0)
+	queryState.workerFinished = true
 }
 
 // Stop stops the partial reducer

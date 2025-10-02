@@ -428,7 +428,7 @@ func createSimpleTestChunks(count int) []*chunk.Chunk {
 		chunkData := strings.Join(lines, "\n")
 
 		chunks[i] = &chunk.Chunk{
-			ClientID:    fmt.Sprintf("TEST_CLIENT_%d", i+1),
+			ClientID:    "CLIENT_A",
 			QueryType:   2,
 			TableID:     1,
 			ChunkSize:   len(chunkData),
@@ -471,7 +471,7 @@ func createQueryType2TestChunks(count int) []*chunk.Chunk {
 		chunkData := strings.Join(lines, "\n")
 
 		chunks[i] = &chunk.Chunk{
-			ClientID:    "TEST_CLIENT_QT2", // Same client ID for all chunks of the same query
+			ClientID:    "CLIENT_A", // Same client ID for all chunks of the same query
 			QueryType:   2,
 			TableID:     1,
 			ChunkSize:   len(chunkData),
@@ -517,7 +517,7 @@ func createQueryType3TestChunks(count int) []*chunk.Chunk {
 		chunkData := strings.Join(lines, "\n")
 
 		chunks[i] = &chunk.Chunk{
-			ClientID:    "TEST_CLIENT_QT3", // Same client ID for all chunks of the same query
+			ClientID:    "CLIENT_A", // Same client ID for all chunks of the same query
 			QueryType:   3,
 			TableID:     1,
 			ChunkSize:   len(chunkData),
@@ -563,7 +563,7 @@ func createQueryType4TestChunks(count int) []*chunk.Chunk {
 		chunkData := strings.Join(lines, "\n")
 
 		chunks[i] = &chunk.Chunk{
-			ClientID:    "TEST_CLIENT_QT4", // Same client ID for all chunks of the same query
+			ClientID:    "CLIENT_A", // Same client ID for all chunks of the same query
 			QueryType:   4,
 			TableID:     1,
 			ChunkSize:   len(chunkData),
