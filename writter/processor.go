@@ -63,13 +63,17 @@ func (dww *DataWriterWorker) storeChunk(chunkMsg *chunk.Chunk) middleware.Messag
 	// Add the chunk to the storage
 	storage.chunks[key] = append(storage.chunks[key], chunkMsg)
 
-	fmt.Printf("Data Writer: Stored chunk %d/%d for %s (total chunks for this file: %d)\n",
-		chunkMsg.ChunkNumber, len(storage.chunks[key]), key, len(storage.chunks[key]))
+	totalChunks := len(storage.chunks[key])
+	fmt.Printf("Data Writer: Stored chunk %d for %s (total chunks for this file: %d)\n",
+		chunkMsg.ChunkNumber, key, totalChunks)
 
-	// If this is the last chunk, we could trigger additional processing
+	// Check if this is the last chunk based on the IsLastChunk flag
 	if chunkMsg.IsLastChunk {
-		fmt.Printf("Data Writer: Received last chunk for %s. Total chunks: %d\n", key, len(storage.chunks[key]))
+		fmt.Printf("Data Writer: Received last chunk (IsLastChunk=true) for %s. Total chunks: %d\n", key, totalChunks)
 		// TODO: In the future, this could trigger CSV writing or other processing
+	} else {
+		fmt.Printf("Data Writer: Chunk %d for %s is not marked as last chunk (IsLastChunk=false)\n",
+			chunkMsg.ChunkNumber, key)
 	}
 
 	return 0

@@ -208,10 +208,12 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 	var batch []string
 	recordNum := 0
 	batchNum := 0
+	reachedEOF := false
 
 	for {
 		rec, err := r.Read()
 		if err == io.EOF {
+			reachedEOF = true
 			break
 		}
 		if err != nil {
@@ -229,7 +231,7 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 			batchData := &batchpkg.Batch{
 				ClientID:    "1234", // Exactly 4 bytes
 				FileID:      fileID, // Use provided file ID
-				IsEOF:       strings.ToLower(payload) == "exit",
+				IsEOF:       false,  // Not the last batch yet
 				BatchNumber: batchNum,
 				BatchSize:   len(payload),
 				BatchData:   payload,
@@ -246,7 +248,7 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		}
 	}
 
-	// Send final partial batch
+	// Send final partial batch (this is the last batch of the file)
 	if len(batch) > 0 {
 		batchNum++
 		payload := strings.Join(batch, "\n") + "\n"
@@ -254,7 +256,7 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		batchData := &batchpkg.Batch{
 			ClientID:    "1234", // Exactly 4 bytes
 			FileID:      fileID, // Use provided file ID
-			IsEOF:       strings.ToLower(payload) == "exit",
+			IsEOF:       true,   // This is the last batch of the file
 			BatchNumber: batchNum,
 			BatchSize:   len(payload),
 			BatchData:   payload,
@@ -263,7 +265,25 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		if err != nil {
 			return recordNum, batchNum, fmt.Errorf("failed to send final batch %d: %w", batchNum, err)
 		}
-		fmt.Printf("Sent final batch %d with %d records\n", batchNum, len(batch))
+		fmt.Printf("Sent final batch %d with %d records (EOF)\n", batchNum, len(batch))
+	} else if reachedEOF && batchNum > 0 {
+		// If we reached EOF but have no remaining batch, the last sent batch was the final one
+		// We need to send a special EOF batch to indicate the file is complete
+		batchNum++
+		payload := "" // Empty payload for EOF marker
+		batchData := &batchpkg.Batch{
+			ClientID:    "1234", // Exactly 4 bytes
+			FileID:      fileID, // Use provided file ID
+			IsEOF:       true,   // This is the EOF marker
+			BatchNumber: batchNum,
+			BatchSize:   len(payload),
+			BatchData:   payload,
+		}
+		err := c.SendBatchMessage(batchData)
+		if err != nil {
+			return recordNum, batchNum, fmt.Errorf("failed to send EOF batch %d: %w", batchNum, err)
+		}
+		fmt.Printf("Sent EOF batch %d (file complete)\n", batchNum)
 	}
 
 	return recordNum, batchNum, nil
