@@ -27,7 +27,7 @@ docker-compose-up: ## Start all services in proper order
 	docker compose --profile orchestration up -d query-orchestrator
 	@echo "Waiting for Query Orchestrator to be healthy..."
 	@echo "3. Starting Workers..."
-	docker compose --profile orchestration up -d filter-worker join-worker groupby-worker streaming-service
+	docker compose --profile orchestration up -d year-filter-worker time-filter-worker amount-filter-worker join-worker groupby-worker streaming-service query-gateway
 	@echo "4. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d server
 	@echo "5. Starting Client..."
@@ -44,7 +44,7 @@ docker-compose-up-build: ## Start all services in proper order
 	docker compose --profile orchestration up -d --build query-orchestrator
 	@echo "Waiting for Query Orchestrator to be healthy..."
 	@echo "3. Starting Workers..."
-	docker compose --profile orchestration up -d --build filter-worker join-worker groupby-worker streaming-service
+	docker compose --profile orchestration up -d --build year-filter-worker time-filter-worker amount-filter-worker join-worker groupby-worker streaming-service query-gateway
 	@echo "4. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d --build server
 	@echo "5. Starting Client..."
