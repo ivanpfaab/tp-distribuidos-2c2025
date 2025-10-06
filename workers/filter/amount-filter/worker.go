@@ -26,20 +26,20 @@ func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWo
 	}
 
 	// Declare the amount filter queue using QueueMiddleware
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(
+	amountFilterConsumer := workerqueue.NewMessageMiddlewareQueue(
 		AmountFilterQueueName,
 		config,
 	)
-	if queueDeclarer == nil {
+	if amountFilterConsumer == nil {
 		consumer.Close()
 		return nil, fmt.Errorf("failed to create queue declarer")
 	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+	if err := amountFilterConsumer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		queueDeclarer.Close()
+		amountFilterConsumer.Close()
 		return nil, fmt.Errorf("failed to declare amount filter queue: %v", err)
 	}
-	queueDeclarer.Close() // Close the declarer as we don't need it anymore
+	amountFilterConsumer.Close() // Close the declarer as we don't need it anymore
 
 	// Create reply producer
 	replyProducer := workerqueue.NewMessageMiddlewareQueue(

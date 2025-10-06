@@ -35,7 +35,7 @@ func TimeFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 	lines := strings.Split(chunkMsg.ChunkData, "\n")
 
 	// Include header row if it exists
-	if len(lines) > 0 && lines[0] != "" {
+	if len(lines) > 0 && strings.Contains(lines[0], "created_at") {
 		responseBuilder.WriteString(lines[0])
 		responseBuilder.WriteByte('\n')
 		hasHeader = true

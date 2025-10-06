@@ -33,7 +33,7 @@ func AmountFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMi
 	lines := strings.Split(chunkMsg.ChunkData, "\n")
 
 	// Include header row
-	if len(lines) > 0 && lines[0] != "" {
+	if len(lines) > 0 && strings.Contains(lines[0], "final_amount") {
 		responseBuilder.WriteString(lines[0])
 		responseBuilder.WriteByte('\n')
 	}

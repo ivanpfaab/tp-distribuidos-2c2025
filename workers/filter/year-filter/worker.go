@@ -27,20 +27,20 @@ func NewYearFilterWorker(config *middleware.ConnectionConfig) (*YearFilterWorker
 	}
 
 	// Declare the year filter queue using QueueMiddleware
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(
+	yearFilterConsumer := workerqueue.NewMessageMiddlewareQueue(
 		YearFilterQueueName,
 		config,
 	)
-	if queueDeclarer == nil {
+	if yearFilterConsumer == nil {
 		consumer.Close()
 		return nil, fmt.Errorf("failed to create queue declarer")
 	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+	if err := yearFilterConsumer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		queueDeclarer.Close()
+		yearFilterConsumer.Close()
 		return nil, fmt.Errorf("failed to declare year filter queue: %v", err)
 	}
-	queueDeclarer.Close() // Close the declarer as we don't need it anymore
+	yearFilterConsumer.Close() // Close the declarer as we don't need it anymore
 
 	// Create time filter producer
 	timeFilterProducer := workerqueue.NewMessageMiddlewareQueue(

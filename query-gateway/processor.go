@@ -11,7 +11,6 @@ import (
 
 // processMessage processes incoming messages and prints the results
 func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	fmt.Printf("Query Gateway: Received message: %s\n", string(delivery.Body))
 
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
@@ -19,10 +18,6 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 		fmt.Printf("Query Gateway: Failed to deserialize chunk message: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
-
-	// Process the chunk and print results
-	fmt.Printf("Query Gateway: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
-		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber)
 
 	// Print the results in the same format as streaming service
 	qg.printResult(chunkMsg)

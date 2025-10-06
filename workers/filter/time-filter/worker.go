@@ -27,20 +27,20 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 	}
 
 	// Declare the time filter queue using QueueMiddleware
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(
+	timeFilterConsumer := workerqueue.NewMessageMiddlewareQueue(
 		TimeFilterQueueName,
 		config,
 	)
-	if queueDeclarer == nil {
+	if timeFilterConsumer == nil {
 		consumer.Close()
 		return nil, fmt.Errorf("failed to create queue declarer")
 	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+	if err := timeFilterConsumer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		queueDeclarer.Close()
+		timeFilterConsumer.Close()
 		return nil, fmt.Errorf("failed to declare time filter queue: %v", err)
 	}
-	queueDeclarer.Close() // Close the declarer as we don't need it anymore
+	timeFilterConsumer.Close() // Close the declarer as we don't need it anymore
 
 	// Create amount filter producer
 	amountFilterProducer := workerqueue.NewMessageMiddlewareQueue(
