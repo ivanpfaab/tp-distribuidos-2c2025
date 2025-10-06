@@ -1,9 +1,14 @@
 # Test Makefile
 
-.PHONY: test test-build test-run test-clean test-setup
+.PHONY: test test-all test-build test-run test-clean test-setup
+
+# Run middleware tests only (with real-time logs)
+test: test-setup
+	@echo "Running middleware tests with real-time logs..."
+	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./middleware/...
 
 # Run all tests (with real-time logs)
-test: test-setup
+test-all: test-setup
 	@echo "Running all tests with real-time logs..."
 	docker compose -f docker-compose.test.yaml up --build
 
@@ -30,11 +35,11 @@ test-setup:
 # Run specific test package
 test-middleware:
 	@echo "Running middleware tests..."
-	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/middleware/...
+	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./middleware/...
 
 test-protocol:
 	@echo "Running protocol tests..."
-	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./tests/protocol/...
+	docker compose -f docker-compose.test.yaml run --rm test-runner go test -v ./protocol/...
 
 test-filter:
 	@echo "Running filter worker tests..."
@@ -50,7 +55,8 @@ clean:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  test          - Run all tests with real-time logs (default)"
+	@echo "  test          - Run middleware tests only (default)"
+	@echo "  test-all      - Run all tests with real-time logs"
 	@echo "  test-build    - Build test containers"
 	@echo "  test-run      - Run tests without rebuilding (real-time logs)"
 	@echo "  test-buffered - Run tests with buffered output"

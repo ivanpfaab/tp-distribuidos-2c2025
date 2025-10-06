@@ -29,7 +29,11 @@ services:
         condition: service_healthy
       query-orchestrator:
         condition: service_healthy
-      filter-worker:
+      year-filter-worker:
+        condition: service_started
+      time-filter-worker:
+        condition: service_started
+      amount-filter-worker:
         condition: service_started
       join-worker:
         condition: service_started
@@ -83,11 +87,41 @@ services:
     profiles: ["orchestration"]
 
   # Worker services
-  filter-worker:
+  year-filter-worker:
     build:
       context: .
-      dockerfile: ./workers/filter/Dockerfile
-    container_name: filter-worker
+      dockerfile: ./workers/filter/year-filter/Dockerfile
+    container_name: year-filter-worker
+    depends_on:
+      query-orchestrator:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  time-filter-worker:
+    build:
+      context: .
+      dockerfile: ./workers/filter/time-filter/Dockerfile
+    container_name: time-filter-worker
+    depends_on:
+      query-orchestrator:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  amount-filter-worker:
+    build:
+      context: .
+      dockerfile: ./workers/filter/amount-filter/Dockerfile
+    container_name: amount-filter-worker
     depends_on:
       query-orchestrator:
         condition: service_healthy
@@ -159,6 +193,22 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
     profiles: ["data-flow", "orchestration"]
+
+  # Query gateway service
+  query-gateway:
+    build:
+      context: .
+      dockerfile: ./query-gateway/Dockerfile
+    container_name: query-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
 
   # Testing (optional, can be run with profile)
   test-runner:
