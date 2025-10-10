@@ -16,11 +16,6 @@ type StreamingWorker struct {
 	query3Consumer *workerqueue.QueueConsumer
 	query4Consumer *workerqueue.QueueConsumer
 	config         *middleware.ConnectionConfig
-	printedSchemas map[string]bool // Track which queries have had their schema printed
-	// For final filtering that requires all chunks
-	collectedChunks map[string][]string // clientID -> []chunkData
-	chunkCounts     map[string]int      // clientID -> total chunks expected
-	receivedCounts  map[string]int      // clientID -> chunks received
 }
 
 // NewStreamingWorker creates a new StreamingWorker instance
@@ -158,16 +153,12 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 	}
 
 	return &StreamingWorker{
-		consumer:        consumer,
-		query1Consumer:  query1Consumer,
-		query2Consumer:  query2Consumer,
-		query3Consumer:  query3Consumer,
-		query4Consumer:  query4Consumer,
-		config:          config,
-		printedSchemas:  make(map[string]bool),
-		collectedChunks: make(map[string][]string),
-		chunkCounts:     make(map[string]int),
-		receivedCounts:  make(map[string]int),
+		consumer:       consumer,
+		query1Consumer: query1Consumer,
+		query2Consumer: query2Consumer,
+		query3Consumer: query3Consumer,
+		query4Consumer: query4Consumer,
+		config:         config,
 	}, nil
 }
 
@@ -175,40 +166,26 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 func (sw *StreamingWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Streaming Worker: Starting to listen for messages...")
 
-	// Start consuming from streaming exchange
-	go func() {
-		if err := sw.consumer.StartConsuming(sw.createCallback()); err != 0 {
-			fmt.Printf("Failed to start streaming consumer: %v\n", err)
-		}
-	}()
+	if err := sw.consumer.StartConsuming(sw.createCallback()); err != 0 {
+		fmt.Printf("Failed to start streaming consumer: %v\n", err)
+	}
 
-	// Start consuming from Query1 results queue
-	go func() {
-		if err := sw.query1Consumer.StartConsuming(sw.createQuery1Callback()); err != 0 {
-			fmt.Printf("Failed to start Query1 results consumer: %v\n", err)
-		}
-	}()
+	if err := sw.query1Consumer.StartConsuming(sw.createQuery1Callback()); err != 0 {
+		fmt.Printf("Failed to start Query1 results consumer: %v\n", err)
+	}
 
-	// Start consuming from Query2 results queue
-	go func() {
-		if err := sw.query2Consumer.StartConsuming(sw.createQuery2Callback()); err != 0 {
-			fmt.Printf("Failed to start Query2 results consumer: %v\n", err)
-		}
-	}()
 
-	// Start consuming from Query3 results queue
-	go func() {
-		if err := sw.query3Consumer.StartConsuming(sw.createQuery3Callback()); err != 0 {
-			fmt.Printf("Failed to start Query3 results consumer: %v\n", err)
-		}
-	}()
+	if err := sw.query2Consumer.StartConsuming(sw.createQuery2Callback()); err != 0 {
+		fmt.Printf("Failed to start Query2 results consumer: %v\n", err)
+	}
 
-	// Start consuming from Query4 results queue
-	go func() {
-		if err := sw.query4Consumer.StartConsuming(sw.createQuery4Callback()); err != 0 {
-			fmt.Printf("Failed to start Query4 results consumer: %v\n", err)
-		}
-	}()
+	if err := sw.query3Consumer.StartConsuming(sw.createQuery3Callback()); err != 0 {
+		fmt.Printf("Failed to start Query3 results consumer: %v\n", err)
+	}
+
+	if err := sw.query4Consumer.StartConsuming(sw.createQuery4Callback()); err != 0 {
+		fmt.Printf("Failed to start Query4 results consumer: %v\n", err)
+	}
 
 	return 0
 }
@@ -248,6 +225,22 @@ func (sw *StreamingWorker) createCallback() func(middleware.ConsumeChannel, chan
 	}
 }
 
+// createQuery1Callback creates the message processing callback for Query1 results
+func (sw *StreamingWorker) createQuery1Callback() middleware.OnMessageCallback {
+	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		fmt.Println("Streaming Worker: Starting to listen for Query1 results...")
+		for delivery := range *consumeChannel {
+			if err := sw.processMessage(delivery); err != 0 {
+				fmt.Printf("Streaming Worker: Failed to process Query1 message: %v\n", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+			delivery.Ack(false)
+		}
+		done <- nil
+	}
+}
+
 // createQuery2Callback creates the message processing callback for Query2 results
 func (sw *StreamingWorker) createQuery2Callback() middleware.OnMessageCallback {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
@@ -271,22 +264,6 @@ func (sw *StreamingWorker) createQuery3Callback() middleware.OnMessageCallback {
 		for delivery := range *consumeChannel {
 			if err := sw.processMessage(delivery); err != 0 {
 				fmt.Printf("Streaming Worker: Failed to process Query3 message: %v\n", err)
-				delivery.Nack(false, true) // Reject and requeue
-				continue
-			}
-			delivery.Ack(false)
-		}
-		done <- nil
-	}
-}
-
-// createQuery1Callback creates the message processing callback for Query1 results
-func (sw *StreamingWorker) createQuery1Callback() middleware.OnMessageCallback {
-	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		fmt.Println("Streaming Worker: Starting to listen for Query1 results...")
-		for delivery := range *consumeChannel {
-			if err := sw.processMessage(delivery); err != 0 {
-				fmt.Printf("Streaming Worker: Failed to process Query1 message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
 			}
