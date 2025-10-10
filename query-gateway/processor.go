@@ -19,8 +19,16 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Route chunk to appropriate join worker based on query type
+	// Route chunk to appropriate destination based on query type
 	switch chunkMsg.QueryType {
+	case 1:
+		// Query 1: Send to Query1 results queue for streaming service
+		if err := qg.sendToQuery1Results(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query1 results queue: %v\n", err)
+			return err
+		}
+		fmt.Printf("Query Gateway: Routed Query 1 chunk to results queue - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 2:
 		// Query 2: Send to ItemID join worker
 		if err := qg.sendToItemIdJoin(chunkMsg); err != 0 {
@@ -38,8 +46,13 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 		fmt.Printf("Query Gateway: Routed Query 3 chunk to StoreID join worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 4:
-		// Query 4: For now, just print (could be routed to UserID join worker in the future)
-		qg.printResult(chunkMsg)
+		// Query 4: Send to Query4 results queue for streaming service
+		if err := qg.sendToQuery4Results(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query4 results queue: %v\n", err)
+			return err
+		}
+		fmt.Printf("Query Gateway: Routed Query 4 chunk to results queue - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Query Gateway: Unknown query type %d, printing result\n", chunkMsg.QueryType)
 		qg.printResult(chunkMsg)
@@ -57,6 +70,38 @@ func (qg *QueryGateway) printResult(chunkData *chunk.Chunk) {
 			fmt.Printf("Q%d | %s\n", chunkData.QueryType, row)
 		}
 	}
+}
+
+// sendToQuery1Results sends a chunk message to the Query1 results queue
+func (qg *QueryGateway) sendToQuery1Results(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+	// Create a chunk message for serialization
+	chunkMessage := chunk.NewChunkMessage(chunkMsg)
+
+	// Serialize the chunk message
+	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
+	if err != nil {
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for Query1 results: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Send to Query1 results queue
+	return qg.query1ResultsProducer.Send(messageData)
+}
+
+// sendToQuery4Results sends a chunk message to the Query4 results queue
+func (qg *QueryGateway) sendToQuery4Results(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+	// Create a chunk message for serialization
+	chunkMessage := chunk.NewChunkMessage(chunkMsg)
+
+	// Serialize the chunk message
+	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
+	if err != nil {
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for Query4 results: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Send to Query4 results queue
+	return qg.query4ResultsProducer.Send(messageData)
 }
 
 // sendToItemIdJoin sends a chunk message to the ItemID join worker
