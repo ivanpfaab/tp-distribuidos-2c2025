@@ -213,8 +213,8 @@ func (w *ItemIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewar
 
 // processChunk processes a single chunk for joining
 func (w *ItemIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
-	fmt.Printf("ItemID Join Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
-		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
+	fmt.Printf("ItemID Join Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d, FileID: %s, ChunkData: %s\n",
+		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID, chunkMsg.ChunkData)
 
 	// Perform the join operation
 	joinedChunk, err := w.performJoin(chunkMsg)
@@ -225,6 +225,8 @@ func (w *ItemIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messag
 
 	// Send joined chunk to output queue
 	chunkMessage := chunk.NewChunkMessage(joinedChunk)
+
+	fmt.Printf("chunkMessage: %+v\n", chunkMessage)
 	serializedData, err := chunk.SerializeChunkMessage(chunkMessage)
 	if err != nil {
 		fmt.Printf("ItemID Join Worker: Failed to serialize joined chunk: %v\n", err)
@@ -397,6 +399,8 @@ func (w *ItemIdJoinWorker) performTransactionItemMenuJoin(transactionItems []map
 			))
 		}
 	}
+
+	fmt.Printf("ItemID Join Worker: Joined %d transaction items with menu items\n", len(transactionItems))
 
 	return result.String()
 }
