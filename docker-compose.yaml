@@ -27,15 +27,17 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query-orchestrator:
-        condition: service_healthy
       year-filter-worker:
         condition: service_started
       time-filter-worker:
         condition: service_started
       amount-filter-worker:
         condition: service_started
-      join-worker:
+      join-data-handler:
+        condition: service_started
+      itemid-join-worker:
+        condition: service_started
+      storeid-join-worker:
         condition: service_started
       groupby-worker:
         condition: service_started
@@ -64,28 +66,6 @@ services:
     command: ["./main", "/app/data", "echo-server:8080"]
     profiles: ["data-flow"]
 
-  # Query orchestration
-  query-orchestrator:
-    build:
-      context: .
-      dockerfile: ./server/controller/query-orchestrator/Dockerfile
-    container_name: query-orchestrator
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    healthcheck:
-      test: ["CMD", "pgrep", "main"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    profiles: ["orchestration"]
-
   # Worker services
   year-filter-worker:
     build:
@@ -93,7 +73,7 @@ services:
       dockerfile: ./workers/filter/year-filter/Dockerfile
     container_name: year-filter-worker
     depends_on:
-      query-orchestrator:
+      rabbitmq:
         condition: service_healthy
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -108,7 +88,7 @@ services:
       dockerfile: ./workers/filter/time-filter/Dockerfile
     container_name: time-filter-worker
     depends_on:
-      query-orchestrator:
+      rabbitmq:
         condition: service_healthy
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -123,7 +103,7 @@ services:
       dockerfile: ./workers/filter/amount-filter/Dockerfile
     container_name: amount-filter-worker
     depends_on:
-      query-orchestrator:
+      rabbitmq:
         condition: service_healthy
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -132,14 +112,47 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  join-worker:
+  # Join Data Handler
+  join-data-handler:
     build:
       context: .
-      dockerfile: ./workers/join/Dockerfile
-    container_name: join-worker
+      dockerfile: ./workers/join/data-handler/Dockerfile
+    container_name: join-data-handler
     depends_on:
-      query-orchestrator:
+      rabbitmq:
         condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # ItemID Join Worker
+  itemid-join-worker:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/itemid/Dockerfile
+    container_name: itemid-join-worker
+    depends_on:
+      join-data-handler:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # StoreID Join Worker
+  storeid-join-worker:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/storeid/Dockerfile
+    container_name: storeid-join-worker
+    depends_on:
+      join-data-handler:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -153,7 +166,7 @@ services:
       dockerfile: ./workers/group_by/Dockerfile
     container_name: groupby-worker
     depends_on:
-      query-orchestrator:
+      rabbitmq:
         condition: service_healthy
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -169,7 +182,7 @@ services:
       dockerfile: ./stream/Dockerfile
     container_name: streaming-service
     depends_on:
-      query-orchestrator:
+      rabbitmq:
         condition: service_healthy
     environment:
       RABBITMQ_HOST: rabbitmq

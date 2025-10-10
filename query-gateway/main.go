@@ -33,7 +33,7 @@ func main() {
 		}
 	}()
 
-	fmt.Println("Query Gateway started successfully. Waiting for messages from reply-filter-bus...")
+	fmt.Println("Query Gateway started successfully. Waiting for messages from streaming exchange...")
 
 	// Wait for shutdown signal
 	<-sigChan

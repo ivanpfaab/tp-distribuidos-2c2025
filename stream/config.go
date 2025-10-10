@@ -9,6 +9,10 @@ import (
 const (
 	StreamingExchangeName = "streaming-exchange"
 	StreamingRoutingKey   = "streaming"
+
+	// New join result queues
+	Query2ResultsQueue = "query2-results-chunks"
+	Query3ResultsQueue = "query3-results-chunks"
 )
 
 // Config holds the configuration for the streaming service

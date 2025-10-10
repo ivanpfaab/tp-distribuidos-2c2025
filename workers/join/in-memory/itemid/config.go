@@ -9,8 +9,14 @@ import (
 )
 
 const (
-	GroupByExchangeName = "groupby-exchange"
-	GroupByRoutingKey   = "groupby"
+	// Input queues
+	ItemIdDictionaryQueue = "join-itemid-dictionary"
+	ItemIdChunkQueue      = "top-item-classification-chunk"
+
+	// Output queue
+	Query2ResultsQueue = "query2-results-chunks"
+
+	// Default values
 	DefaultRabbitMQHost = "localhost"
 	DefaultRabbitMQPort = "5672"
 	DefaultRabbitMQUser = "admin"
@@ -28,7 +34,7 @@ func loadConfig() (*middleware.ConnectionConfig, error) {
 	username := getEnv("RABBITMQ_USER", DefaultRabbitMQUser)
 	password := getEnv("RABBITMQ_PASS", DefaultRabbitMQPass)
 
-	fmt.Printf("GroupBy Worker: Connecting to RabbitMQ at %s:%s with user %s\n", host, port, username)
+	fmt.Printf("ItemID Join Worker: Connecting to RabbitMQ at %s:%s with user %s\n", host, port, username)
 
 	return &middleware.ConnectionConfig{
 		Host:     host,
@@ -42,16 +48,6 @@ func loadConfig() (*middleware.ConnectionConfig, error) {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
-	}
-	return defaultValue
-}
-
-// getEnvInt gets an environment variable as integer with a default value
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
 	}
 	return defaultValue
 }

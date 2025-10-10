@@ -159,7 +159,7 @@ func testMultipleBatchMessagesFlow(t *testing.T) {
 
 // testDataHandlerChunkProcessing tests that the data handler actually processes batches and sends chunks
 func testDataHandlerChunkProcessing(t *testing.T) {
-	testing_utils.LogStep("Testing data handler chunk processing with query orchestrator consumer")
+	testing_utils.LogStep("Testing data handler chunk processing with year-filter consumer")
 
 	// Create RabbitMQ connection for consuming chunks
 	config := &middleware.ConnectionConfig{
@@ -169,8 +169,8 @@ func testDataHandlerChunkProcessing(t *testing.T) {
 		Password: "password",
 	}
 
-	// Create consumer for query orchestrator queue
-	consumer := workerqueue.NewQueueConsumer("step0-data-queue", config)
+	// Create consumer for year-filter queue
+	consumer := workerqueue.NewQueueConsumer("year-filter", config)
 	if consumer == nil {
 		t.Skipf("Skipping test - failed to create RabbitMQ consumer")
 		return
@@ -380,7 +380,7 @@ func testDataHandlerProcessingVerification(t *testing.T) {
 	// This means the data handler processed the batch and sent a chunk
 	// (The server logs will show the data handler processing, but we can't easily capture them in the test)
 
-	testing_utils.LogStep("Verification: Data handler processed batch and sent chunk to query orchestrator")
+	testing_utils.LogStep("Verification: Data handler processed batch and sent chunk to year-filter")
 	testing_utils.LogSuccess("Data handler processing verification completed successfully")
 }
 

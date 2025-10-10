@@ -9,7 +9,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
-// processMessage processes incoming messages and prints the results
+// processMessage processes incoming messages and routes them to join workers
 func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 
 	// Deserialize the chunk message
@@ -19,8 +19,31 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Print the results in the same format as streaming service
-	qg.printResult(chunkMsg)
+	// Route chunk to appropriate join worker based on query type
+	switch chunkMsg.QueryType {
+	case 2:
+		// Query 2: Send to ItemID join worker
+		if err := qg.sendToItemIdJoin(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to ItemID join worker: %v\n", err)
+			return err
+		}
+		fmt.Printf("Query Gateway: Routed Query 2 chunk to ItemID join worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
+	case 3:
+		// Query 3: Send to StoreID join worker
+		if err := qg.sendToStoreIdJoin(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to StoreID join worker: %v\n", err)
+			return err
+		}
+		fmt.Printf("Query Gateway: Routed Query 3 chunk to StoreID join worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
+	case 4:
+		// Query 4: For now, just print (could be routed to UserID join worker in the future)
+		qg.printResult(chunkMsg)
+	default:
+		fmt.Printf("Query Gateway: Unknown query type %d, printing result\n", chunkMsg.QueryType)
+		qg.printResult(chunkMsg)
+	}
 
 	return 0
 }
@@ -34,4 +57,36 @@ func (qg *QueryGateway) printResult(chunkData *chunk.Chunk) {
 			fmt.Printf("Q%d | %s\n", chunkData.QueryType, row)
 		}
 	}
+}
+
+// sendToItemIdJoin sends a chunk message to the ItemID join worker
+func (qg *QueryGateway) sendToItemIdJoin(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+	// Create a chunk message for serialization
+	chunkMessage := chunk.NewChunkMessage(chunkMsg)
+
+	// Serialize the chunk message
+	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
+	if err != nil {
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for ItemID join: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Send to ItemID join queue
+	return qg.itemIdJoinProducer.Send(messageData)
+}
+
+// sendToStoreIdJoin sends a chunk message to the StoreID join worker
+func (qg *QueryGateway) sendToStoreIdJoin(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+	// Create a chunk message for serialization
+	chunkMessage := chunk.NewChunkMessage(chunkMsg)
+
+	// Serialize the chunk message
+	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
+	if err != nil {
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for StoreID join: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Send to StoreID join queue
+	return qg.storeIdJoinProducer.Send(messageData)
 }
