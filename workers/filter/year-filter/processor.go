@@ -79,7 +79,8 @@ func YearFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 
 	// Process data rows - filter by year only
 	for i, l := range lines {
-		if i == 0 || l == "" {
+		// Skip header row if it exists
+		if i == 0 && hasHeader {
 			continue
 		}
 		pass := filterYear(l, chunkMsg.FileID)

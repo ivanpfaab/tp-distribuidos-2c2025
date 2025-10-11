@@ -43,7 +43,7 @@ func TimeFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 
 	// Process data rows - filter by hour only
 	for i, l := range lines {
-		if i == 0 || l == "" {
+		if i == 0 && hasHeader {
 			continue
 		}
 		pass := filterHour(l)
