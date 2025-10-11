@@ -69,7 +69,13 @@ func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWo
 // Start starts the amount filter worker
 func (afw *AmountFilterWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Amount Filter Worker: Starting to listen for messages...")
-	return afw.consumer.StartConsuming(afw.createCallback())
+	err := afw.consumer.StartConsuming(afw.createCallback())
+	if err != 0 {
+		fmt.Printf("Amount Filter Worker: ERROR - StartConsuming failed with error: %v\n", err)
+		return err
+	}
+	fmt.Println("Amount Filter Worker: Successfully registered as consumer")
+	return 0
 }
 
 // Close closes all connections
@@ -85,8 +91,11 @@ func (afw *AmountFilterWorker) Close() {
 // createCallback creates the message processing callback
 func (afw *AmountFilterWorker) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		fmt.Println("Amount Filter Worker: Starting to listen for messages...")
+		fmt.Println("Amount Filter Worker: Callback started, waiting for messages...")
+		messageCount := 0
 		for delivery := range *consumeChannel {
+			messageCount++
+			fmt.Printf("Amount Filter Worker: Received message #%d\n", messageCount)
 			if err := afw.processMessage(delivery); err != 0 {
 				fmt.Printf("Amount Filter Worker: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
@@ -94,6 +103,7 @@ func (afw *AmountFilterWorker) createCallback() func(middleware.ConsumeChannel, 
 			}
 			delivery.Ack(false)
 		}
+		fmt.Printf("Amount Filter Worker: Consume channel closed after processing %d messages\n", messageCount)
 		done <- nil
 	}
 }

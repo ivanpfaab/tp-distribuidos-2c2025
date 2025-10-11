@@ -63,8 +63,6 @@ func AmountFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMi
 
 // processMessage processes a single message
 func (afw *AmountFilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	fmt.Printf("Amount Filter Worker: Received message: %s\n", string(delivery.Body))
-
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 	if err != nil {

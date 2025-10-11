@@ -90,7 +90,13 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 // Start starts the time filter worker
 func (tfw *TimeFilterWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Time Filter Worker: Starting to listen for messages...")
-	return tfw.consumer.StartConsuming(tfw.createCallback())
+	err := tfw.consumer.StartConsuming(tfw.createCallback())
+	if err != 0 {
+		fmt.Printf("Time Filter Worker: ERROR - StartConsuming failed with error: %v\n", err)
+		return err
+	}
+	fmt.Println("Time Filter Worker: Successfully registered as consumer")
+	return 0
 }
 
 // Close closes all connections
@@ -109,8 +115,11 @@ func (tfw *TimeFilterWorker) Close() {
 // createCallback creates the message processing callback
 func (tfw *TimeFilterWorker) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		fmt.Println("Time Filter Worker: Starting to listen for messages...")
+		fmt.Println("Time Filter Worker: Callback started, waiting for messages...")
+		messageCount := 0
 		for delivery := range *consumeChannel {
+			messageCount++
+			fmt.Printf("Time Filter Worker: Received message #%d\n", messageCount)
 			if err := tfw.processMessage(delivery); err != 0 {
 				fmt.Printf("Time Filter Worker: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
@@ -118,6 +127,7 @@ func (tfw *TimeFilterWorker) createCallback() func(middleware.ConsumeChannel, ch
 			}
 			delivery.Ack(false)
 		}
+		fmt.Printf("Time Filter Worker: Consume channel closed after processing %d messages\n", messageCount)
 		done <- nil
 	}
 }
