@@ -9,6 +9,9 @@ COPY go.mod go.sum ./
 # Copy protocol directory
 COPY protocol/ ./protocol/
 
+# Copy shared directory (middleware)
+COPY shared/ ./shared/
+
 # Download dependencies
 RUN go mod download
 

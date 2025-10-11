@@ -147,15 +147,15 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 		queryType := determineQueryType(batchMsg.FileID)
 
 		chunkObj := chunk.NewChunk(
-			batchMsg.ClientID,       // clientID
-			batchMsg.FileID,         // fileID
-			queryType,               // queryType (determined by file type)
-			batchMsg.BatchNumber,    // chunkNumber
-			batchMsg.IsEOF,          // isLastChunk
-			0,                       // step (hardcoded to 0 as requested)
-			len(batchMsg.BatchData), // chunkSize
-			1,                       // tableID (hardcoded for now)
-			batchMsg.BatchData,      // chunkData
+			batchMsg.ClientID,    // clientID
+			batchMsg.FileID,      // fileID
+			queryType,            // queryType (determined by file type)
+			batchMsg.BatchNumber, // chunkNumber
+			batchMsg.IsEOF,       // isLastChunk
+			0,                    // step (hardcoded to 0 as requested)
+			batchMsg.BatchSize,   // chunkSize (number of rows from batch)
+			1,                    // tableID (hardcoded for now)
+			batchMsg.BatchData,   // chunkData
 		)
 
 		chunkMsg := chunk.NewChunkMessage(chunkObj)
@@ -175,15 +175,15 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 
 			for _, queryType := range queryTypes {
 				chunkObj := chunk.NewChunk(
-					batchMsg.ClientID,       // clientID
-					batchMsg.FileID,         // fileID
-					queryType,               // queryType (1, 3, or 4)
-					batchMsg.BatchNumber,    // chunkNumber
-					batchMsg.IsEOF,          // isLastChunk
-					0,                       // step (hardcoded to 0 as requested)
-					len(batchMsg.BatchData), // chunkSize
-					1,                       // tableID (hardcoded for now)
-					batchMsg.BatchData,      // chunkData
+					batchMsg.ClientID,    // clientID
+					batchMsg.FileID,      // fileID
+					queryType,            // queryType (1, 3, or 4)
+					batchMsg.BatchNumber, // chunkNumber
+					batchMsg.IsEOF,       // isLastChunk
+					0,                    // step (hardcoded to 0 as requested)
+					batchMsg.BatchSize,   // chunkSize (number of rows from batch)
+					1,                    // tableID (hardcoded for now)
+					batchMsg.BatchData,   // chunkData
 				)
 
 				chunkMsg := chunk.NewChunkMessage(chunkObj)
@@ -200,15 +200,15 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 			queryType := uint8(2)
 
 			chunkObj := chunk.NewChunk(
-				batchMsg.ClientID,       // clientID
-				batchMsg.FileID,         // fileID
-				queryType,               // queryType (2)
-				batchMsg.BatchNumber,    // chunkNumber
-				batchMsg.IsEOF,          // isLastChunk
-				0,                       // step (hardcoded to 0 as requested)
-				len(batchMsg.BatchData), // chunkSize
-				1,                       // tableID (hardcoded for now)
-				batchMsg.BatchData,      // chunkData
+				batchMsg.ClientID,    // clientID
+				batchMsg.FileID,      // fileID
+				queryType,            // queryType (2)
+				batchMsg.BatchNumber, // chunkNumber
+				batchMsg.IsEOF,       // isLastChunk
+				0,                    // step (hardcoded to 0 as requested)
+				batchMsg.BatchSize,   // chunkSize (number of rows from batch)
+				1,                    // tableID (hardcoded for now)
+				batchMsg.BatchData,   // chunkData
 			)
 
 			chunkMsg := chunk.NewChunkMessage(chunkObj)

@@ -1,112 +1,129 @@
 package main
 
 import (
-	"bufio"
 	"encoding/csv"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"os"
-	"strings"
+	"strconv"
 	"time"
+
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
-
-func writeAll(w net.Conn, data []byte) error {
-	for len(data) > 0 {
-		n, err := w.Write(data)
-		if err != nil {
-			data = data[n:]
-			if _, ok := err.(net.Error); ok {
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
-			return err
-		}
-		data = data[n:]
-	}
-	return nil
-}
-
-// startServerReader launches a goroutine that prints responses from the server.
-func startServerReader(conn net.Conn) {
-	go func() {
-		sc := bufio.NewScanner(conn)
-		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-		for sc.Scan() {
-			fmt.Printf("Server: %s\n", sc.Text())
-		}
-		if err := sc.Err(); err != nil && err != io.EOF {
-			log.Printf("Error reading from server: %v", err)
-		}
-	}()
-}
-
-// sendBatches reads CSV records, groups them into batches, and sends them.
-func sendBatches(conn net.Conn, r *csv.Reader, batchSize int) (int, int, error) {
-	r.FieldsPerRecord = -1 // allow variable columns
-
-	var batch []string
-	recordNum := 0
-	batchNum := 0
-
-	for {
-		rec, err := r.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return recordNum, batchNum, fmt.Errorf("CSV read error on record %d: %v", recordNum+1, err)
-		}
-		recordNum++
-
-		line := strings.Join(rec, ",")
-		batch = append(batch, line)
-
-		if len(batch) == batchSize {
-			batchNum++
-			payload := strings.Join(batch, "\n") + "\n"
-			if err := writeAll(conn, []byte(payload)); err != nil {
-				return recordNum, batchNum, fmt.Errorf("failed to send batch %d: %w", batchNum, err)
-			}
-			fmt.Printf("Sent batch %d with %d records\n", batchNum, len(batch))
-			batch = batch[:0]
-		}
-	}
-
-	// Send final partial batch
-	if len(batch) > 0 {
-		batchNum++
-		payload := strings.Join(batch, "\n") + "\n"
-		if err := writeAll(conn, []byte(payload)); err != nil {
-			return recordNum, batchNum, fmt.Errorf("failed to send final batch %d: %w", batchNum, err)
-		}
-		fmt.Printf("Sent final batch %d with %d records\n", batchNum, len(batch))
-	}
-
-	return recordNum, batchNum, nil
-}
 
 func main() {
 	// Check if data folder is provided
 	if len(os.Args) < 2 {
-		log.Fatal("Usage: ./client <data_folder_path> [server_address]")
+		log.Fatal("Usage: ./client <data_folder_path>")
 	}
 
 	dataFolder := os.Args[1]
 
-	// Get server address from command line or use default
-	serverAddr := "localhost:8080"
-	if len(os.Args) >= 3 {
-		serverAddr = os.Args[2]
+	// Get RabbitMQ configuration from environment variables
+	host := getEnv("RABBITMQ_HOST", "localhost")
+	portStr := getEnv("RABBITMQ_PORT", "5672")
+	portInt, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Printf("Invalid RabbitMQ port: %v, using default 5672", err)
+		portInt = 5672
+	}
+	username := getEnv("RABBITMQ_USER", "admin")
+	password := getEnv("RABBITMQ_PASS", "password")
+
+	// Create RabbitMQ connection configuration
+	config := &middleware.ConnectionConfig{
+		Host:     host,
+		Port:     portInt,
+		Username: username,
+		Password: password,
+	}
+
+	// Create RabbitMQ-based client
+	client, err := NewClient(config)
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	// Start the client (to consume acknowledgments)
+	if err := client.Start(); err != nil {
+		log.Fatalf("Failed to start client: %v", err)
 	}
 
 	// Run the client
-	err := runClient(dataFolder, serverAddr)
+	err = runClient(dataFolder, client)
 	if err != nil {
 		log.Fatalf("Client error: %v", err)
 	}
 
+	// Keep running to continue receiving acknowledgments
+	fmt.Println("Client finished sending all batches. Press Ctrl+C to exit.")
 	select {}
+}
 
+// Helper function to get environment variable with default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// runClient runs the client with the given data folder
+func runClient(dataFolder string, client *Client) error {
+	// Scan for CSV files in the data folder
+	fileMap, err := scanCSVFiles(dataFolder)
+	if err != nil {
+		return fmt.Errorf("failed to scan data folder: %w", err)
+	}
+
+	if len(fileMap) == 0 {
+		return fmt.Errorf("no CSV files found in data folder: %s", dataFolder)
+	}
+
+	fmt.Printf("Connected to RabbitMQ\n")
+	fmt.Printf("Found %d CSV files in folder: %s\n", len(fileMap), dataFolder)
+
+	totalRecords := 0
+	totalBatches := 0
+	totalFiles := 0
+
+	// Process each CSV file
+	for filePath, fileID := range fileMap {
+		fmt.Printf("\nProcessing file: %s (FileID: %s)\n", filePath, fileID)
+
+		// Open the CSV file
+		f, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("Failed to open CSV file %s: %v", filePath, err)
+			continue
+		}
+
+		// Read lines from file and send to server
+		r := csv.NewReader(f)
+		sentRecords, sentBatches, err := client.sendBatches(r, 10000, fileID)
+		if err != nil {
+			log.Printf("Error sending batches for file %s: %v", filePath, err)
+			f.Close()
+			continue
+		}
+
+		f.Close()
+		totalRecords += sentRecords
+		totalBatches += sentBatches
+		totalFiles++
+
+		fmt.Printf("Completed file %s: %d records, %d batches\n", filePath, sentRecords, sentBatches)
+
+		// Small delay between files
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	fmt.Printf("\nFinished sending all files. Total files: %d, Total records: %d, Total batches: %d\n",
+		totalFiles, totalRecords, totalBatches)
+
+	// Wait a bit for final acknowledgments
+	time.Sleep(5 * time.Second)
+
+	return nil
 }

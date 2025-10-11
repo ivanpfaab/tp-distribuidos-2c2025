@@ -27,8 +27,8 @@ docker-compose-up: ## Start all services in proper order
 	docker compose --profile orchestration up -d year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker groupby-worker streaming-service query-gateway
 	@echo "3. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d server
-	@echo "4. Starting Client..."
-	docker compose --profile orchestration --profile data-flow up -d client
+	@echo "4. Starting Clients..."
+	docker compose --profile orchestration --profile data-flow up -d client-1 client-2
 	@echo "All services started successfully!"
 
 docker-compose-up-build: ## Start all services in proper order
@@ -41,8 +41,8 @@ docker-compose-up-build: ## Start all services in proper order
 	docker compose --profile orchestration up -d --build year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker groupby-worker streaming-service query-gateway
 	@echo "3. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d --build server
-	@echo "4. Starting Client..."
-	docker compose --profile orchestration --profile data-flow up -d --build client
+	@echo "4. Starting Clients..."
+	docker compose --profile orchestration --profile data-flow up -d --build client-1 client-2
 	@echo "All services started successfully!"
 
 # Quick start (alternative - starts all at once with dependencies)

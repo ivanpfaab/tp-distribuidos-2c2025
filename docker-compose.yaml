@@ -22,8 +22,6 @@ services:
       context: .
       dockerfile: ./server/Dockerfile
     container_name: server
-    ports:
-      - "8081:8080"   # TCP port for client connections
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -46,7 +44,6 @@ services:
       streaming-service:
         condition: service_started
     environment:
-      - SERVER_PORT=8080
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=admin
@@ -59,13 +56,17 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client
     depends_on:
-      server:
-        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
     environment:
       - CLIENT_ID=CLI1
-    command: ["./main", "/app/data", "server:8080"]
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+    command: ["./main", "/app/data"]
     profiles: ["data-flow"]
 
   client-2:
@@ -74,13 +75,17 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client-2
     depends_on:
-      server:
-        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
     environment:
       - CLIENT_ID=CLI2
-    command: ["./main", "/app/data", "server:8080"]
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+    command: ["./main", "/app/data"]
     profiles: ["data-flow"]
 
   # Worker services

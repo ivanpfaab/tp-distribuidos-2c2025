@@ -22,11 +22,13 @@ tp-distribuidos-2c2025/
 
 ## Features
 
-- **Echo Server**: TCP server that echoes back any message sent by clients
-- **File-based Client**: Client that reads messages from a text file and sends them to the server
-- **Docker Support**: Both applications are containerized for easy deployment
-- **Docker Compose**: Orchestrates both services with proper networking
-- **Sample Input File**: Includes a sample `input.txt` file for testing
+- **RabbitMQ-Based Server**: Server that consumes batch messages from RabbitMQ and processes CSV data
+- **CSV Batch Client**: Client that reads CSV files and sends batches via RabbitMQ message queues
+- **Data Processing Pipeline**: Year filter, time filter, amount filter, join workers, and aggregation
+- **Multiple Client Support**: Supports concurrent clients with unique client IDs
+- **Docker Support**: All applications are containerized for easy deployment
+- **Docker Compose**: Orchestrates all services with proper networking and dependencies
+- **Message Queue Architecture**: All inter-service communication via RabbitMQ
 
 ## Prerequisites
 
