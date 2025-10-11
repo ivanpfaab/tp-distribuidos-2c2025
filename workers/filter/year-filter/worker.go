@@ -90,7 +90,13 @@ func NewYearFilterWorker(config *middleware.ConnectionConfig) (*YearFilterWorker
 // Start starts the year filter worker
 func (yfw *YearFilterWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Year Filter Worker: Starting to listen for messages...")
-	return yfw.consumer.StartConsuming(yfw.createCallback())
+	err := yfw.consumer.StartConsuming(yfw.createCallback())
+	if err != 0 {
+		fmt.Printf("Year Filter Worker: ERROR - StartConsuming failed with error: %v\n", err)
+		return err
+	}
+	fmt.Println("Year Filter Worker: Successfully registered as consumer")
+	return 0
 }
 
 // Close closes all connections
@@ -109,8 +115,11 @@ func (yfw *YearFilterWorker) Close() {
 // createCallback creates the message processing callback
 func (yfw *YearFilterWorker) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		fmt.Println("Year Filter Worker: Starting to listen for messages...")
+		fmt.Println("Year Filter Worker: Callback started, waiting for messages...")
+		messageCount := 0
 		for delivery := range *consumeChannel {
+			messageCount++
+			fmt.Printf("Year Filter Worker: Received message #%d\n", messageCount)
 			if err := yfw.processMessage(delivery); err != 0 {
 				fmt.Printf("Year Filter Worker: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
@@ -118,6 +127,7 @@ func (yfw *YearFilterWorker) createCallback() func(middleware.ConsumeChannel, ch
 			}
 			delivery.Ack(false)
 		}
+		fmt.Printf("Year Filter Worker: Consume channel closed after processing %d messages\n", messageCount)
 		done <- nil
 	}
 }
