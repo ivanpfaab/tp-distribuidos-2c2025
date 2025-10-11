@@ -183,14 +183,6 @@ func (w *ItemIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) midd
 func (w *ItemIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	fmt.Printf("ItemID Join Worker: Received chunk message\n")
 
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("ItemID Join Worker: Failed to deserialize chunk: %v\n", err)
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
-	}
-
 	// Check if dictionary is ready
 	dictionaryReady := w.dictionaryReady
 
@@ -198,6 +190,14 @@ func (w *ItemIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewar
 		fmt.Printf("ItemID Join Worker: Dictionary not ready, NACKing chunk for retry\n")
 		delivery.Nack(false, true) // Reject and requeue
 		return 0
+	}
+	
+	// Deserialize the chunk message
+	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+	if err != nil {
+		fmt.Printf("ItemID Join Worker: Failed to deserialize chunk: %v\n", err)
+		delivery.Nack(false, false) // Reject the message
+		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Process the chunk
