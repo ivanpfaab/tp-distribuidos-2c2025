@@ -138,8 +138,8 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 		return fmt.Errorf("expected batch message, got %T", message)
 	}
 
-	log.Printf("Data Handler: Processing batch - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
-		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.BatchData)
+	log.Printf("Data Handler: Processing batch - ClientID: %s, FileID: %s, BatchNumber: %d",
+		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
 
 	// Route chunk based on file type
 	if isReferenceDataChunk(batchMsg.FileID) {

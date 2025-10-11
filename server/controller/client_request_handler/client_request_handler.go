@@ -91,7 +91,6 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 
 		// Calculate remaining data size
 		remainingDataSize := totalLength - 7 // totalLength - headerLength(2) - totalLength(4) - msgTypeID(1)
-		log.Printf("Client Request Handler: Reading remaining data - Size: %d bytes", remainingDataSize)
 
 		// Read the remaining message data - handle TCP short reads
 		remainingData := make([]byte, remainingDataSize)
@@ -155,8 +154,8 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 	}
 
 	// Log the received batch
-	log.Printf("Client Request Handler: Received batch - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
-		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.BatchData)
+	log.Printf("Client Request Handler: Received batch - ClientID: %s, FileID: %s, BatchNumber: %d",
+		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
 
 	// Process the batch message directly with the data handler
 	if err := dataHandler.ProcessBatchMessage(data); err != nil {

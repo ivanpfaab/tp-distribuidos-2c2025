@@ -86,19 +86,19 @@ The project includes a comprehensive Makefile with convenient commands:
 1. **Build and run the server:**
    ```bash
    # Build server image
-   docker build -t echo-server ./server
+   docker build -t server ./server
    
    # Run server container
-   docker run -p 8080:8080 --name echo-server echo-server
+   docker run -p 8080:8080 --name server server
    ```
 
 2. **Build and run the client (in another terminal):**
    ```bash
    # Build client image
-   docker build -t echo-client ./client
+   docker build -t client ./client
    
    # Run client container (connect to server)
-   docker run -it --rm --network host echo-client
+   docker run -it --rm --network host client
    ```
 
 ### Local Development
@@ -144,8 +144,8 @@ make run-client-file FILE=yourfile.txt
 
 ## Docker Images
 
-- **echo-server**: Contains the TCP echo server
-- **echo-client**: Contains the interactive client
+- **server**: Contains the TCP echo server
+- **client**: Contains the interactive client
 
 ## Troubleshooting
 

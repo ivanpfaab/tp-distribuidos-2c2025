@@ -50,7 +50,7 @@ func testSingleBatchMessageFlow(t *testing.T) {
 
 	testing_utils.LogStep("Connecting to test server")
 	// Connect to the test server (assuming it's running on localhost:8081)
-	conn, err := net.Dial("tcp", "test-echo-server:8080")
+	conn, err := net.Dial("tcp", "test-server:8080")
 	if err != nil {
 		t.Skipf("Skipping test - test server not available: %v", err)
 		return
@@ -98,7 +98,7 @@ func testMultipleBatchMessagesFlow(t *testing.T) {
 	}
 
 	testing_utils.LogStep("Connecting to test server")
-	conn, err := net.Dial("tcp", "test-echo-server:8080")
+	conn, err := net.Dial("tcp", "test-server:8080")
 	if err != nil {
 		t.Skipf("Skipping test - test server not available: %v", err)
 		return
@@ -225,7 +225,7 @@ func testDataHandlerChunkProcessing(t *testing.T) {
 
 	// Send test batches to the server
 	testing_utils.LogStep("Sending test batches to server")
-	conn, err := net.Dial("tcp", "test-echo-server:8080")
+	conn, err := net.Dial("tcp", "test-server:8080")
 	if err != nil {
 		t.Skipf("Skipping test - test server not available: %v", err)
 		return
@@ -329,7 +329,7 @@ func testDataHandlerProcessingVerification(t *testing.T) {
 	// This test verifies that the data handler is actually processing batches
 	// by sending a batch and checking that we get the expected server behavior
 
-	conn, err := net.Dial("tcp", "test-echo-server:8080")
+	conn, err := net.Dial("tcp", "test-server:8080")
 	if err != nil {
 		t.Skipf("Skipping test - test server not available: %v", err)
 		return
@@ -394,7 +394,7 @@ func testConnectionHandling(t *testing.T) {
 
 	testing_utils.LogStep("Creating %d connections", numConnections)
 	for i := 0; i < numConnections; i++ {
-		conn, err := net.Dial("tcp", "test-echo-server:8080")
+		conn, err := net.Dial("tcp", "test-server:8080")
 		if err != nil {
 			t.Skipf("Skipping test - test server not available: %v", err)
 			return
@@ -454,7 +454,7 @@ func testErrorHandling(t *testing.T) {
 	testing_utils.LogStep("Testing error handling scenarios")
 
 	testing_utils.LogStep("Testing invalid message format")
-	conn, err := net.Dial("tcp", "test-echo-server:8080")
+	conn, err := net.Dial("tcp", "test-server:8080")
 	if err != nil {
 		t.Skipf("Skipping test - test server not available: %v", err)
 		return
@@ -509,7 +509,7 @@ func TestServerAvailability(t *testing.T) {
 	testing_utils.LogTest("Testing server availability")
 
 	testing_utils.LogStep("Attempting to connect to test server")
-	conn, err := net.DialTimeout("tcp", "test-echo-server:8080", 5*time.Second)
+	conn, err := net.DialTimeout("tcp", "test-server:8080", 5*time.Second)
 	if err != nil {
 		t.Skipf("Test server not available: %v", err)
 		return
