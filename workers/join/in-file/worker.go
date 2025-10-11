@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -193,33 +192,37 @@ func (jw *JoinByUserIdWorker) parseTransactionData(csvData string) ([]map[string
 }
 
 // performTransactionUserJoin performs the join between transactions and users from CSV files
-// Optimized to handle sorted chunks efficiently
 func (jw *JoinByUserIdWorker) performTransactionUserJoin(transactions []map[string]string) string {
 	var result strings.Builder
 
 	// Write header
 	result.WriteString("transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at,gender,birthdate,registered_at\n")
 
-	// Group transactions by user ID for efficient file access
-	userIDToTransaction := make(map[string]map[string]string)
+	// Cache users to avoid repeated lookups
+	userCache := make(map[string]*UserData)
+
+	// Process each transaction
 	for _, transaction := range transactions {
 		userID := transaction["user_id"]
-		userIDToTransaction[userID] = transaction
-	}
 
-	// Process each unique user ID
-	for userID, transaction := range userIDToTransaction {
 		// Skip transactions with empty user IDs
 		if userID == "" {
 			fmt.Printf("Join by User ID Worker: Skipping transaction with empty user ID\n")
 			continue
 		}
 
-		// Look up user data from CSV file
-		user, err := jw.lookupUserFromFile(userID)
-		if err != nil {
-			fmt.Printf("Join by User ID Worker: Failed to lookup user %s: %v\n", userID, err)
-			continue // Skip this transaction
+		// Check cache first
+		user, cached := userCache[userID]
+		if !cached {
+			// Look up user data from CSV file
+			var err error
+			user, err = jw.lookupUserFromFile(userID)
+			if err != nil {
+				fmt.Printf("Join by User ID Worker: Failed to lookup user %s: %v\n", userID, err)
+				continue // Skip this transaction
+			}
+			// Cache the result (even if nil)
+			userCache[userID] = user
 		}
 
 		if user != nil {
@@ -253,28 +256,42 @@ type UserData struct {
 	RegisteredAt string
 }
 
-// loadUserFromFile loads a specific user from a CSV file
-func (jw *JoinByUserIdWorker) loadUserFromFile(filename, userID string) (*UserData, error) {
-	filepath := filepath.Join(SharedDataDir, filename)
+// lookupUserFromFile looks up user data from the appropriate partition file
+func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string) (*UserData, error) {
+	// Normalize user ID (remove decimal point if present, e.g., "13060.0" -> "13060")
+	normalizedUserID := strings.TrimSuffix(userID, ".0")
 
-	// Open and read the file
-	file, err := os.Open(filepath)
+	// Determine which partition this user belongs to
+	partition, err := getUserPartition(normalizedUserID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file %s: %w", filepath, err)
+		return nil, fmt.Errorf("failed to get partition for user %s: %w", normalizedUserID, err)
+	}
+
+	// Open the partition file
+	filename := fmt.Sprintf("users-partition-%03d.csv", partition)
+	filePath := filepath.Join(SharedDataDir, filename)
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		// If file doesn't exist, user is not in dataset
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to open partition file %s: %w", filePath, err)
 	}
 	defer file.Close()
 
-	// Read CSV data
+	// Read and search for user
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read CSV from file %s: %w", filepath, err)
+		return nil, fmt.Errorf("failed to read CSV from file %s: %w", filePath, err)
 	}
 
-	// Search for the specific user ID
-	for i := 1; i < len(records); i++ { // Skip header
+	// Search for the specific user ID (skip header)
+	for i := 1; i < len(records); i++ {
 		record := records[i]
-		if len(record) >= 4 && record[0] == userID {
+		if len(record) >= 4 && record[0] == normalizedUserID {
 			return &UserData{
 				UserID:       record[0],
 				Gender:       record[1],
@@ -284,63 +301,7 @@ func (jw *JoinByUserIdWorker) loadUserFromFile(filename, userID string) (*UserDa
 		}
 	}
 
-	// User not found in file
-	return nil, nil
-}
-
-// lookupUserFromFile looks up user data from the appropriate CSV file
-// Searches for files with actual min-max naming convention
-func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string) (*UserData, error) {
-	// Parse user ID (handle both int and float formats)
-	userIDFloat, err := strconv.ParseFloat(userID, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid user ID %s: %w", userID, err)
-	}
-	userIDInt := int(userIDFloat)
-
-	// Search for files that might contain this user ID
-	// Since files are named with actual min-max values, we need to check all files
-	files, err := os.ReadDir(SharedDataDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read shared data directory: %w", err)
-	}
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		filename := file.Name()
-		if !strings.HasPrefix(filename, "users-") || !strings.HasSuffix(filename, ".csv") {
-			continue
-		}
-
-		// Extract min and max from filename: users-XXXXX-YYYYY.csv
-		parts := strings.Split(filename, "-")
-		if len(parts) != 3 {
-			continue
-		}
-
-		minStr := strings.TrimSuffix(parts[1], ".csv")
-		maxStr := strings.TrimSuffix(parts[2], ".csv")
-
-		minID, err := strconv.Atoi(minStr)
-		if err != nil {
-			continue
-		}
-
-		maxID, err := strconv.Atoi(maxStr)
-		if err != nil {
-			continue
-		}
-
-		// Check if user ID falls within this file's range
-		if userIDInt >= minID && userIDInt <= maxID {
-			return jw.loadUserFromFile(filename, userID)
-		}
-	}
-
-	// User not found in any file
+	// User not found in partition
 	return nil, nil
 }
 

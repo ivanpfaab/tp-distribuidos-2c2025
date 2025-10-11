@@ -1,10 +1,10 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -46,7 +46,6 @@ func NewJoinDataWriter(config *middleware.ConnectionConfig) (*JoinDataWriter, er
 		queueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare user ID dictionary queue: %v", err)
 	}
-	
 
 	return &JoinDataWriter{
 		consumer: consumer,
@@ -93,80 +92,94 @@ func (jdw *JoinDataWriter) processMessage(delivery amqp.Delivery) middleware.Mes
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Extract first and last user IDs from sorted CSV chunk data
-	firstUserID, lastUserID, err := jdw.extractUserIDRange(string(chunkMsg.ChunkData))
-	if err != nil {
-		fmt.Printf("Join Data Writer: Failed to extract user ID range: %v\n", err)
+	// Write users to partition files based on hash
+	if err := jdw.writeUsersToPartitions(string(chunkMsg.ChunkData)); err != nil {
+		fmt.Printf("Join Data Writer: Failed to write users to partitions: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	fmt.Printf("Join Data Writer: Processing chunk with user ID range %d-%d\n", firstUserID, lastUserID)
-
-	// Write the entire chunk data to the appropriate file(s)
-	if err := jdw.writeChunkToFiles(string(chunkMsg.ChunkData), firstUserID, lastUserID); err != nil {
-		fmt.Printf("Join Data Writer: Failed to write chunk to files: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	fmt.Printf("Join Data Writer: Successfully processed chunk with range %d-%d\n", firstUserID, lastUserID)
+	fmt.Printf("Join Data Writer: Successfully processed chunk\n")
 	return 0
 }
 
-// extractUserIDRange extracts the first and last user IDs from sorted CSV chunk data
-func (jdw *JoinDataWriter) extractUserIDRange(csvData string) (int, int, error) {
-	lines := strings.Split(strings.TrimSpace(csvData), "\n")
-	if len(lines) < 2 {
-		return 0, 0, fmt.Errorf("chunk data must have at least header and one data row")
-	}
-
-	// Skip header, get first data line
-	firstLine := lines[1]
-	firstFields := strings.Split(firstLine, ",")
-	if len(firstFields) < 1 {
-		return 0, 0, fmt.Errorf("first data line is invalid")
-	}
-
-	firstUserID, err := strconv.Atoi(firstFields[0])
+// writeUsersToPartitions writes users to partition files based on hash
+func (jdw *JoinDataWriter) writeUsersToPartitions(csvData string) error {
+	reader := csv.NewReader(strings.NewReader(csvData))
+	records, err := reader.ReadAll()
 	if err != nil {
-		return 0, 0, fmt.Errorf("invalid first user ID %s: %w", firstFields[0], err)
+		return fmt.Errorf("failed to parse CSV: %w", err)
 	}
 
-	// Get last data line
-	lastLine := lines[len(lines)-1]
-	lastFields := strings.Split(lastLine, ",")
-	if len(lastFields) < 1 {
-		return 0, 0, fmt.Errorf("last data line is invalid")
+	if len(records) < 1 {
+		return fmt.Errorf("no data in chunk")
 	}
 
-	lastUserID, err := strconv.Atoi(lastFields[0])
-	if err != nil {
-		return 0, 0, fmt.Errorf("invalid last user ID %s: %w", lastFields[0], err)
+	// Track which partitions we write to for logging
+	partitionsWritten := make(map[int]int)
+
+	// Process each user record
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+		if record[0] == "user_id" {
+			continue
+		}
+
+		userID := record[0]
+
+		// Determine partition for this user
+		partition, err := getUserPartition(userID)
+		if err != nil {
+			fmt.Printf("Join Data Writer: Failed to get partition for user %s: %v\n", userID, err)
+			continue
+		}
+
+		// Append user to partition file
+		if err := jdw.appendUserToPartition(partition, record); err != nil {
+			fmt.Printf("Join Data Writer: Failed to write user %s to partition %d: %v\n", userID, partition, err)
+			continue
+		}
+
+		partitionsWritten[partition]++
 	}
 
-	return firstUserID, lastUserID, nil
+	// Log summary
+	fmt.Printf("Join Data Writer: Wrote %d users across %d partitions\n", len(records)-1, len(partitionsWritten))
+	return nil
 }
 
-// writeChunkToFiles writes the entire chunk data to a CSV file
-// Uses the actual first and last user IDs from the chunk data for file naming
-func (jdw *JoinDataWriter) writeChunkToFiles(csvData string, firstUserID, lastUserID int) error {
-	// Use actual first and last user IDs for file naming
-	filename := fmt.Sprintf("users-%05d-%05d.csv", firstUserID, lastUserID)
-	filepath := filepath.Join(SharedDataDir, filename)
+// appendUserToPartition appends a user record to the appropriate partition file
+func (jdw *JoinDataWriter) appendUserToPartition(partition int, record []string) error {
+	filename := fmt.Sprintf("users-partition-%03d.csv", partition)
+	filePath := filepath.Join(SharedDataDir, filename)
 
-	fmt.Printf("Join Data Writer: Writing chunk with range %d-%d to file %s\n", firstUserID, lastUserID, filename)
+	// Check if file exists to determine if we need to write header
+	fileExists := true
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		fileExists = false
+	}
 
-	// Create and write to file
-	file, err := os.Create(filepath)
+	// Open file in append mode
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", filepath, err)
+		return fmt.Errorf("failed to open partition file %s: %w", filePath, err)
 	}
 	defer file.Close()
 
-	// Write the entire chunk data
-	if _, err := file.WriteString(csvData); err != nil {
-		return fmt.Errorf("failed to write chunk data to file %s: %w", filepath, err)
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write header if this is a new file
+	if !fileExists {
+		header := []string{"user_id", "gender", "birthdate", "registered_at"}
+		if err := writer.Write(header); err != nil {
+			return fmt.Errorf("failed to write header: %w", err)
+		}
 	}
 
-	fmt.Printf("Join Data Writer: Wrote chunk data to file %s\n", filename)
+	// Write the user record
+	if err := writer.Write(record); err != nil {
+		return fmt.Errorf("failed to write record: %w", err)
+	}
+
 	return nil
 }
