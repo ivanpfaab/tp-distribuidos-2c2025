@@ -29,6 +29,7 @@ func filterAmount(line string) bool {
 func AmountFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMiddlewareError) {
 	var responseBuilder strings.Builder
 	responseSize := 0
+	hasHeader := false
 
 	lines := strings.Split(chunkMsg.ChunkData, "\n")
 
@@ -36,11 +37,12 @@ func AmountFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMi
 	if len(lines) > 0 && strings.Contains(lines[0], "final_amount") {
 		responseBuilder.WriteString(lines[0])
 		responseBuilder.WriteByte('\n')
+		hasHeader = true
 	}
 
 	// Process data rows - filter by amount only
 	for i, l := range lines {
-		if i == 0 || l == "" {
+		if i == 0 && hasHeader {
 			continue
 		}
 		pass := filterAmount(l)

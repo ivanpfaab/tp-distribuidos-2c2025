@@ -9,11 +9,15 @@ import (
 )
 
 const (
-	DataWriterQueueName = "data-writer-queue"
-	DefaultRabbitMQHost = "localhost"
-	DefaultRabbitMQPort = "5672"
-	DefaultRabbitMQUser = "admin"
-	DefaultRabbitMQPass = "password"
+	JoinExchangeName           = "join-exchange"
+	JoinRoutingKey             = "join"
+	DefaultRabbitMQHost        = "localhost"
+	DefaultRabbitMQPort        = "5672"
+	DefaultRabbitMQUser        = "admin"
+	DefaultRabbitMQPass        = "password"
+	DefaultChunkQueueName      = "chunk-queue"
+	DefaultDictionaryQueueName = "dictionary-queue"
+	DefaultOutputQueueName     = "output-queue"
 )
 
 // loadConfig loads configuration from environment variables
@@ -27,7 +31,12 @@ func loadConfig() (*middleware.ConnectionConfig, error) {
 	username := getEnv("RABBITMQ_USER", DefaultRabbitMQUser)
 	password := getEnv("RABBITMQ_PASS", DefaultRabbitMQPass)
 
-	fmt.Printf("Data Writer: Connecting to RabbitMQ at %s:%s with user %s\n", host, port, username)
+	// Configuration variables for future use
+	_ = getEnv("CHUNK_QUEUE_NAME", DefaultChunkQueueName)
+	_ = getEnv("DICTIONARY_QUEUE_NAME", DefaultDictionaryQueueName)
+	_ = getEnv("OUTPUT_QUEUE_NAME", DefaultOutputQueueName)
+
+	fmt.Printf("Join Worker: Connecting to RabbitMQ at %s:%s with user %s\n", host, port, username)
 
 	return &middleware.ConnectionConfig{
 		Host:     host,

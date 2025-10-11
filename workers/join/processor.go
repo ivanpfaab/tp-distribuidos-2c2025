@@ -233,7 +233,7 @@ func (jw *JoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.MessageMidd
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send reply back to orchestrator
+	// Send reply back to streaming service
 	return jw.sendReply(joinedChunk)
 }
 
@@ -259,14 +259,14 @@ func (jw *JoinWorker) processQueuedChunks() {
 			continue
 		}
 
-		// Send reply back to orchestrator
+		// Send reply back to streaming service
 		if err := jw.sendReply(joinedChunk); err != 0 {
 			fmt.Printf("Join Worker: Failed to send reply for queued chunk: %v\n", err)
 		}
 	}
 }
 
-// sendReply sends a processed chunk as a reply back to the orchestrator
+// sendReply sends a processed chunk as a reply back to the streaming service
 func (jw *JoinWorker) sendReply(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
@@ -278,9 +278,9 @@ func (jw *JoinWorker) sendReply(chunkMsg *chunk.Chunk) middleware.MessageMiddlew
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send the reply to the orchestrator reply queue
+	// Send the reply to the streaming service reply queue
 	if err := jw.replyProducer.Send(replyData); err != 0 {
-		fmt.Printf("Join Worker: Failed to send reply to orchestrator: %v\n", err)
+		fmt.Printf("Join Worker: Failed to send reply to streaming service: %v\n", err)
 		return err
 	}
 

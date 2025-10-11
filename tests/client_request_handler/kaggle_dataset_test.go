@@ -158,7 +158,7 @@ func setupTestConnection(t *testing.T) (*TestConnection, error) {
 		Password: "password",
 	}
 
-	consumer := workerqueue.NewQueueConsumer("step0-data-queue", config)
+	consumer := workerqueue.NewQueueConsumer("year-filter", config)
 	if consumer == nil {
 		return nil, fmt.Errorf("failed to create RabbitMQ consumer")
 	}
@@ -563,7 +563,7 @@ func processDataset(t *testing.T, transactions []CoffeeShopTransaction, fileID s
 		Password: "password",
 	}
 
-	consumer := workerqueue.NewQueueConsumer("step0-data-queue", config)
+	consumer := workerqueue.NewQueueConsumer("year-filter", config)
 	if consumer == nil {
 		t.Skipf("Skipping test - failed to create RabbitMQ consumer")
 		return

@@ -56,7 +56,7 @@ func NewGroupByOrchestrator(config *middleware.ConnectionConfig, numWorkers int)
 
 	// Create reply producer
 	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		ReplyQueueName,
+		"streaming-exchange-reply",
 		config,
 	)
 	if replyProducer == nil {

@@ -23,14 +23,11 @@ docker-compose-up: ## Start all services in proper order
 	docker compose up -d rabbitmq
 	@echo "Waiting for RabbitMQ to be healthy..."
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
-	@echo "2. Starting Query Orchestrator..."
-	docker compose --profile orchestration up -d query-orchestrator
-	@echo "Waiting for Query Orchestrator to be healthy..."
-	@echo "3. Starting Workers..."
-	docker compose --profile orchestration up -d year-filter-worker time-filter-worker amount-filter-worker join-worker groupby-worker streaming-service query-gateway
-	@echo "4. Starting Server..."
+	@echo "2. Starting Workers..."
+	docker compose --profile orchestration up -d year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker groupby-worker streaming-service query-gateway
+	@echo "3. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d server
-	@echo "5. Starting Client..."
+	@echo "4. Starting Client..."
 	docker compose --profile orchestration --profile data-flow up -d client
 	@echo "All services started successfully!"
 
@@ -40,14 +37,11 @@ docker-compose-up-build: ## Start all services in proper order
 	docker compose up -d --build rabbitmq
 	@echo "Waiting for RabbitMQ to be healthy..."
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
-	@echo "2. Starting Query Orchestrator..."
-	docker compose --profile orchestration up -d --build query-orchestrator
-	@echo "Waiting for Query Orchestrator to be healthy..."
-	@echo "3. Starting Workers..."
-	docker compose --profile orchestration up -d --build year-filter-worker time-filter-worker amount-filter-worker join-worker groupby-worker streaming-service query-gateway
-	@echo "4. Starting Server..."
+	@echo "2. Starting Workers..."
+	docker compose --profile orchestration up -d --build year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker groupby-worker streaming-service query-gateway
+	@echo "3. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d --build server
-	@echo "5. Starting Client..."
+	@echo "4. Starting Client..."
 	docker compose --profile orchestration --profile data-flow up -d --build client
 	@echo "All services started successfully!"
 
@@ -68,7 +62,7 @@ docker-compose-down-force: ## Force stop all services
 	@echo "Cleanup complete!"
 
 # Show logs from all services or specific service
-docker-compose-logs: ## Show logs from all services (usage: make docker-compose-logs SERVICE=query-orchestrator)
+docker-compose-logs: ## Show logs from all services (usage: make docker-compose-logs SERVICE=year-filter-worker)
 	@if [ -n "$(SERVICE)" ]; then \
 		docker compose --profile orchestration --profile data-flow logs -f $(SERVICE); \
 	else \

@@ -29,7 +29,7 @@ func NewJoinWorker(config *middleware.ConnectionConfig) (*JoinWorker, error) {
 
 	// Create reply producer
 	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		ReplyQueueName,
+		"streaming-exchange-reply",
 		config,
 	)
 	if replyProducer == nil {

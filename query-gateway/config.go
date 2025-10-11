@@ -8,6 +8,14 @@ import (
 
 const (
 	ReplyFilterBusQueueName = "reply-filter-bus"
+
+	// Join worker queues
+	ItemIdJoinChunkQueue  = "top-item-classification-chunk"
+	StoreIdJoinChunkQueue = "itemid-join-chunks"
+	UserIdJoinChunkQueue  = "userid-join-chunks"
+
+	// Result queues for streaming service
+	Query1ResultsQueue = "query1-results-chunks"
 )
 
 // Config holds the configuration for the query gateway
