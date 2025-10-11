@@ -53,7 +53,7 @@ services:
       - RABBITMQ_PASS=password
     profiles: ["data-flow"]
 
-  client:
+  client-1:
     build:
       context: .
       dockerfile: ./client/Dockerfile
@@ -63,6 +63,23 @@ services:
         condition: service_started
     volumes:
       - ./data:/app/data
+    environment:
+      - CLIENT_ID=CLI1
+    command: ["./main", "/app/data", "server:8080"]
+    profiles: ["data-flow"]
+
+  client-2:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    container_name: client-2
+    depends_on:
+      server:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CLIENT_ID=CLI2
     command: ["./main", "/app/data", "server:8080"]
     profiles: ["data-flow"]
 

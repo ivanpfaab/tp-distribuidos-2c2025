@@ -18,7 +18,35 @@ import (
 
 // TCPClient handles direct connection to the server
 type TCPClient struct {
-	conn net.Conn
+	conn     net.Conn
+	clientID string
+}
+
+// generateClientID generates a unique 4-byte client ID
+// Priority: CLIENT_ID env var > hostname > random ID
+func generateClientID() string {
+	// Try CLIENT_ID environment variable first
+	if clientID := os.Getenv("CLIENT_ID"); clientID != "" {
+		return ensureFourBytes(clientID)
+	}
+
+	// Try hostname
+	if hostname, err := os.Hostname(); err == nil {
+		return ensureFourBytes(hostname)
+	}
+
+	// Fallback to timestamp-based ID
+	timestamp := time.Now().UnixNano()
+	return fmt.Sprintf("%04d", timestamp%10000)
+}
+
+// ensureFourBytes ensures the string is exactly 4 bytes
+func ensureFourBytes(s string) string {
+	if len(s) >= 4 {
+		return s[:4]
+	}
+	// Pad with zeros if less than 4 bytes
+	return fmt.Sprintf("%-4s", s)
 }
 
 // NewTCPClient creates a new TCP client
@@ -28,7 +56,13 @@ func NewTCPClient(serverAddr string) (*TCPClient, error) {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	return &TCPClient{conn: conn}, nil
+	clientID := generateClientID()
+	log.Printf("Client initialized with ClientID: %s", clientID)
+
+	return &TCPClient{
+		conn:     conn,
+		clientID: clientID,
+	}, nil
 }
 
 // SendBatchMessage sends a batch message to the server
@@ -46,8 +80,8 @@ func (c *TCPClient) SendBatchMessage(batchData *batchpkg.Batch) error {
 		return fmt.Errorf("failed to send data to server: %w", err)
 	}
 
-	log.Printf("Sent batch message - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
-		batchData.ClientID, batchData.FileID, batchData.BatchNumber, batchData.BatchData)
+	log.Printf("Sent batch message - ClientID: %s, FileID: %s, BatchNumber: %d",
+		batchData.ClientID, batchData.FileID, batchData.BatchNumber)
 
 	return nil
 }
@@ -229,9 +263,9 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 			payload := strings.Join(batch, "\n") + "\n"
 			// Create batch message
 			batchData := &batchpkg.Batch{
-				ClientID:    "1234", // Exactly 4 bytes
-				FileID:      fileID, // Use provided file ID
-				IsEOF:       false,  // Not the last batch yet
+				ClientID:    c.clientID, // Use unique client ID
+				FileID:      fileID,     // Use provided file ID
+				IsEOF:       false,      // Not the last batch yet
 				BatchNumber: batchNum,
 				BatchSize:   len(payload),
 				BatchData:   payload,
@@ -254,9 +288,9 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		payload := strings.Join(batch, "\n") + "\n"
 		// Create batch message
 		batchData := &batchpkg.Batch{
-			ClientID:    "1234", // Exactly 4 bytes
-			FileID:      fileID, // Use provided file ID
-			IsEOF:       true,   // This is the last batch of the file
+			ClientID:    c.clientID, // Use unique client ID
+			FileID:      fileID,     // Use provided file ID
+			IsEOF:       true,       // This is the last batch of the file
 			BatchNumber: batchNum,
 			BatchSize:   len(payload),
 			BatchData:   payload,
@@ -272,9 +306,9 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		batchNum++
 		payload := "" // Empty payload for EOF marker
 		batchData := &batchpkg.Batch{
-			ClientID:    "1234", // Exactly 4 bytes
-			FileID:      fileID, // Use provided file ID
-			IsEOF:       true,   // This is the EOF marker
+			ClientID:    c.clientID, // Use unique client ID
+			FileID:      fileID,     // Use provided file ID
+			IsEOF:       true,       // This is the EOF marker
 			BatchNumber: batchNum,
 			BatchSize:   len(payload),
 			BatchData:   payload,
