@@ -39,11 +39,11 @@ services:
         condition: service_started
       storeid-join-worker:
         condition: service_started
+      in-file-join-worker:
+        condition: service_started
       groupby-worker:
         condition: service_started
       streaming-service:
-        condition: service_started
-      data-writer:
         condition: service_started
     environment:
       - SERVER_PORT=8080
@@ -160,6 +160,26 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
+  # In-File Join Worker (Query 4)
+  in-file-join-worker:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/Dockerfile
+    container_name: in-file-join-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      join-data-handler:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
   groupby-worker:
     build:
       context: .
@@ -190,22 +210,6 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
-
-  # Data writer service
-  data-writer:
-    build:
-      context: .
-      dockerfile: ./writter/Dockerfile
-    container_name: data-writer
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["data-flow", "orchestration"]
 
   # Query gateway service
   query-gateway:
@@ -242,3 +246,7 @@ services:
     command: ["go", "test", "-v", "./..."]
     stdin_open: true
     tty: true
+
+volumes:
+  shared-data:
+    driver: local

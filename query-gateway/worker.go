@@ -12,8 +12,8 @@ type QueryGateway struct {
 	consumer              *workerqueue.QueueConsumer
 	itemIdJoinProducer    *workerqueue.QueueMiddleware
 	storeIdJoinProducer   *workerqueue.QueueMiddleware
+	userIdJoinProducer    *workerqueue.QueueMiddleware
 	query1ResultsProducer *workerqueue.QueueMiddleware
-	query4ResultsProducer *workerqueue.QueueMiddleware
 	config                *middleware.ConnectionConfig
 }
 
@@ -101,27 +101,27 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 		return nil, fmt.Errorf("failed to declare Query1 results queue: %v", err)
 	}
 
-	// Initialize queue producer for Query 4 results
-	query4ResultsProducer := workerqueue.NewMessageMiddlewareQueue(
-		Query4ResultsQueue,
+	// Initialize queue producer for userIdJoin
+	userIdJoinProducer := workerqueue.NewMessageMiddlewareQueue(
+		UserIdJoinChunkQueue,
 		config,
 	)
-	if query4ResultsProducer == nil {
+	if userIdJoinProducer == nil {
 		consumer.Close()
 		itemIdJoinProducer.Close()
 		storeIdJoinProducer.Close()
 		query1ResultsProducer.Close()
-		return nil, fmt.Errorf("failed to create Query4 results producer")
+		return nil, fmt.Errorf("failed to create userIdJoin producer")
 	}
 
-	// Declare the Query4 results queue
-	if err := query4ResultsProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the userIdJoin chunks queue
+	if err := userIdJoinProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
 		itemIdJoinProducer.Close()
 		storeIdJoinProducer.Close()
 		query1ResultsProducer.Close()
-		query4ResultsProducer.Close()
-		return nil, fmt.Errorf("failed to declare Query4 results queue: %v", err)
+		userIdJoinProducer.Close()
+		return nil, fmt.Errorf("failed to declare userIdJoin chunks queue: %v", err)
 	}
 
 	return &QueryGateway{
@@ -129,7 +129,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 		itemIdJoinProducer:    itemIdJoinProducer,
 		storeIdJoinProducer:   storeIdJoinProducer,
 		query1ResultsProducer: query1ResultsProducer,
-		query4ResultsProducer: query4ResultsProducer,
+		userIdJoinProducer:    userIdJoinProducer,
 		config:                config,
 	}, nil
 }
@@ -154,8 +154,8 @@ func (qg *QueryGateway) Close() {
 	if qg.query1ResultsProducer != nil {
 		qg.query1ResultsProducer.Close()
 	}
-	if qg.query4ResultsProducer != nil {
-		qg.query4ResultsProducer.Close()
+	if qg.userIdJoinProducer != nil {
+		qg.userIdJoinProducer.Close()
 	}
 }
 

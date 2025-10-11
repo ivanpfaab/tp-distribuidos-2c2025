@@ -14,24 +14,21 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
+const (
+	// Join data handler exchange and routing key
+	FixedJoinDataExchange   = "fixed-join-data-exchange"
+	FixedJoinDataRoutingKey = "fixed-join-data"
+)
+
 // DataHandler struct
 type DataHandler struct {
 	// Connection for this specific client
 	Conn net.Conn
 
-	// Queue producer for sending chunks to data writer
-	writerProducer *workerqueue.QueueMiddleware
-
-	// Queue producer for sending chunks directly to year-filter (QueryType 1)
+	// Queue producer for sending chunks directly to year-filter (QueryData)
 	yearFilterProducer *workerqueue.QueueMiddleware
 
-	// Queue producer for sending chunks to ItemID join worker (QueryType 2)
-	itemIdJoinProducer *workerqueue.QueueMiddleware
-
-	// Queue producer for sending chunks to StoreID join worker (QueryType 3)
-	storeIdJoinProducer *workerqueue.QueueMiddleware
-
-	// Exchange producer for sending reference data to join-data-handler
+	// Exchange producer for sending chunks directly to join handler (Fixed data used for the joins)
 	joinDataHandlerProducer *exchange.ExchangeMiddleware
 
 	// Configuration
@@ -55,19 +52,6 @@ func NewDataHandlerForConnection(conn net.Conn, config *middleware.ConnectionCon
 
 // Initialize sets up the queue producers for sending chunks to data writer and year-filter
 func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
-	// Initialize queue producer for sending chunks to data writer
-	dh.writerProducer = workerqueue.NewMessageMiddlewareQueue(
-		"data-writer-queue",
-		dh.config,
-	)
-	if dh.writerProducer == nil {
-		return middleware.MessageMiddlewareDisconnectedError
-	}
-
-	// Declare the writer producer queue
-	if err := dh.writerProducer.DeclareQueue(false, false, false, false); err != 0 {
-		return err
-	}
 
 	// Initialize queue producer for sending chunks directly to year-filter
 	dh.yearFilterProducer = workerqueue.NewMessageMiddlewareQueue(
@@ -83,45 +67,16 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 		return err
 	}
 
-	// Initialize queue producer for sending chunks to ItemID join worker
-	dh.itemIdJoinProducer = workerqueue.NewMessageMiddlewareQueue(
-		"top-item-classification-chunk",
-		dh.config,
-	)
-	if dh.itemIdJoinProducer == nil {
-		return middleware.MessageMiddlewareDisconnectedError
-	}
-
-	// Declare the ItemID join producer queue
-	if err := dh.itemIdJoinProducer.DeclareQueue(false, false, false, false); err != 0 {
-		return err
-	}
-
-	// Initialize queue producer for sending chunks to StoreID join worker
-	dh.storeIdJoinProducer = workerqueue.NewMessageMiddlewareQueue(
-		"itemid-join-chunks",
-		dh.config,
-	)
-	if dh.storeIdJoinProducer == nil {
-		return middleware.MessageMiddlewareDisconnectedError
-	}
-
-	// Declare the StoreID join producer queue
-	if err := dh.storeIdJoinProducer.DeclareQueue(false, false, false, false); err != 0 {
-		return err
-	}
-
-	// Initialize exchange producer for sending reference data to join-data-handler
 	dh.joinDataHandlerProducer = exchange.NewMessageMiddlewareExchange(
-		"fixed-join-data-exchange",
-		[]string{"fixed-join-data"},
+		FixedJoinDataExchange,
+		[]string{FixedJoinDataRoutingKey},
 		dh.config,
 	)
 	if dh.joinDataHandlerProducer == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
-	// Declare the join-data-handler producer exchange
+	// Declare the fixed join data exchange
 	if err := dh.joinDataHandlerProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
 		return err
 	}
@@ -206,10 +161,10 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 		chunkMsg := chunk.NewChunkMessage(chunkObj)
 
 		if err := dh.SendChunkToJoinDataHandler(chunkMsg); err != 0 {
-			log.Printf("Data Handler: Failed to send reference data chunk to join-data-handler: %v", err)
-			return fmt.Errorf("failed to send reference data chunk to join-data-handler: %v", err)
+			log.Printf("Data Handler: Failed to send reference data chunk to join data handler: %v", err)
+			return fmt.Errorf("failed to send reference data chunk to join data handler: %v", err)
 		}
-		log.Printf("Data Handler: Sent reference data chunk to join-data-handler - ClientID: %s, FileID: %s, ChunkNumber: %d",
+		log.Printf("Data Handler: Sent reference data chunk to join data handler - ClientID: %s, FileID: %s, ChunkNumber: %d",
 			chunkObj.ClientID, chunkObj.FileID, chunkObj.ChunkNumber)
 
 	} else if isTransactionDataChunk(batchMsg.FileID) {
@@ -295,21 +250,7 @@ func (dh *DataHandler) Start() {
 
 // IsReady checks if the data handler is ready to process batches
 func (dh *DataHandler) IsReady() bool {
-	return dh.writerProducer != nil && dh.yearFilterProducer != nil &&
-		dh.itemIdJoinProducer != nil && dh.storeIdJoinProducer != nil && dh.joinDataHandlerProducer != nil
-}
-
-// SendChunkToWriter sends a chunk message to the data writer
-func (dh *DataHandler) SendChunkToWriter(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
-	// Serialize the chunk message
-	messageData, err := chunk.SerializeChunkMessage(chunkMsg)
-	if err != nil {
-		fmt.Printf("Failed to serialize chunk message for writer: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Send to writer queue
-	return dh.writerProducer.Send(messageData)
+	return dh.yearFilterProducer != nil && dh.joinDataHandlerProducer != nil
 }
 
 // SendChunkToYearFilter sends a chunk message directly to the year-filter worker
@@ -325,69 +266,25 @@ func (dh *DataHandler) SendChunkToYearFilter(chunkMsg *chunk.ChunkMessage) middl
 	return dh.yearFilterProducer.Send(messageData)
 }
 
-// SendChunkToItemIdJoin sends a chunk message to the ItemID join worker
-func (dh *DataHandler) SendChunkToItemIdJoin(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
-	// Serialize the chunk message
-	messageData, err := chunk.SerializeChunkMessage(chunkMsg)
-	if err != nil {
-		fmt.Printf("Failed to serialize chunk message for ItemID join: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Send to ItemID join queue
-	return dh.itemIdJoinProducer.Send(messageData)
-}
-
-// SendChunkToStoreIdJoin sends a chunk message to the StoreID join worker
-func (dh *DataHandler) SendChunkToStoreIdJoin(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
-	// Serialize the chunk message
-	messageData, err := chunk.SerializeChunkMessage(chunkMsg)
-	if err != nil {
-		fmt.Printf("Failed to serialize chunk message for StoreID join: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Send to StoreID join queue
-	return dh.storeIdJoinProducer.Send(messageData)
-}
-
-// SendChunkToJoinDataHandler sends a chunk message to the join-data-handler
+// SendChunkToJoinDataHandler sends a chunk message to the join data handler worker
 func (dh *DataHandler) SendChunkToJoinDataHandler(chunkMsg *chunk.ChunkMessage) middleware.MessageMiddlewareError {
 	// Serialize the chunk message
 	messageData, err := chunk.SerializeChunkMessage(chunkMsg)
 	if err != nil {
-		fmt.Printf("Failed to serialize chunk message for join-data-handler: %v\n", err)
+		fmt.Printf("Failed to serialize chunk message for join data handler: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send to join-data-handler exchange with routing key
-	return dh.joinDataHandlerProducer.Send(messageData, []string{"fixed-join-data"})
+	// Send to join data handler exchange
+	return dh.joinDataHandlerProducer.Send(messageData, []string{FixedJoinDataRoutingKey})
 }
 
 // Close closes all connections
 func (dh *DataHandler) Close() middleware.MessageMiddlewareError {
 	var err middleware.MessageMiddlewareError = 0
 
-	if dh.writerProducer != nil {
-		if closeErr := dh.writerProducer.Close(); closeErr != 0 {
-			err = closeErr
-		}
-	}
-
 	if dh.yearFilterProducer != nil {
 		if closeErr := dh.yearFilterProducer.Close(); closeErr != 0 {
-			err = closeErr
-		}
-	}
-
-	if dh.itemIdJoinProducer != nil {
-		if closeErr := dh.itemIdJoinProducer.Close(); closeErr != 0 {
-			err = closeErr
-		}
-	}
-
-	if dh.storeIdJoinProducer != nil {
-		if closeErr := dh.storeIdJoinProducer.Close(); closeErr != 0 {
 			err = closeErr
 		}
 	}
