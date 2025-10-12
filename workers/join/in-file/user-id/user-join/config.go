@@ -18,11 +18,11 @@ const (
 	Query4ResultsQueue        = "query4-results-chunks"
 
 	// Partition configuration
-	NumPartitions = 100 // Number of partition files for hash-based partitioning
+	NumPartitions = 100 // Number of partition files for mod partitioning
 
 	// Buffer configuration
 	MaxBufferSize = 200 // Maximum transactions to buffer before sending retry chunk
-	MaxRetries    = 3   // Maximum retry attempts before dropping transactions
+	MaxRetries    = 15  // Maximum retry attempts before dropping transactions (increased for scaled workers)
 
 	// Default configuration
 	DefaultRabbitMQHost = "localhost"

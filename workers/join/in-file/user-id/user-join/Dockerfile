@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o in-file-join-worker ./workers/join/in-file
+RUN CGO_ENABLED=0 GOOS=linux go build -o user-join-worker ./workers/join/in-file/user-id/user-join
 
 # Final stage
 FROM alpine:latest
@@ -29,7 +29,7 @@ RUN mkdir -p /shared-data
 WORKDIR /root/
 
 # Copy the binary from builder stage
-COPY --from=builder /app/in-file-join-worker .
+COPY --from=builder /app/user-join-worker .
 
 # Create a non-root user
 RUN adduser -D -s /bin/sh appuser && \
@@ -43,4 +43,4 @@ USER appuser
 EXPOSE 8080
 
 # Command to run the application
-CMD ["./in-file-join-worker"]
+CMD ["./user-join-worker"]

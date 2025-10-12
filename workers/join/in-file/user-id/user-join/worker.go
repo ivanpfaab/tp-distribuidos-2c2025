@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -182,8 +183,15 @@ func (jw *JoinByUserIdWorker) processMessage(delivery amqp.Delivery) middleware.
 
 	// Always acknowledge
 	delivery.Ack(false)
+
+	// Calculate joined data size safely
+	joinedSize := 0
+	if joinedChunk != nil {
+		joinedSize = len(joinedChunk.ChunkData)
+	}
+
 	fmt.Printf("Join by User ID Worker: Successfully processed chunk %d (joined: %d bytes, buffered: %d transactions)\n",
-		chunkMsg.ChunkNumber, len(joinedChunk.ChunkData), len(missingTransactions))
+		chunkMsg.ChunkNumber, joinedSize, len(missingTransactions))
 	return 0
 }
 
@@ -258,9 +266,6 @@ func (jw *JoinByUserIdWorker) parseTransactionData(csvData string) ([]map[string
 func (jw *JoinByUserIdWorker) performTransactionUserJoin(transactions []map[string]string) (string, []map[string]string) {
 	var result strings.Builder
 	var buffered []map[string]string
-
-	// Write header
-	result.WriteString("transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at,gender,birthdate,registered_at\n")
 
 	// Cache users to avoid repeated lookups
 	userCache := make(map[string]*UserData)
@@ -451,6 +456,7 @@ func (jw *JoinByUserIdWorker) flushBuffer() middleware.MessageMiddlewareError {
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	time.Sleep(time.Duration(jw.buffer.metadata.Retries) * time.Second)
 	if err := jw.retryProducer.Send(retryData); err != 0 {
 		fmt.Printf("Join by User ID Worker: Failed to send retry chunk: %v\n", err)
 		return err
@@ -467,7 +473,7 @@ func (jw *JoinByUserIdWorker) flushBuffer() middleware.MessageMiddlewareError {
 func (jw *JoinByUserIdWorker) transactionsToCSV(transactions []map[string]string) string {
 	var result strings.Builder
 
-	// Write header
+	// Write header for retry chunks (these go back to input queue)
 	result.WriteString("transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at\n")
 
 	// Write each transaction
