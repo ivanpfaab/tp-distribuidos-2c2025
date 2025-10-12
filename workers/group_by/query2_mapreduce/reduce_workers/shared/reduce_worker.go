@@ -48,6 +48,7 @@ type ReduceWorker struct {
 	config      *middleware.ConnectionConfig
 	groupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
 	chunkCount  int                       // Track number of chunks received
+	clientID    string                    // Store the client ID from incoming chunks
 }
 
 // NewReduceWorker creates a new reduce worker for a specific semester
@@ -100,12 +101,19 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		config:      config,
 		groupedData: make(map[string]*GroupedResult),
 		chunkCount:  0,
+		clientID:    "", // Will be set when first chunk is processed
 	}
 }
 
 // ProcessChunk processes a chunk immediately and aggregates data by item_id
 func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	log.Printf("Processing chunk %d for semester %s", chunk.ChunkNumber, rw.semester.String())
+
+	// Store client ID from the first chunk (all chunks should have the same client ID)
+	if rw.clientID == "" {
+		rw.clientID = chunk.ClientID
+		log.Printf("Stored client ID: %s", rw.clientID)
+	}
 
 	// Parse CSV data from chunk
 	results, err := rw.parseCSVData(chunk.ChunkData)
@@ -262,12 +270,12 @@ func (rw *ReduceWorker) FinalizeResults() error {
 	// FileID format: S{semester}{last2digitsOfYear} - e.g., "S125" for S1-2025
 	fileID := fmt.Sprintf("S%d%02d", rw.semester.Semester, rw.semester.Year%100)
 	finalChunk := chunk.NewChunk(
-		"RDUC", // Client ID (max 4 bytes)
-		fileID, // File ID (max 4 bytes)
-		2,      // Query Type
-		1,      // Chunk Number
-		true,   // Is Last Chunk
-		2,      // Step 2 for final results
+		rw.clientID, // Use the actual client ID from the original request
+		fileID,      // File ID (max 4 bytes)
+		2,           // Query Type
+		1,           // Chunk Number
+		true,        // Is Last Chunk
+		2,           // Step 2 for final results
 		len(csvData),
 		2, // Table ID 2 for transaction_items
 		csvData,
@@ -285,8 +293,8 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
-	log.Printf("Successfully sent final results for semester %s: %d items",
-		rw.semester.String(), len(finalResults))
+	log.Printf("Successfully sent final results for semester %s: %d items (ClientID: %s)",
+		rw.semester.String(), len(finalResults), rw.clientID)
 
 	// Clear aggregated data to free memory
 	rw.clearAggregatedData()
@@ -299,6 +307,7 @@ func (rw *ReduceWorker) clearAggregatedData() {
 	log.Printf("Clearing aggregated data for semester %s (%d items)", rw.semester.String(), len(rw.groupedData))
 	rw.groupedData = make(map[string]*GroupedResult)
 	rw.chunkCount = 0
+	rw.clientID = "" // Reset client ID for next batch
 }
 
 // convertToCSV converts final results to CSV format
