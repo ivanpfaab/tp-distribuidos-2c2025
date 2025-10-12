@@ -152,7 +152,7 @@ func (jw *JoinByUserIdWorker) processMessage(delivery amqp.Delivery) middleware.
 	}
 
 	// Perform join operation
-	joinedChunk, bufferedTransactions, err := jw.performJoin(chunkMsg)
+	joinedChunk, missingTransactions, err := jw.performJoin(chunkMsg)
 	if err != nil {
 		fmt.Printf("Join by User ID Worker: Failed to perform join: %v\n", err)
 		delivery.Ack(false) // Ack to remove from queue
@@ -169,8 +169,8 @@ func (jw *JoinByUserIdWorker) processMessage(delivery amqp.Delivery) middleware.
 	}
 
 	// Handle buffered transactions
-	if len(bufferedTransactions) > 0 {
-		jw.addToBuffer(bufferedTransactions, chunkMsg)
+	if len(missingTransactions) > 0 {
+		jw.addToBuffer(missingTransactions, chunkMsg)
 
 		// Check if buffer needs flushing
 		if jw.shouldFlushBuffer(chunkMsg.IsLastChunk) {
@@ -183,7 +183,7 @@ func (jw *JoinByUserIdWorker) processMessage(delivery amqp.Delivery) middleware.
 	// Always acknowledge
 	delivery.Ack(false)
 	fmt.Printf("Join by User ID Worker: Successfully processed chunk %d (joined: %d bytes, buffered: %d transactions)\n",
-		chunkMsg.ChunkNumber, len(joinedChunk.ChunkData), len(bufferedTransactions))
+		chunkMsg.ChunkNumber, len(joinedChunk.ChunkData), len(missingTransactions))
 	return 0
 }
 
