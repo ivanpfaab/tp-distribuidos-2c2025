@@ -20,6 +20,10 @@ const (
 	// Partition configuration
 	NumPartitions = 100 // Number of partition files for hash-based partitioning
 
+	// Buffer configuration
+	MaxBufferSize = 200 // Maximum transactions to buffer before sending retry chunk
+	MaxRetries    = 3   // Maximum retry attempts before dropping transactions
+
 	// Default configuration
 	DefaultRabbitMQHost = "localhost"
 	DefaultRabbitMQPort = "5672"
