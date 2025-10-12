@@ -144,26 +144,6 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # In-File Join Worker (Query 4) (single instance for now)
-  in-file-join-worker:
-    build:
-      context: .
-      dockerfile: ./workers/join/in-file/Dockerfile
-    container_name: in-file-join-worker
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      join-data-handler-1:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    volumes:
-      - shared-data:/shared-data
-    profiles: ["orchestration"]
-
   # GroupBy Worker (NOT SCALABLE - has internal distributed architecture)
   groupby-worker:
     build:
@@ -212,12 +192,12 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # Join Data Handler 2
-  join-data-handler-2:
+  # User Partition Splitter (distributes users to writers)
+  user-partition-splitter:
     build:
       context: .
-      dockerfile: ./workers/join/data-handler/Dockerfile
-    container_name: join-data-handler-2
+      dockerfile: ./workers/join/in-file/user-id/user-partition-splitter/Dockerfile
+    container_name: user-partition-splitter
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -226,22 +206,91 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      NUM_WRITERS: 2
     profiles: ["orchestration"]
 
-  # Join Data Handler 3
-  join-data-handler-3:
+  # User Partition Writer 1
+  user-partition-writer-1:
     build:
       context: .
-      dockerfile: ./workers/join/data-handler/Dockerfile
-    container_name: join-data-handler-3
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-1
     depends_on:
       rabbitmq:
         condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      WRITER_ID: 1
+      NUM_WRITERS: 2
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 2
+  user-partition-writer-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 2
+      NUM_WRITERS: 2
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Join Reader 1 (Query 4 - reads from partition files)
+  user-join-reader-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
+    container_name: user-join-reader
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-writer-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Join Reader 2 (Query 4 - reads from partition files)
+  user-join-reader-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
+    container_name: user-join-reader-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-writer-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - shared-data:/shared-data
     profiles: ["orchestration"]
 
   # Query Gateway 1
@@ -250,22 +299,6 @@ services:
       context: .
       dockerfile: ./query-gateway/Dockerfile
     container_name: query-gateway
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
-  # Query Gateway 2
-  query-gateway-2:
-    build:
-      context: .
-      dockerfile: ./query-gateway/Dockerfile
-    container_name: query-gateway-2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -301,19 +334,21 @@ services:
         condition: service_started
       query-gateway-1:
         condition: service_started
-      query-gateway-2:
-        condition: service_started
       join-data-handler-1:
         condition: service_started
-      join-data-handler-2:
+      user-partition-splitter:
         condition: service_started
-      join-data-handler-3:
+      user-partition-writer-1:
+        condition: service_started
+      user-partition-writer-2:
+        condition: service_started
+      user-join-reader-1:
+        condition: service_started
+      user-join-reader-2:
         condition: service_started
       itemid-join-worker:
         condition: service_started
       storeid-join-worker:
-        condition: service_started
-      in-file-join-worker:
         condition: service_started
       groupby-worker:
         condition: service_started

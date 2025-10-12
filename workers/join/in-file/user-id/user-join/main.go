@@ -8,6 +8,8 @@ import (
 )
 
 func main() {
+	fmt.Println("Starting User Join Reader (Query 4)...")
+
 	// Load configuration
 	config, err := loadConfig()
 	if err != nil {
@@ -21,15 +23,7 @@ func main() {
 		return
 	}
 
-	// Create Join Data Writer
-	writer, err := NewJoinDataWriter(config)
-	if err != nil {
-		fmt.Printf("Failed to create join data writer: %v\n", err)
-		return
-	}
-	defer writer.Close()
-
-	// Create Join by User ID Worker
+	// Create Join by User ID Worker (Reader only - writers are separate now)
 	worker, err := NewJoinByUserIdWorker(config)
 	if err != nil {
 		fmt.Printf("Failed to create join by user ID worker: %v\n", err)
@@ -37,23 +31,18 @@ func main() {
 	}
 	defer worker.Close()
 
-	// Start both components
-	go func() {
-		if err := writer.Start(); err != 0 {
-			fmt.Printf("Failed to start join data writer: %v\n", err)
-		}
-	}()
+	// Start the reader worker
+	if err := worker.Start(); err != 0 {
+		fmt.Printf("Failed to start join by user ID worker: %v\n", err)
+		return
+	}
 
-	go func() {
-		if err := worker.Start(); err != 0 {
-			fmt.Printf("Failed to start join by user ID worker: %v\n", err)
-		}
-	}()
+	fmt.Println("User Join Reader started successfully")
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	fmt.Println("Shutting down in-file join worker...")
+	fmt.Println("Shutting down User Join Reader...")
 }

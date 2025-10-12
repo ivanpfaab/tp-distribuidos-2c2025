@@ -55,6 +55,13 @@ QUERY_GATEWAY_COUNT=$(prompt_worker_count "query-gateway" 1)
 JOIN_DATA_HANDLER_COUNT=$(prompt_worker_count "join-data-handler" 1)
 
 echo ""
+echo -e "${BLUE}Configure User Join Workers (Query 4 - distributed write/read)${NC}"
+echo ""
+
+USER_PARTITION_WRITERS=$(prompt_worker_count "user-partition-writer" 1)
+USER_JOIN_READERS=$(prompt_worker_count "user-join-reader" 1)
+
+echo ""
 echo -e "${BLUE}Configure Clients${NC}"
 echo ""
 
@@ -64,12 +71,14 @@ CLIENT_COUNT=$(prompt_worker_count "client" 1)
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Configuration Summary:${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo -e "Year Filter Workers:   ${YELLOW}${YEAR_FILTER_COUNT}${NC}"
-echo -e "Time Filter Workers:   ${YELLOW}${TIME_FILTER_COUNT}${NC}"
-echo -e "Amount Filter Workers: ${YELLOW}${AMOUNT_FILTER_COUNT}${NC}"
-echo -e "Query Gateway:         ${YELLOW}${QUERY_GATEWAY_COUNT}${NC}"
-echo -e "Join Data Handler:     ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC}"
-echo -e "Clients:               ${YELLOW}${CLIENT_COUNT}${NC}"
+echo -e "Year Filter Workers:    ${YELLOW}${YEAR_FILTER_COUNT}${NC}"
+echo -e "Time Filter Workers:    ${YELLOW}${TIME_FILTER_COUNT}${NC}"
+echo -e "Amount Filter Workers:  ${YELLOW}${AMOUNT_FILTER_COUNT}${NC}"
+echo -e "Query Gateway:          ${YELLOW}${QUERY_GATEWAY_COUNT}${NC}"
+echo -e "Join Data Handler:      ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC}"
+echo -e "User Partition Writers: ${YELLOW}${USER_PARTITION_WRITERS}${NC}"
+echo -e "User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC}"
+echo -e "Clients:                ${YELLOW}${CLIENT_COUNT}${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
@@ -222,26 +231,6 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # In-File Join Worker (Query 4) (single instance for now)
-  in-file-join-worker:
-    build:
-      context: .
-      dockerfile: ./workers/join/in-file/Dockerfile
-    container_name: in-file-join-worker
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      join-data-handler-1:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    volumes:
-      - shared-data:/shared-data
-    profiles: ["orchestration"]
-
   # GroupBy Worker (NOT SCALABLE - has internal distributed architecture)
   groupby-worker:
     build:
@@ -275,6 +264,98 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
     profiles: ["orchestration"]
 
 EOF_REMAINING
+
+# Function to generate user-partition-splitter
+generate_user_partition_splitter() {
+    local num_writers=$1
+    cat >> docker-compose.yaml << EOF
+  # User Partition Splitter (distributes users to writers)
+  user-partition-splitter:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-splitter/Dockerfile
+    container_name: user-partition-splitter
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      NUM_WRITERS: ${num_writers}
+    profiles: ["orchestration"]
+
+EOF
+}
+
+# Function to generate user-partition-writer services
+generate_user_partition_writers() {
+    local count=$1
+    for i in $(seq 1 $count); do
+        cat >> docker-compose.yaml << EOF
+  # User Partition Writer ${i}
+  user-partition-writer-${i}:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-${i}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: ${i}
+      NUM_WRITERS: ${count}
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+EOF
+    done
+}
+
+# Function to generate user-join-reader services (scalable readers)
+generate_user_join_readers() {
+    local count=$1
+    for i in $(seq 1 $count); do
+        # First reader has simpler container name for backward compatibility
+        local container_name
+        if [ $i -eq 1 ]; then
+            container_name="user-join-reader"
+        else
+            container_name="user-join-reader-${i}"
+        fi
+        
+        cat >> docker-compose.yaml << EOF
+  # User Join Reader ${i} (Query 4 - reads from partition files)
+  user-join-reader-${i}:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
+    container_name: ${container_name}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-writer-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+EOF
+    done
+}
 
 # Function to generate join-data-handler services
 generate_join_data_handler() {
@@ -346,6 +427,16 @@ EOF
 echo -e "${BLUE}Generating join data handlers...${NC}"
 generate_join_data_handler $JOIN_DATA_HANDLER_COUNT
 
+# Generate user partition components
+echo -e "${BLUE}Generating user partition splitter...${NC}"
+generate_user_partition_splitter $USER_PARTITION_WRITERS
+
+echo -e "${BLUE}Generating user partition writers...${NC}"
+generate_user_partition_writers $USER_PARTITION_WRITERS
+
+echo -e "${BLUE}Generating user join readers...${NC}"
+generate_user_join_readers $USER_JOIN_READERS
+
 # Generate query gateways
 echo -e "${BLUE}Generating query gateways...${NC}"
 generate_query_gateway $QUERY_GATEWAY_COUNT
@@ -394,12 +485,24 @@ generate_server_dependencies() {
         echo "        condition: service_started"
     done
     
+    # Add dependencies for user partition components
+    echo "      user-partition-splitter:"
+    echo "        condition: service_started"
+    
+    for i in $(seq 1 $USER_PARTITION_WRITERS); do
+        echo "      user-partition-writer-${i}:"
+        echo "        condition: service_started"
+    done
+    
+    for i in $(seq 1 $USER_JOIN_READERS); do
+        echo "      user-join-reader-${i}:"
+        echo "        condition: service_started"
+    done
+    
     # Add remaining dependencies
     echo "      itemid-join-worker:"
     echo "        condition: service_started"
     echo "      storeid-join-worker:"
-    echo "        condition: service_started"
-    echo "      in-file-join-worker:"
     echo "        condition: service_started"
     echo "      groupby-worker:"
     echo "        condition: service_started"
@@ -487,14 +590,17 @@ EOF_FOOTER
 echo -e "${GREEN}✓ docker-compose.yaml generated successfully!${NC}"
 echo ""
 echo -e "${BLUE}Configuration Applied:${NC}"
-echo -e "  Year Filter:       ${YELLOW}${YEAR_FILTER_COUNT}${NC} instance(s)"
-echo -e "  Time Filter:       ${YELLOW}${TIME_FILTER_COUNT}${NC} instance(s)"
-echo -e "  Amount Filter:     ${YELLOW}${AMOUNT_FILTER_COUNT}${NC} instance(s)"
-echo -e "  Query Gateway:     ${YELLOW}${QUERY_GATEWAY_COUNT}${NC} instance(s)"
-echo -e "  Join Data Handler: ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC} instance(s)"
-echo -e "  Clients:           ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"
+echo -e "  Year Filter:            ${YELLOW}${YEAR_FILTER_COUNT}${NC} instance(s)"
+echo -e "  Time Filter:            ${YELLOW}${TIME_FILTER_COUNT}${NC} instance(s)"
+echo -e "  Amount Filter:          ${YELLOW}${AMOUNT_FILTER_COUNT}${NC} instance(s)"
+echo -e "  Query Gateway:          ${YELLOW}${QUERY_GATEWAY_COUNT}${NC} instance(s)"
+echo -e "  Join Data Handler:      ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC} instance(s)"
+echo -e "  User Partition Writers: ${YELLOW}${USER_PARTITION_WRITERS}${NC} instance(s)"
+echo -e "  User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC} instance(s)"
+echo -e "  Clients:                ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"
 echo ""
 echo -e "  Total Filter Workers: ${YELLOW}$((YEAR_FILTER_COUNT + TIME_FILTER_COUNT + AMOUNT_FILTER_COUNT))${NC} instances"
+echo -e "  User Join Components: ${YELLOW}$((1 + USER_PARTITION_WRITERS + USER_JOIN_READERS))${NC} instances (1 splitter + ${USER_PARTITION_WRITERS} writers + ${USER_JOIN_READERS} readers)"
 echo ""
 echo -e "${GREEN}You can now run: ${YELLOW}make docker-compose-up${NC}"
 echo ""

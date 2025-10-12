@@ -54,7 +54,7 @@ func (m *ExchangeConsumer) StartConsuming(
 	queue, err := (*m.AmqpChannel).QueueDeclare(
 		queueName, // name (empty for auto-generated)
 		false,     // durable
-		true,      // delete when unused
+		false,     // delete when unused
 		false,     // exclusive
 		false,     // no-wait
 		nil,       // arguments
