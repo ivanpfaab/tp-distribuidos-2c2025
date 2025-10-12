@@ -11,5 +11,7 @@ func main() {
 	defer reduceWorker.Close()
 	
 	log.Printf("Starting Reduce Worker for S1-2025...")
-	reduceWorker.Start()
+	reduceWorker.Start()	
+
+	select {}
 }

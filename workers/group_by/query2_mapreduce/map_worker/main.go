@@ -347,6 +347,10 @@ func (mw *MapWorker) Start() {
 	if err := mw.consumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming: %v", err)
 	}
+	
+	// Keep the main thread alive to prevent the program from exiting
+	// The consumer runs in a goroutine, so we need to block here
+	select {}
 }
 
 // Close closes the map worker

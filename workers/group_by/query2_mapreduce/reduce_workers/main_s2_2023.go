@@ -12,4 +12,6 @@ func main() {
 	
 	log.Printf("Starting Reduce Worker for S2-2023...")
 	reduceWorker.Start()
+
+	select {}
 }

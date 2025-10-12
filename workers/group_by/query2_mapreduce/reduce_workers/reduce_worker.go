@@ -211,6 +211,49 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		}
 		finalResults = append(finalResults, finalResult)
 	}
+	
+	// Log detailed final results
+	log.Printf("FINAL RESULTS for semester %s:", rw.semester.String())
+	log.Printf("   Total unique items: %d", len(finalResults))
+	
+	// Show top 10 items by total quantity for debugging
+	items := make([]FinalResult, len(finalResults))
+	copy(items, finalResults)
+	
+	// Sort by total quantity (descending)
+	for i := 0; i < len(items)-1; i++ {
+		for j := i + 1; j < len(items); j++ {
+			if items[i].TotalQuantity < items[j].TotalQuantity {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+	
+	// Show top 10 items
+	topCount := 10
+	if len(items) < topCount {
+		topCount = len(items)
+	}
+	
+	log.Printf("   Top %d items by quantity:", topCount)
+	for i := 0; i < topCount; i++ {
+		item := items[i]
+		log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d", 
+			i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
+	}
+	
+	// Calculate totals
+	totalQuantity := 0
+	totalSubtotal := 0.0
+	totalCount := 0
+	for _, result := range finalResults {
+		totalQuantity += result.TotalQuantity
+		totalSubtotal += result.TotalSubtotal
+		totalCount += result.Count
+	}
+	
+	log.Printf("   Grand totals: Quantity=%d, Subtotal=%.2f, Transactions=%d", 
+		totalQuantity, totalSubtotal, totalCount)
 
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
