@@ -112,22 +112,6 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # Join Data Handler (single instance for now)
-  join-data-handler:
-    build:
-      context: .
-      dockerfile: ./workers/join/data-handler/Dockerfile
-    container_name: join-data-handler
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
   # ItemID Join Worker (single instance for now)
   itemid-join-worker:
     build:
@@ -135,7 +119,7 @@ services:
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
     container_name: itemid-join-worker
     depends_on:
-      join-data-handler:
+      join-data-handler-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -151,7 +135,7 @@ services:
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
     container_name: storeid-join-worker
     depends_on:
-      join-data-handler:
+      join-data-handler-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -169,7 +153,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      join-data-handler:
+      join-data-handler-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -202,6 +186,54 @@ services:
       context: .
       dockerfile: ./stream/Dockerfile
     container_name: streaming-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Join Data Handler 1
+  join-data-handler-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/data-handler/Dockerfile
+    container_name: join-data-handler
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Join Data Handler 2
+  join-data-handler-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/data-handler/Dockerfile
+    container_name: join-data-handler-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Join Data Handler 3
+  join-data-handler-3:
+    build:
+      context: .
+      dockerfile: ./workers/join/data-handler/Dockerfile
+    container_name: join-data-handler-3
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -271,7 +303,11 @@ services:
         condition: service_started
       query-gateway-2:
         condition: service_started
-      join-data-handler:
+      join-data-handler-1:
+        condition: service_started
+      join-data-handler-2:
+        condition: service_started
+      join-data-handler-3:
         condition: service_started
       itemid-join-worker:
         condition: service_started

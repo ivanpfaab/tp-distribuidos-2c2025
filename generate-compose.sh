@@ -52,6 +52,7 @@ echo -e "${BLUE}Configure Gateway Services (stateless routing)${NC}"
 echo ""
 
 QUERY_GATEWAY_COUNT=$(prompt_worker_count "query-gateway" 1)
+JOIN_DATA_HANDLER_COUNT=$(prompt_worker_count "join-data-handler" 1)
 
 echo ""
 echo -e "${BLUE}Configure Clients${NC}"
@@ -67,6 +68,7 @@ echo -e "Year Filter Workers:   ${YELLOW}${YEAR_FILTER_COUNT}${NC}"
 echo -e "Time Filter Workers:   ${YELLOW}${TIME_FILTER_COUNT}${NC}"
 echo -e "Amount Filter Workers: ${YELLOW}${AMOUNT_FILTER_COUNT}${NC}"
 echo -e "Query Gateway:         ${YELLOW}${QUERY_GATEWAY_COUNT}${NC}"
+echo -e "Join Data Handler:     ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC}"
 echo -e "Clients:               ${YELLOW}${CLIENT_COUNT}${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
@@ -188,22 +190,6 @@ generate_amount_filter_workers $AMOUNT_FILTER_COUNT
 
 # Add remaining non-scalable services
 cat >> docker-compose.yaml << 'EOF_REMAINING'
-  # Join Data Handler (single instance for now)
-  join-data-handler:
-    build:
-      context: .
-      dockerfile: ./workers/join/data-handler/Dockerfile
-    container_name: join-data-handler
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
   # ItemID Join Worker (single instance for now)
   itemid-join-worker:
     build:
@@ -211,7 +197,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
     container_name: itemid-join-worker
     depends_on:
-      join-data-handler:
+      join-data-handler-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -227,7 +213,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
     container_name: storeid-join-worker
     depends_on:
-      join-data-handler:
+      join-data-handler-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -245,7 +231,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
     depends_on:
       rabbitmq:
         condition: service_healthy
-      join-data-handler:
+      join-data-handler-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -290,6 +276,39 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
 
 EOF_REMAINING
 
+# Function to generate join-data-handler services
+generate_join_data_handler() {
+    local count=$1
+    for i in $(seq 1 $count); do
+        # First handler has simpler container name for backward compatibility
+        local container_name
+        if [ $i -eq 1 ]; then
+            container_name="join-data-handler"
+        else
+            container_name="join-data-handler-${i}"
+        fi
+        
+        cat >> docker-compose.yaml << EOF
+  # Join Data Handler ${i}
+  join-data-handler-${i}:
+    build:
+      context: .
+      dockerfile: ./workers/join/data-handler/Dockerfile
+    container_name: ${container_name}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+EOF
+    done
+}
+
 # Function to generate query-gateway services
 generate_query_gateway() {
     local count=$1
@@ -322,6 +341,10 @@ generate_query_gateway() {
 EOF
     done
 }
+
+# Generate join data handlers
+echo -e "${BLUE}Generating join data handlers...${NC}"
+generate_join_data_handler $JOIN_DATA_HANDLER_COUNT
 
 # Generate query gateways
 echo -e "${BLUE}Generating query gateways...${NC}"
@@ -365,9 +388,13 @@ generate_server_dependencies() {
         echo "        condition: service_started"
     done
     
+    # Add dependencies for all join-data-handler instances
+    for i in $(seq 1 $JOIN_DATA_HANDLER_COUNT); do
+        echo "      join-data-handler-${i}:"
+        echo "        condition: service_started"
+    done
+    
     # Add remaining dependencies
-    echo "      join-data-handler:"
-    echo "        condition: service_started"
     echo "      itemid-join-worker:"
     echo "        condition: service_started"
     echo "      storeid-join-worker:"
@@ -460,11 +487,12 @@ EOF_FOOTER
 echo -e "${GREEN}✓ docker-compose.yaml generated successfully!${NC}"
 echo ""
 echo -e "${BLUE}Configuration Applied:${NC}"
-echo -e "  Year Filter:   ${YELLOW}${YEAR_FILTER_COUNT}${NC} instance(s)"
-echo -e "  Time Filter:   ${YELLOW}${TIME_FILTER_COUNT}${NC} instance(s)"
-echo -e "  Amount Filter: ${YELLOW}${AMOUNT_FILTER_COUNT}${NC} instance(s)"
-echo -e "  Query Gateway: ${YELLOW}${QUERY_GATEWAY_COUNT}${NC} instance(s)"
-echo -e "  Clients:       ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"
+echo -e "  Year Filter:       ${YELLOW}${YEAR_FILTER_COUNT}${NC} instance(s)"
+echo -e "  Time Filter:       ${YELLOW}${TIME_FILTER_COUNT}${NC} instance(s)"
+echo -e "  Amount Filter:     ${YELLOW}${AMOUNT_FILTER_COUNT}${NC} instance(s)"
+echo -e "  Query Gateway:     ${YELLOW}${QUERY_GATEWAY_COUNT}${NC} instance(s)"
+echo -e "  Join Data Handler: ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC} instance(s)"
+echo -e "  Clients:           ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"
 echo ""
 echo -e "  Total Filter Workers: ${YELLOW}$((YEAR_FILTER_COUNT + TIME_FILTER_COUNT + AMOUNT_FILTER_COUNT))${NC} instances"
 echo ""
