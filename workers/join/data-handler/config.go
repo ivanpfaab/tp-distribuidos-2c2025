@@ -17,9 +17,11 @@ const (
 	JoinItemIdDictionaryExchange   = "itemid-dictionary-exchange"
 	JoinItemIdDictionaryRoutingKey = "itemid-dictionary"
 
+	JoinStoreIdDictionaryExchange   = "storeid-dictionary-exchange"
+	JoinStoreIdDictionaryRoutingKey = "storeid-dictionary"
+
 	// Output queues for dictionaries (point-to-point)
-	JoinStoreIdDictionaryQueue = "join-storeid-dictionary"
-	JoinUserIdDictionaryQueue  = "join-userid-dictionary"
+	JoinUserIdDictionaryQueue = "join-userid-dictionary"
 
 	// Default values
 	DefaultRabbitMQHost = "localhost"

@@ -15,12 +15,13 @@ import (
 
 // JoinDataHandler encapsulates the join data handler state and dependencies
 type JoinDataHandler struct {
-	consumer          *exchange.ExchangeConsumer
-	itemIdProducer    *exchange.ExchangeMiddleware
-	storeIdProducer   *workerqueue.QueueMiddleware
-	userIdProducer    *workerqueue.QueueMiddleware
-	config            *middleware.ConnectionConfig
-	itemIdWorkerCount int // Number of ItemID worker instances to broadcast to
+	consumer           *exchange.ExchangeConsumer
+	itemIdProducer     *exchange.ExchangeMiddleware
+	storeIdProducer    *exchange.ExchangeMiddleware
+	userIdProducer     *workerqueue.QueueMiddleware
+	config             *middleware.ConnectionConfig
+	itemIdWorkerCount  int // Number of ItemID worker instances to broadcast to
+	storeIdWorkerCount int // Number of StoreID worker instances to broadcast to
 }
 
 // NewJoinDataHandler creates a new JoinDataHandler instance
@@ -33,7 +34,18 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 			itemIdWorkerCount = count
 		}
 	}
-	fmt.Printf("Join Data Handler: Initializing with %d ItemID worker instance(s)\n", itemIdWorkerCount)
+
+	// Get the number of StoreID workers from environment (defaults to 1)
+	storeIdWorkerCountStr := os.Getenv("STOREID_WORKER_COUNT")
+	storeIdWorkerCount := 1
+	if storeIdWorkerCountStr != "" {
+		if count, err := strconv.Atoi(storeIdWorkerCountStr); err == nil && count > 0 {
+			storeIdWorkerCount = count
+		}
+	}
+
+	fmt.Printf("Join Data Handler: Initializing with %d ItemID worker instance(s) and %d StoreID worker instance(s)\n",
+		itemIdWorkerCount, storeIdWorkerCount)
 
 	// Create consumer for fixed join data
 	consumer := exchange.NewExchangeConsumer(
@@ -77,8 +89,10 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		return nil, fmt.Errorf("failed to create item ID dictionary producer")
 	}
 
-	storeIdProducer := workerqueue.NewMessageMiddlewareQueue(
-		JoinStoreIdDictionaryQueue,
+	// StoreID uses exchange for broadcasting to all workers
+	storeIdProducer := exchange.NewMessageMiddlewareExchange(
+		JoinStoreIdDictionaryExchange,
+		[]string{JoinStoreIdDictionaryRoutingKey},
 		config,
 	)
 	if storeIdProducer == nil {
@@ -108,12 +122,13 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		return nil, fmt.Errorf("failed to declare item ID dictionary exchange: %v", err)
 	}
 
-	if err := storeIdProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// StoreID: Declare exchange as fanout (durable)
+	if err := storeIdProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
 		consumer.Close()
 		itemIdProducer.Close()
 		storeIdProducer.Close()
 		userIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare store ID dictionary queue: %v", err)
+		return nil, fmt.Errorf("failed to declare store ID dictionary exchange: %v", err)
 	}
 
 	if err := userIdProducer.DeclareQueue(false, false, false, false); err != 0 {
@@ -125,12 +140,13 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	}
 
 	return &JoinDataHandler{
-		consumer:          consumer,
-		itemIdProducer:    itemIdProducer,
-		storeIdProducer:   storeIdProducer,
-		userIdProducer:    userIdProducer,
-		config:            config,
-		itemIdWorkerCount: itemIdWorkerCount,
+		consumer:           consumer,
+		itemIdProducer:     itemIdProducer,
+		storeIdProducer:    storeIdProducer,
+		userIdProducer:     userIdProducer,
+		config:             config,
+		itemIdWorkerCount:  itemIdWorkerCount,
+		storeIdWorkerCount: storeIdWorkerCount,
 	}, nil
 }
 
@@ -211,9 +227,17 @@ func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []by
 			fileId, jdh.itemIdWorkerCount, routingKeys)
 		return jdh.itemIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "ST") {
-		// StoreID: Send to queue (single worker)
-		fmt.Printf("Join Data Handler: Routing FileID %s to StoreID dictionary queue\n", fileId)
-		return jdh.storeIdProducer.Send(messageData)
+		// StoreID: Send to exchange (broadcast to all worker instances)
+		// Generate routing keys for all StoreID worker instances
+		routingKeys := make([]string, jdh.storeIdWorkerCount)
+		for i := 0; i < jdh.storeIdWorkerCount; i++ {
+			instanceID := i + 1 // 1-indexed
+			routingKeys[i] = fmt.Sprintf("%s-instance-%d", JoinStoreIdDictionaryRoutingKey, instanceID)
+		}
+
+		fmt.Printf("Join Data Handler: Broadcasting FileID %s to %d StoreID worker instance(s) with routing keys: %v\n",
+			fileId, jdh.storeIdWorkerCount, routingKeys)
+		return jdh.storeIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "US") {
 		// UserID: Send to queue (single worker)
 		fmt.Printf("Join Data Handler: Routing FileID %s to UserID dictionary queue\n", fileId)

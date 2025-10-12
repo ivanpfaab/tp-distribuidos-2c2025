@@ -9,9 +9,12 @@ import (
 )
 
 const (
-	// Input queues
-	StoreIdDictionaryQueue = "join-storeid-dictionary"
-	StoreIdChunkQueue      = "itemid-join-chunks"
+	// Dictionary exchange (for broadcasting to all workers)
+	StoreIdDictionaryExchange   = "storeid-dictionary-exchange"
+	StoreIdDictionaryRoutingKey = "storeid-dictionary"
+
+	// Input queue for chunks (load balanced across workers)
+	StoreIdChunkQueue = "itemid-join-chunks"
 
 	// Output queue
 	Query3ResultsQueue = "query3-results-chunks"

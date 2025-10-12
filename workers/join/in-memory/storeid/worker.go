@@ -3,12 +3,14 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
@@ -26,7 +28,7 @@ type Store struct {
 
 // StoreIdJoinWorker encapsulates the StoreID join worker state and dependencies
 type StoreIdJoinWorker struct {
-	dictionaryConsumer *workerqueue.QueueConsumer
+	dictionaryConsumer *exchange.ExchangeConsumer
 	chunkConsumer      *workerqueue.QueueConsumer
 	outputProducer     *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
@@ -39,9 +41,20 @@ type StoreIdJoinWorker struct {
 
 // NewStoreIdJoinWorker creates a new StoreIdJoinWorker instance
 func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWorker, error) {
-	// Create dictionary consumer
-	dictionaryConsumer := workerqueue.NewQueueConsumer(
-		StoreIdDictionaryQueue,
+	// Get worker instance ID from environment (defaults to "1" for single-worker setups)
+	instanceID := os.Getenv("WORKER_INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = "1"
+	}
+
+	// Create instance-specific routing key for this worker
+	instanceRoutingKey := fmt.Sprintf("%s-instance-%s", StoreIdDictionaryRoutingKey, instanceID)
+	fmt.Printf("StoreID Join Worker: Initializing with instance ID: %s, routing key: %s\n", instanceID, instanceRoutingKey)
+
+	// Create dictionary consumer (exchange for broadcasting to all workers)
+	dictionaryConsumer := exchange.NewExchangeConsumer(
+		StoreIdDictionaryExchange,
+		[]string{instanceRoutingKey},
 		config,
 	)
 	if dictionaryConsumer == nil {
