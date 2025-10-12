@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strconv"
 
 	client_request_handler "github.com/tp-distribuidos-2c2025/server/controller/client_request_handler"
@@ -75,12 +74,4 @@ func (s *TCPServer) Stop() error {
 		return s.listener.Close()
 	}
 	return nil
-}
-
-// Helper function to get environment variable with default value
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
 }

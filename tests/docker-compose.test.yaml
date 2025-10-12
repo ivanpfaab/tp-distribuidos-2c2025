@@ -23,7 +23,7 @@ services:
     build:
       context: ..
       dockerfile: ./server/Dockerfile
-    container_name: test-echo-server
+    container_name: test-server
     ports:
       - "8081:8080"   # TCP port for client connections
     depends_on:

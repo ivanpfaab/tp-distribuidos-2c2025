@@ -74,11 +74,6 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 		totalLength := int(binary.BigEndian.Uint32(headerBuffer[2:6]))
 		msgTypeID := int(headerBuffer[6])
 
-		// Log raw bytes for debugging
-		log.Printf("Client Request Handler: Raw header bytes - [%02x %02x %02x %02x %02x %02x %02x]",
-			headerBuffer[0], headerBuffer[1], headerBuffer[2], headerBuffer[3],
-			headerBuffer[4], headerBuffer[5], headerBuffer[6])
-
 		// Log header information for debugging
 		log.Printf("Client Request Handler: Header info - HeaderLength: %d, TotalLength: %d, MsgTypeID: %d",
 			headerLength, totalLength, msgTypeID)
@@ -91,7 +86,6 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 
 		// Calculate remaining data size
 		remainingDataSize := totalLength - 7 // totalLength - headerLength(2) - totalLength(4) - msgTypeID(1)
-		log.Printf("Client Request Handler: Reading remaining data - Size: %d bytes", remainingDataSize)
 
 		// Read the remaining message data - handle TCP short reads
 		remainingData := make([]byte, remainingDataSize)
@@ -155,8 +149,8 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 	}
 
 	// Log the received batch
-	log.Printf("Client Request Handler: Received batch - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
-		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.BatchData)
+	log.Printf("Client Request Handler: Received batch - ClientID: %s, FileID: %s, BatchNumber: %d",
+		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
 
 	// Process the batch message directly with the data handler
 	if err := dataHandler.ProcessBatchMessage(data); err != nil {
@@ -168,7 +162,7 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
 
 	// Create acknowledgment response
-	response := fmt.Sprintf("ACK: Batch received - ClientID: %s, FileID: %s, BatchNumber: %d",
+	response := fmt.Sprintf("ACK: Batch received - ClientID: %s, FileID: %s, BatchNumber: %d\n",
 		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber)
 
 	return []byte(response), nil

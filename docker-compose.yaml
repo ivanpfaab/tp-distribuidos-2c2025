@@ -21,9 +21,9 @@ services:
     build:
       context: .
       dockerfile: ./server/Dockerfile
-    container_name: echo-server
+    container_name: server
     ports:
-      - "8081:8080"   # TCP port for client connections
+      - "8081:8080"  # TCP port for client connections
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -53,17 +53,34 @@ services:
       - RABBITMQ_PASS=password
     profiles: ["data-flow"]
 
-  client:
+  client-1:
     build:
       context: .
       dockerfile: ./client/Dockerfile
-    container_name: echo-client
+    container_name: client
     depends_on:
       server:
         condition: service_started
     volumes:
       - ./data:/app/data
-    command: ["./main", "/app/data", "echo-server:8080"]
+    environment:
+      - CLIENT_ID=CLI1
+    command: ["./main", "/app/data", "server:8080"]
+    profiles: ["data-flow"]
+
+  client-2:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    container_name: client-2
+    depends_on:
+      server:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CLIENT_ID=CLI2
+    command: ["./main", "/app/data", "server:8080"]
     profiles: ["data-flow"]
 
   # Worker services

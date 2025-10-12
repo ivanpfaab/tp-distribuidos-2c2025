@@ -69,8 +69,6 @@ func TimeFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 
 // processMessage processes a single message
 func (tfw *TimeFilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	fmt.Printf("Time Filter Worker: Received message: %s\n", string(delivery.Body))
-
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 	if err != nil {

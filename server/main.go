@@ -6,20 +6,25 @@ import (
 )
 
 func main() {
-	// Get port from environment variable or use default
-	port := os.Getenv("SERVER_PORT")
-	if port == "" {
-		port = "8080"
-	}
+	// Get TCP server port from environment
+	serverPort := getEnv("SERVER_PORT", "8080")
+
+	log.Printf("Starting TCP server on port %s", serverPort)
 
 	// Create and start TCP server
-	server := NewTCPServer(port)
+	server := NewTCPServer(serverPort)
+	defer server.Stop()
 
-	log.Printf("Starting server on port %s", port)
-
-	if err := server.Start(port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// Start the TCP server (blocking)
+	if err := server.Start(serverPort); err != nil {
+		log.Fatalf("Failed to start TCP server: %v", err)
 	}
+}
 
-	select {}
+// Helper function to get environment variable with default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

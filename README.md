@@ -22,11 +22,13 @@ tp-distribuidos-2c2025/
 
 ## Features
 
-- **Echo Server**: TCP server that echoes back any message sent by clients
-- **File-based Client**: Client that reads messages from a text file and sends them to the server
-- **Docker Support**: Both applications are containerized for easy deployment
-- **Docker Compose**: Orchestrates both services with proper networking
-- **Sample Input File**: Includes a sample `input.txt` file for testing
+- **RabbitMQ-Based Server**: Server that consumes batch messages from RabbitMQ and processes CSV data
+- **CSV Batch Client**: Client that reads CSV files and sends batches via RabbitMQ message queues
+- **Data Processing Pipeline**: Year filter, time filter, amount filter, join workers, and aggregation
+- **Multiple Client Support**: Supports concurrent clients with unique client IDs
+- **Docker Support**: All applications are containerized for easy deployment
+- **Docker Compose**: Orchestrates all services with proper networking and dependencies
+- **Message Queue Architecture**: All inter-service communication via RabbitMQ
 
 ## Prerequisites
 
@@ -86,19 +88,19 @@ The project includes a comprehensive Makefile with convenient commands:
 1. **Build and run the server:**
    ```bash
    # Build server image
-   docker build -t echo-server ./server
+   docker build -t server ./server
    
    # Run server container
-   docker run -p 8080:8080 --name echo-server echo-server
+   docker run -p 8080:8080 --name server server
    ```
 
 2. **Build and run the client (in another terminal):**
    ```bash
    # Build client image
-   docker build -t echo-client ./client
+   docker build -t client ./client
    
    # Run client container (connect to server)
-   docker run -it --rm --network host echo-client
+   docker run -it --rm --network host client
    ```
 
 ### Local Development
@@ -144,8 +146,8 @@ make run-client-file FILE=yourfile.txt
 
 ## Docker Images
 
-- **echo-server**: Contains the TCP echo server
-- **echo-client**: Contains the interactive client
+- **server**: Contains the TCP echo server
+- **client**: Contains the interactive client
 
 ## Troubleshooting
 

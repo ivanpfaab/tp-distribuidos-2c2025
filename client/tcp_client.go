@@ -18,17 +18,21 @@ import (
 
 // TCPClient handles direct connection to the server
 type TCPClient struct {
-	conn net.Conn
+	conn     net.Conn
+	clientID string
 }
 
 // NewTCPClient creates a new TCP client
-func NewTCPClient(serverAddr string) (*TCPClient, error) {
+func NewTCPClient(serverAddr string, clientID string) (*TCPClient, error) {
 	conn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	return &TCPClient{conn: conn}, nil
+	return &TCPClient{
+		conn:     conn,
+		clientID: clientID,
+	}, nil
 }
 
 // SendBatchMessage sends a batch message to the server
@@ -46,8 +50,8 @@ func (c *TCPClient) SendBatchMessage(batchData *batchpkg.Batch) error {
 		return fmt.Errorf("failed to send data to server: %w", err)
 	}
 
-	log.Printf("Sent batch message - ClientID: %s, FileID: %s, BatchNumber: %d, Data: %s",
-		batchData.ClientID, batchData.FileID, batchData.BatchNumber, batchData.BatchData)
+	log.Printf("Sent batch message - ClientID: %s, FileID: %s, BatchNumber: %d",
+		batchData.ClientID, batchData.FileID, batchData.BatchNumber)
 
 	return nil
 }
@@ -58,6 +62,12 @@ func (c *TCPClient) Close() error {
 		return c.conn.Close()
 	}
 	return nil
+}
+
+// FileTypeInfo represents information about a file type group
+type FileTypeInfo struct {
+	TypeCode string
+	Files    []string
 }
 
 // scanCSVFiles scans the data folder and returns all CSV files with their file IDs
@@ -97,12 +107,6 @@ func scanCSVFiles(dataFolder string) (map[string]string, error) {
 	}
 
 	return fileMap, nil
-}
-
-// FileTypeInfo represents information about a file type group
-type FileTypeInfo struct {
-	TypeCode string
-	Files    []string
 }
 
 // groupFilesByType groups CSV files by their type for dynamic numbering
@@ -229,11 +233,11 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 			payload := strings.Join(batch, "\n") + "\n"
 			// Create batch message
 			batchData := &batchpkg.Batch{
-				ClientID:    "1234", // Exactly 4 bytes
-				FileID:      fileID, // Use provided file ID
-				IsEOF:       false,  // Not the last batch yet
+				ClientID:    c.clientID, // Use client ID
+				FileID:      fileID,     // Use provided file ID
+				IsEOF:       false,      // Not the last batch yet
 				BatchNumber: batchNum,
-				BatchSize:   len(payload),
+				BatchSize:   len(batch), // Number of rows in this batch
 				BatchData:   payload,
 			}
 
@@ -254,11 +258,11 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		payload := strings.Join(batch, "\n") + "\n"
 		// Create batch message
 		batchData := &batchpkg.Batch{
-			ClientID:    "1234", // Exactly 4 bytes
-			FileID:      fileID, // Use provided file ID
-			IsEOF:       true,   // This is the last batch of the file
+			ClientID:    c.clientID, // Use client ID
+			FileID:      fileID,     // Use provided file ID
+			IsEOF:       true,       // This is the last batch of the file
 			BatchNumber: batchNum,
-			BatchSize:   len(payload),
+			BatchSize:   len(batch), // Number of rows in this batch
 			BatchData:   payload,
 		}
 		err := c.SendBatchMessage(batchData)
@@ -272,11 +276,11 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		batchNum++
 		payload := "" // Empty payload for EOF marker
 		batchData := &batchpkg.Batch{
-			ClientID:    "1234", // Exactly 4 bytes
-			FileID:      fileID, // Use provided file ID
-			IsEOF:       true,   // This is the EOF marker
+			ClientID:    c.clientID, // Use client ID
+			FileID:      fileID,     // Use provided file ID
+			IsEOF:       true,       // This is the EOF marker
 			BatchNumber: batchNum,
-			BatchSize:   len(payload),
+			BatchSize:   0, // 0 rows in EOF marker
 			BatchData:   payload,
 		}
 		err := c.SendBatchMessage(batchData)
@@ -303,7 +307,7 @@ func (c *TCPClient) StartServerReader() {
 }
 
 // runClient runs the client with the given data folder
-func runClient(dataFolder string, serverAddr string) error {
+func runClient(dataFolder string, serverAddr string, clientID string) error {
 	// Scan for CSV files in the data folder
 	fileMap, err := scanCSVFiles(dataFolder)
 	if err != nil {
@@ -315,7 +319,7 @@ func runClient(dataFolder string, serverAddr string) error {
 	}
 
 	// Connect to server
-	client, err := NewTCPClient(serverAddr)
+	client, err := NewTCPClient(serverAddr, clientID)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
