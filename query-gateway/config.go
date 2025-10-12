@@ -9,7 +9,11 @@ import (
 const (
 	ReplyFilterBusQueueName = "reply-filter-bus"
 
-	// Join worker queues
+	// GroupBy worker queues (Query 2 uses MapReduce, Query 3/4 use dummy pass-through)
+	ItemIdGroupByChunkQueue  = "itemid-groupby-chunks"  // Query 2 Map Worker input
+	StoreIdGroupByChunkQueue = "storeid-groupby-chunks" // Query 3/4 Dummy GroupBy Worker input
+
+	// Join worker queues (kept for reference, not currently used by gateway)
 	ItemIdJoinChunkQueue  = "top-item-classification-chunk"
 	StoreIdJoinChunkQueue = "itemid-join-chunks"
 	UserIdJoinChunkQueue  = "userid-join-chunks"

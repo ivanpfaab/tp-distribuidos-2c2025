@@ -24,7 +24,7 @@ docker-compose-up: ## Start all services in proper order
 	@echo "Waiting for RabbitMQ to be healthy..."
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
 	@echo "2. Starting Workers..."
-	docker compose --profile orchestration up -d year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker in-file-join-worker groupby-worker streaming-service query-gateway
+	docker compose --profile orchestration up -d year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker in-file-join-worker groupby-worker query2-map-worker query2-reduce-s2-2023 query2-reduce-s1-2024 query2-reduce-s2-2024 query2-reduce-s1-2025 query2-reduce-s2-2025 streaming-service query-gateway
 	@echo "3. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d server
 	@echo "4. Starting Clients..."
@@ -38,7 +38,7 @@ docker-compose-up-build: ## Start all services in proper order
 	@echo "Waiting for RabbitMQ to be healthy..."
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
 	@echo "2. Starting Workers..."
-	docker compose --profile orchestration up -d --build year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker in-file-join-worker groupby-worker streaming-service query-gateway
+	docker compose --profile orchestration up -d --build year-filter-worker time-filter-worker amount-filter-worker join-data-handler itemid-join-worker storeid-join-worker in-file-join-worker groupby-worker query2-map-worker query2-reduce-s2-2023 query2-reduce-s1-2024 query2-reduce-s2-2024 query2-reduce-s1-2025 query2-reduce-s2-2025 streaming-service query-gateway
 	@echo "3. Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d --build server
 	@echo "4. Starting Clients..."

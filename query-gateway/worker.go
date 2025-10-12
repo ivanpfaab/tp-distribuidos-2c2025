@@ -9,12 +9,11 @@ import (
 
 // QueryGateway encapsulates the query gateway state and dependencies
 type QueryGateway struct {
-	consumer              *workerqueue.QueueConsumer
-	itemIdJoinProducer    *workerqueue.QueueMiddleware
-	storeIdJoinProducer   *workerqueue.QueueMiddleware
-	userIdJoinProducer    *workerqueue.QueueMiddleware
-	query1ResultsProducer *workerqueue.QueueMiddleware
-	config                *middleware.ConnectionConfig
+	consumer                 *workerqueue.QueueConsumer
+	itemIdGroupByProducer    *workerqueue.QueueMiddleware // Query 2 -> MapReduce
+	storeIdGroupByProducer   *workerqueue.QueueMiddleware // Query 3/4 -> Dummy GroupBy
+	query1ResultsProducer    *workerqueue.QueueMiddleware
+	config                   *middleware.ConnectionConfig
 }
 
 // NewQueryGateway creates a new QueryGateway instance
@@ -44,40 +43,40 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 	}
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
-	// Initialize queue producer for sending chunks to ItemID join worker
-	itemIdJoinProducer := workerqueue.NewMessageMiddlewareQueue(
-		ItemIdJoinChunkQueue,
+	// Initialize queue producer for sending chunks to ItemID GroupBy (Query 2 Map Worker)
+	itemIdGroupByProducer := workerqueue.NewMessageMiddlewareQueue(
+		ItemIdGroupByChunkQueue,
 		config,
 	)
-	if itemIdJoinProducer == nil {
+	if itemIdGroupByProducer == nil {
 		consumer.Close()
-		return nil, fmt.Errorf("failed to create ItemID join producer")
+		return nil, fmt.Errorf("failed to create ItemID GroupBy producer")
 	}
 
-	// Declare the ItemID join producer queue
-	if err := itemIdJoinProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the ItemID GroupBy producer queue
+	if err := itemIdGroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		itemIdJoinProducer.Close()
-		return nil, fmt.Errorf("failed to declare ItemID join queue: %v", err)
+		itemIdGroupByProducer.Close()
+		return nil, fmt.Errorf("failed to declare ItemID GroupBy queue: %v", err)
 	}
 
-	// Initialize queue producer for sending chunks to StoreID join worker
-	storeIdJoinProducer := workerqueue.NewMessageMiddlewareQueue(
-		StoreIdJoinChunkQueue,
+	// Initialize queue producer for sending chunks to StoreID GroupBy (Query 3/4 Dummy Worker)
+	storeIdGroupByProducer := workerqueue.NewMessageMiddlewareQueue(
+		StoreIdGroupByChunkQueue,
 		config,
 	)
-	if storeIdJoinProducer == nil {
+	if storeIdGroupByProducer == nil {
 		consumer.Close()
-		itemIdJoinProducer.Close()
-		return nil, fmt.Errorf("failed to create StoreID join producer")
+		itemIdGroupByProducer.Close()
+		return nil, fmt.Errorf("failed to create StoreID GroupBy producer")
 	}
 
-	// Declare the StoreID join producer queue
-	if err := storeIdJoinProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the StoreID GroupBy producer queue
+	if err := storeIdGroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		itemIdJoinProducer.Close()
-		storeIdJoinProducer.Close()
-		return nil, fmt.Errorf("failed to declare StoreID join queue: %v", err)
+		itemIdGroupByProducer.Close()
+		storeIdGroupByProducer.Close()
+		return nil, fmt.Errorf("failed to declare StoreID GroupBy queue: %v", err)
 	}
 
 	// Initialize queue producer for Query 1 results
@@ -87,50 +86,26 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 	)
 	if query1ResultsProducer == nil {
 		consumer.Close()
-		itemIdJoinProducer.Close()
-		storeIdJoinProducer.Close()
+		itemIdGroupByProducer.Close()
+		storeIdGroupByProducer.Close()
 		return nil, fmt.Errorf("failed to create Query1 results producer")
 	}
 
 	// Declare the Query1 results queue
 	if err := query1ResultsProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		itemIdJoinProducer.Close()
-		storeIdJoinProducer.Close()
+		itemIdGroupByProducer.Close()
+		storeIdGroupByProducer.Close()
 		query1ResultsProducer.Close()
 		return nil, fmt.Errorf("failed to declare Query1 results queue: %v", err)
 	}
 
-	// Initialize queue producer for userIdJoin
-	userIdJoinProducer := workerqueue.NewMessageMiddlewareQueue(
-		UserIdJoinChunkQueue,
-		config,
-	)
-	if userIdJoinProducer == nil {
-		consumer.Close()
-		itemIdJoinProducer.Close()
-		storeIdJoinProducer.Close()
-		query1ResultsProducer.Close()
-		return nil, fmt.Errorf("failed to create userIdJoin producer")
-	}
-
-	// Declare the userIdJoin chunks queue
-	if err := userIdJoinProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		itemIdJoinProducer.Close()
-		storeIdJoinProducer.Close()
-		query1ResultsProducer.Close()
-		userIdJoinProducer.Close()
-		return nil, fmt.Errorf("failed to declare userIdJoin chunks queue: %v", err)
-	}
-
 	return &QueryGateway{
-		consumer:              consumer,
-		itemIdJoinProducer:    itemIdJoinProducer,
-		storeIdJoinProducer:   storeIdJoinProducer,
-		query1ResultsProducer: query1ResultsProducer,
-		userIdJoinProducer:    userIdJoinProducer,
-		config:                config,
+		consumer:               consumer,
+		itemIdGroupByProducer:  itemIdGroupByProducer,
+		storeIdGroupByProducer: storeIdGroupByProducer,
+		query1ResultsProducer:  query1ResultsProducer,
+		config:                 config,
 	}, nil
 }
 
@@ -145,17 +120,14 @@ func (qg *QueryGateway) Close() {
 	if qg.consumer != nil {
 		qg.consumer.Close()
 	}
-	if qg.itemIdJoinProducer != nil {
-		qg.itemIdJoinProducer.Close()
+	if qg.itemIdGroupByProducer != nil {
+		qg.itemIdGroupByProducer.Close()
 	}
-	if qg.storeIdJoinProducer != nil {
-		qg.storeIdJoinProducer.Close()
+	if qg.storeIdGroupByProducer != nil {
+		qg.storeIdGroupByProducer.Close()
 	}
 	if qg.query1ResultsProducer != nil {
 		qg.query1ResultsProducer.Close()
-	}
-	if qg.userIdJoinProducer != nil {
-		qg.userIdJoinProducer.Close()
 	}
 }
 

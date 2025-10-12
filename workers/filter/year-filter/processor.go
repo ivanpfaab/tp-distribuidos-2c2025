@@ -83,6 +83,10 @@ func YearFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 		if i == 0 && hasHeader {
 			continue
 		}
+		// Skip empty or whitespace-only lines
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
 		pass := filterYear(l, chunkMsg.FileID)
 		if pass {
 			responseBuilder.WriteString(l)

@@ -6,12 +6,21 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // GroupedResult represents the grouped data by item_id (already grouped by semester)
 type GroupedResult struct {
@@ -35,7 +44,7 @@ type FinalResult struct {
 type ReduceWorker struct {
 	semester     Semester
 	consumer     *workerqueue.QueueConsumer
-	producer     *workerqueue.QueueProducer
+	producer     *workerqueue.QueueMiddleware
 	config       *middleware.ConnectionConfig
 	groupedData  map[string]*GroupedResult  // Key: item_id, Value: aggregated data
 	chunkCount   int                        // Track number of chunks received
@@ -57,10 +66,31 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		log.Fatalf("Failed to create consumer for queue: %s", queueName)
 	}
 
+	// Declare the reduce queue before consuming
+	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(queueName, config)
+	if queueDeclarer == nil {
+		consumer.Close()
+		log.Fatalf("Failed to create queue declarer for queue: %s", queueName)
+	}
+	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+		consumer.Close()
+		queueDeclarer.Close()
+		log.Fatalf("Failed to declare reduce queue %s: %v", queueName, err)
+	}
+	queueDeclarer.Close() // Close the declarer as we don't need it anymore
+
 	// Create producer for the final results queue
-	producer := workerqueue.NewQueueProducer("storeid-itemid-metrics-chunks", config)
+	producer := workerqueue.NewMessageMiddlewareQueue("storeid-itemid-metrics-chunks", config)
 	if producer == nil {
+		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")
+	}
+
+	// Declare the final results queue
+	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
+		consumer.Close()
+		producer.Close()
+		log.Fatalf("Failed to declare final results queue: %v", err)
 	}
 
 	return &ReduceWorker{
@@ -205,9 +235,9 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		return fmt.Errorf("failed to serialize final chunk: %v", err)
 	}
 
-	err = rw.producer.Publish(serializedData)
-	if err != nil {
-		return fmt.Errorf("failed to publish final results: %v", err)
+	sendErr := rw.producer.Send(serializedData)
+	if sendErr != 0 {
+		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
 	log.Printf("Successfully sent final results for semester %s: %d items", 
@@ -253,23 +283,26 @@ func (rw *ReduceWorker) Start() {
 	log.Printf("Starting Reduce Worker for semester %s...", rw.semester.String())
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		log.Printf("Reduce worker for semester %s started consuming messages", rw.semester.String())
 		chunkCount := 0
 		for delivery := range *consumeChannel {
-			// Deserialize the chunk message
-			message, err := deserializer.Deserialize(delivery.Body)
-			if err != nil {
-				log.Printf("Failed to deserialize chunk: %v", err)
-				delivery.Ack(false)
-				continue
-			}
+			log.Printf("Received message for semester %s - Message size: %d bytes", rw.semester.String(), len(delivery.Body))
+			log.Printf("Message body preview: %s", string(delivery.Body[:min(100, len(delivery.Body))]))
+		// Deserialize the chunk message
+		message, err := deserializer.Deserialize(delivery.Body)
+		if err != nil {
+			log.Printf("Failed to deserialize chunk: %v", err)
+			delivery.Ack(false)
+			continue
+		}
 
-			// Check if it's a Chunk message
-			chunk, ok := message.(*chunk.Chunk)
-			if !ok {
-				log.Printf("Received non-chunk message: %T", message)
-				delivery.Ack(false)
-				continue
-			}
+		// Check if it's a Chunk message
+		chunk, ok := message.(*chunk.Chunk)
+		if !ok {
+			log.Printf("Received non-chunk message: %T", message)
+			delivery.Ack(false)
+			continue
+		}
 
 			// Process the chunk immediately
 			err = rw.ProcessChunk(chunk)
@@ -296,9 +329,19 @@ func (rw *ReduceWorker) Start() {
 		done <- nil
 	}
 
+	queueName := GetQueueNameForSemester(rw.semester)
+	log.Printf("About to start consuming from queue: %s", queueName)
+	
+	// Add a timeout to detect if no messages are received
+	go func() {
+		time.Sleep(10 * time.Second)
+		log.Printf("WARNING: No messages received in 10 seconds for queue: %s", queueName)
+	}()
+	
 	if err := rw.consumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming: %v", err)
 	}
+	log.Printf("Successfully started consuming from queue: %s", queueName)
 }
 
 // Close closes the reduce worker

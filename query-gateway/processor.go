@@ -30,28 +30,28 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 		fmt.Printf("Query Gateway: Routed Query 1 chunk to results queue - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 2:
-		// Query 2: Send to ItemID join worker
-		if err := qg.sendToItemIdJoin(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to ItemID join worker: %v\n", err)
+		// Query 2: Send to ItemID GroupBy (MapReduce)
+		if err := qg.sendToItemIdGroupBy(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to ItemID GroupBy worker: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 2 chunk to ItemID join worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 2 chunk to ItemID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 3:
-		// Query 3: Send to StoreID join worker
-		if err := qg.sendToStoreIdJoin(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to StoreID join worker: %v\n", err)
+		// Query 3: Send to StoreID GroupBy (Dummy Pass-Through)
+		if err := qg.sendToStoreIdGroupBy(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to StoreID GroupBy worker: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 3 chunk to StoreID join worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 3 chunk to StoreID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 4:
-		// Query 4: Send to Query4 results queue for streaming service
-		if err := qg.sendToUserIdJoin(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query4 results queue: %v\n", err)
+		// Query 4: Send to StoreID GroupBy (Dummy Pass-Through)
+		if err := qg.sendToStoreIdGroupBy(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to StoreID GroupBy worker: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 4 chunk to results queue - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 4 chunk to StoreID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Query Gateway: Unknown query type %d, printing result\n", chunkMsg.QueryType)
@@ -88,50 +88,34 @@ func (qg *QueryGateway) sendToQuery1Results(chunkMsg *chunk.Chunk) middleware.Me
 	return qg.query1ResultsProducer.Send(messageData)
 }
 
-// sendToUserIdJoin sends a chunk message to the UserID join worker
-func (qg *QueryGateway) sendToUserIdJoin(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+// sendToItemIdGroupBy sends a chunk message to the ItemID GroupBy worker (Query 2 MapReduce)
+func (qg *QueryGateway) sendToItemIdGroupBy(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 
 	// Serialize the chunk message
 	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
 	if err != nil {
-		fmt.Printf("Query Gateway: Failed to serialize chunk message for UserID join: %v\n", err)
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for ItemID GroupBy: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send to UserID join queue
-	return qg.userIdJoinProducer.Send(messageData)
+	// Send to ItemID GroupBy queue
+	return qg.itemIdGroupByProducer.Send(messageData)
 }
 
-// sendToItemIdJoin sends a chunk message to the ItemID join worker
-func (qg *QueryGateway) sendToItemIdJoin(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+// sendToStoreIdGroupBy sends a chunk message to the StoreID GroupBy worker (Query 3/4 Dummy Pass-Through)
+func (qg *QueryGateway) sendToStoreIdGroupBy(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 
 	// Serialize the chunk message
 	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
 	if err != nil {
-		fmt.Printf("Query Gateway: Failed to serialize chunk message for ItemID join: %v\n", err)
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for StoreID GroupBy: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send to ItemID join queue
-	return qg.itemIdJoinProducer.Send(messageData)
-}
-
-// sendToStoreIdJoin sends a chunk message to the StoreID join worker
-func (qg *QueryGateway) sendToStoreIdJoin(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
-	// Create a chunk message for serialization
-	chunkMessage := chunk.NewChunkMessage(chunkMsg)
-
-	// Serialize the chunk message
-	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
-	if err != nil {
-		fmt.Printf("Query Gateway: Failed to serialize chunk message for StoreID join: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Send to StoreID join queue
-	return qg.storeIdJoinProducer.Send(messageData)
+	// Send to StoreID GroupBy queue
+	return qg.storeIdGroupByProducer.Send(messageData)
 }

@@ -14,6 +14,14 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // TransactionItem represents a single transaction item record
 type TransactionItem struct {
 	TransactionID string
@@ -37,7 +45,7 @@ type GroupedResult struct {
 // MapWorker processes chunks and groups by year, semester, item_id
 type MapWorker struct {
 	consumer     *workerqueue.QueueConsumer
-	producers    map[string]*workerqueue.QueueProducer
+	producers    map[string]*workerqueue.QueueMiddleware
 	config       *middleware.ConnectionConfig
 }
 
@@ -56,16 +64,36 @@ func NewMapWorker() *MapWorker {
 		log.Fatal("Failed to create consumer")
 	}
 
+	// Declare the input queue before consuming
+	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue("itemid-groupby-chunks", config)
+	if inputQueueDeclarer == nil {
+		consumer.Close()
+		log.Fatal("Failed to create input queue declarer")
+	}
+	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+		consumer.Close()
+		inputQueueDeclarer.Close()
+		log.Fatalf("Failed to declare input queue 'itemid-groupby-chunks': %v", err)
+	}
+	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
+
 	// Create producers for each semester
-	producers := make(map[string]*workerqueue.QueueProducer)
+	producers := make(map[string]*workerqueue.QueueMiddleware)
 	semesters := GetAllSemesters()
-	
+
 	for _, semester := range semesters {
 		queueName := GetQueueNameForSemester(semester)
-		producer := workerqueue.NewQueueProducer(queueName, config)
+		log.Printf("Creating producer for queue: %s", queueName)
+		producer := workerqueue.NewMessageMiddlewareQueue(queueName, config)
 		if producer == nil {
 			log.Fatalf("Failed to create producer for queue: %s", queueName)
 		}
+		
+		// Declare the queue before using it
+		if err := producer.DeclareQueue(false, false, false, false); err != 0 {
+			log.Fatalf("Failed to declare queue %s: %v", queueName, err)
+		}
+		
 		producers[queueName] = producer
 	}
 
@@ -88,6 +116,11 @@ func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 
 	// Group transactions by year, semester, item_id
 	groupedData := mw.groupTransactions(transactions)
+
+	log.Printf("Grouped data for chunk %d: %d semesters", chunk.ChunkNumber, len(groupedData))
+	for semester := range groupedData {
+		log.Printf("  Semester: %s (%d items)", semester.String(), len(groupedData[semester]))
+	}
 
 	// Send grouped data to appropriate reduce queues
 	err = mw.sendToReduceQueues(chunk, groupedData)
@@ -232,12 +265,15 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 			return fmt.Errorf("failed to serialize chunk for queue %s: %v", queueName, err)
 		}
 
-		err = producer.Publish(serializedData)
-		if err != nil {
-			return fmt.Errorf("failed to publish to queue %s: %v", queueName, err)
+		log.Printf("Sending to queue %s: %d bytes, %d item groups", queueName, len(serializedData), len(itemGroups))
+		log.Printf("Serialized data preview: %s", string(serializedData[:min(100, len(serializedData))]))
+		
+		sendErr := producer.Send(serializedData)
+		if sendErr != 0 {
+			return fmt.Errorf("failed to send to queue %s: error code %v", queueName, sendErr)
 		}
 
-		log.Printf("Sent %d item groups to reduce queue: %s", len(itemGroups), queueName)
+		log.Printf("Successfully sent %d item groups to reduce queue: %s", len(itemGroups), queueName)
 	}
 
 	return nil
@@ -329,6 +365,9 @@ func (mw *MapWorker) Close() {
 func main() {
 	mapWorker := NewMapWorker()
 	defer mapWorker.Close()
-	
+
 	mapWorker.Start()
+
+	// Keep the worker running
+	select {}
 }
