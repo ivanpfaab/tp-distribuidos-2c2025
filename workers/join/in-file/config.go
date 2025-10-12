@@ -17,6 +17,13 @@ const (
 	UserIdChunkQueue          = "userid-join-chunks"
 	Query4ResultsQueue        = "query4-results-chunks"
 
+	// Partition configuration
+	NumPartitions = 100 // Number of partition files for hash-based partitioning
+
+	// Buffer configuration
+	MaxBufferSize = 200 // Maximum transactions to buffer before sending retry chunk
+	MaxRetries    = 3   // Maximum retry attempts before dropping transactions
+
 	// Default configuration
 	DefaultRabbitMQHost = "localhost"
 	DefaultRabbitMQPort = "5672"
@@ -50,4 +57,17 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getUserPartition returns the partition number for a given user ID
+func getUserPartition(userID string) (int, error) {
+	// Parse user ID (handle both int and float formats)
+	userIDFloat, err := strconv.ParseFloat(userID, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid user ID %s: %w", userID, err)
+	}
+	userIDInt := int(userIDFloat)
+
+	// Using userIDInt as the partition number and module to determine where the user belongs
+	return userIDInt % NumPartitions, nil
 }

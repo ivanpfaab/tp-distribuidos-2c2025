@@ -24,6 +24,7 @@ const (
 	ChunkNumberSize = 8
 	IsLastChunkSize = 1
 	StepSize        = 1
+	RetriesSize     = 1
 )
 
 type ChunkMessage struct {
@@ -43,7 +44,7 @@ func NewChunkMessage(chunk *Chunk) *ChunkMessage {
 }
 
 func SerializeChunkMessage(msg *ChunkMessage) ([]byte, error) {
-	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + ClientIDSize + FileIDSize + QueryTypeSize + TableIDSize + ChunkSizeSize + ChunkNumberSize + IsLastChunkSize + StepSize
+	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + ClientIDSize + FileIDSize + QueryTypeSize + TableIDSize + ChunkSizeSize + ChunkNumberSize + IsLastChunkSize + StepSize + RetriesSize
 
 	totalLength := headerLength + len(msg.Chunk.ChunkData)
 
@@ -94,6 +95,9 @@ func SerializeChunkMessage(msg *ChunkMessage) ([]byte, error) {
 
 	buf[offset] = byte(msg.Chunk.Step)
 	offset += StepSize
+
+	buf[offset] = byte(msg.Chunk.Retries)
+	offset += RetriesSize
 
 	copy(buf[offset:], []byte(msg.Chunk.ChunkData))
 
