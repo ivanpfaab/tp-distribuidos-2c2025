@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -451,6 +452,7 @@ func (jw *JoinByUserIdWorker) flushBuffer() middleware.MessageMiddlewareError {
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	time.Sleep(time.Duration(jw.buffer.metadata.Retries) * time.Second)
 	if err := jw.retryProducer.Send(retryData); err != 0 {
 		fmt.Printf("Join by User ID Worker: Failed to send retry chunk: %v\n", err)
 		return err
