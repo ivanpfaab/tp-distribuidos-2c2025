@@ -11,17 +11,16 @@ COPY shared/ ./shared/
 # Download dependencies
 RUN go mod download
 
-# Copy reduce worker source and semester utils
+# Copy reduce worker source (includes shared package, main_* subdirectories)
 COPY workers/group_by/query2_mapreduce/reduce_workers/ ./workers/group_by/query2_mapreduce/reduce_workers/
-COPY workers/group_by/query2_mapreduce/reduce_workers/semester_utils.go ./workers/group_by/query2_mapreduce/reduce_workers/
 
 # Build the reduce workers (all executables)
 WORKDIR /app/workers/group_by/query2_mapreduce/reduce_workers
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s2-2023 main_s2_2023.go reduce_worker.go semester_utils.go && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s1-2024 main_s1_2024.go reduce_worker.go semester_utils.go && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s2-2024 main_s2_2024.go reduce_worker.go semester_utils.go && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s1-2025 main_s1_2025.go reduce_worker.go semester_utils.go && \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s2-2025 main_s2_2025.go reduce_worker.go semester_utils.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s2-2023 ./main_s2_2023 && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s1-2024 ./main_s1_2024 && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s2-2024 ./main_s2_2024 && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s1-2025 ./main_s1_2025 && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reduce-worker-s2-2025 ./main_s2_2025
 
 # Run stage
 FROM alpine:latest

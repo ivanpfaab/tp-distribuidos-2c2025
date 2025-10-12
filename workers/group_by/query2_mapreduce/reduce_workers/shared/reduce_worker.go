@@ -1,4 +1,4 @@
-package main
+package shared
 
 import (
 	"encoding/csv"
@@ -32,22 +32,22 @@ type GroupedResult struct {
 
 // FinalResult represents the final aggregated result
 type FinalResult struct {
-	Year         int
-	Semester     int
-	ItemID       string
+	Year          int
+	Semester      int
+	ItemID        string
 	TotalQuantity int
 	TotalSubtotal float64
-	Count        int
+	Count         int
 }
 
 // ReduceWorker processes chunks for a specific semester
 type ReduceWorker struct {
-	semester     Semester
-	consumer     *workerqueue.QueueConsumer
-	producer     *workerqueue.QueueMiddleware
-	config       *middleware.ConnectionConfig
-	groupedData  map[string]*GroupedResult  // Key: item_id, Value: aggregated data
-	chunkCount   int                        // Track number of chunks received
+	semester    Semester
+	consumer    *workerqueue.QueueConsumer
+	producer    *workerqueue.QueueMiddleware
+	config      *middleware.ConnectionConfig
+	groupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
+	chunkCount  int                       // Track number of chunks received
 }
 
 // NewReduceWorker creates a new reduce worker for a specific semester
@@ -117,9 +117,9 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	rw.aggregateData(results)
 
 	rw.chunkCount++
-	log.Printf("Processed chunk %d, now have %d unique items (total chunks: %d)", 
+	log.Printf("Processed chunk %d, now have %d unique items (total chunks: %d)",
 		chunk.ChunkNumber, len(rw.groupedData), rw.chunkCount)
-	
+
 	return nil
 }
 
@@ -137,7 +137,7 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 
 	// Skip header row
 	results := make([]GroupedResult, 0, len(records)-1)
-	
+
 	for _, record := range records[1:] {
 		if len(record) < 6 {
 			continue // Skip malformed records
@@ -175,7 +175,7 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 	for _, result := range results {
 		itemID := result.ItemID
-		
+
 		// Get or create grouped result for this item_id
 		if rw.groupedData[itemID] == nil {
 			rw.groupedData[itemID] = &GroupedResult{
@@ -195,31 +195,31 @@ func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 
 // FinalizeResults sends the final aggregated results
 func (rw *ReduceWorker) FinalizeResults() error {
-	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique items", 
+	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique items",
 		rw.semester.String(), rw.chunkCount, len(rw.groupedData))
 
 	// Convert to final results
 	finalResults := make([]FinalResult, 0, len(rw.groupedData))
 	for _, grouped := range rw.groupedData {
 		finalResult := FinalResult{
-			Year:         rw.semester.Year,
-			Semester:     rw.semester.Semester,
-			ItemID:       grouped.ItemID,
+			Year:          rw.semester.Year,
+			Semester:      rw.semester.Semester,
+			ItemID:        grouped.ItemID,
 			TotalQuantity: grouped.TotalQuantity,
 			TotalSubtotal: grouped.TotalSubtotal,
-			Count:        grouped.Count,
+			Count:         grouped.Count,
 		}
 		finalResults = append(finalResults, finalResult)
 	}
-	
+
 	// Log detailed final results
 	log.Printf("FINAL RESULTS for semester %s:", rw.semester.String())
 	log.Printf("   Total unique items: %d", len(finalResults))
-	
+
 	// Show top 10 items by total quantity for debugging
 	items := make([]FinalResult, len(finalResults))
 	copy(items, finalResults)
-	
+
 	// Sort by total quantity (descending)
 	for i := 0; i < len(items)-1; i++ {
 		for j := i + 1; j < len(items); j++ {
@@ -228,20 +228,20 @@ func (rw *ReduceWorker) FinalizeResults() error {
 			}
 		}
 	}
-	
+
 	// Show top 10 items
 	topCount := 10
 	if len(items) < topCount {
 		topCount = len(items)
 	}
-	
+
 	log.Printf("   Top %d items by quantity:", topCount)
 	for i := 0; i < topCount; i++ {
 		item := items[i]
-		log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d", 
+		log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d",
 			i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
 	}
-	
+
 	// Calculate totals
 	totalQuantity := 0
 	totalSubtotal := 0.0
@@ -251,21 +251,23 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		totalSubtotal += result.TotalSubtotal
 		totalCount += result.Count
 	}
-	
-	log.Printf("   Grand totals: Quantity=%d, Subtotal=%.2f, Transactions=%d", 
+
+	log.Printf("   Grand totals: Quantity=%d, Subtotal=%.2f, Transactions=%d",
 		totalQuantity, totalSubtotal, totalCount)
 
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
-	
+
 	// Create chunk for final results
+	// FileID format: S{semester}{last2digitsOfYear} - e.g., "S125" for S1-2025
+	fileID := fmt.Sprintf("S%d%02d", rw.semester.Semester, rw.semester.Year%100)
 	finalChunk := chunk.NewChunk(
-		"REDUCE", // Client ID
-		fmt.Sprintf("S%d%d", rw.semester.Semester, rw.semester.Year), // File ID
-		2, // Query Type
-		1, // Chunk Number
-		true, // Is Last Chunk
-		2, // Step 2 for final results
+		"RDUC", // Client ID (max 4 bytes)
+		fileID, // File ID (max 4 bytes)
+		2,      // Query Type
+		1,      // Chunk Number
+		true,   // Is Last Chunk
+		2,      // Step 2 for final results
 		len(csvData),
 		2, // Table ID 2 for transaction_items
 		csvData,
@@ -283,12 +285,12 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
-	log.Printf("Successfully sent final results for semester %s: %d items", 
+	log.Printf("Successfully sent final results for semester %s: %d items",
 		rw.semester.String(), len(finalResults))
 
 	// Clear aggregated data to free memory
 	rw.clearAggregatedData()
-	
+
 	return nil
 }
 
@@ -302,10 +304,10 @@ func (rw *ReduceWorker) clearAggregatedData() {
 // convertToCSV converts final results to CSV format
 func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 	var csvBuilder strings.Builder
-	
+
 	// Write header
 	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
-	
+
 	// Write data rows
 	for _, result := range results {
 		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
@@ -317,7 +319,7 @@ func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 			result.Count,
 		))
 	}
-	
+
 	return csvBuilder.String()
 }
 
@@ -331,21 +333,21 @@ func (rw *ReduceWorker) Start() {
 		for delivery := range *consumeChannel {
 			log.Printf("Received message for semester %s - Message size: %d bytes", rw.semester.String(), len(delivery.Body))
 			log.Printf("Message body preview: %s", string(delivery.Body[:min(100, len(delivery.Body))]))
-		// Deserialize the chunk message
-		message, err := deserializer.Deserialize(delivery.Body)
-		if err != nil {
-			log.Printf("Failed to deserialize chunk: %v", err)
-			delivery.Ack(false)
-			continue
-		}
+			// Deserialize the chunk message
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				log.Printf("Failed to deserialize chunk: %v", err)
+				delivery.Ack(false)
+				continue
+			}
 
-		// Check if it's a Chunk message
-		chunk, ok := message.(*chunk.Chunk)
-		if !ok {
-			log.Printf("Received non-chunk message: %T", message)
-			delivery.Ack(false)
-			continue
-		}
+			// Check if it's a Chunk message
+			chunk, ok := message.(*chunk.Chunk)
+			if !ok {
+				log.Printf("Received non-chunk message: %T", message)
+				delivery.Ack(false)
+				continue
+			}
 
 			// Process the chunk immediately
 			err = rw.ProcessChunk(chunk)
@@ -374,13 +376,13 @@ func (rw *ReduceWorker) Start() {
 
 	queueName := GetQueueNameForSemester(rw.semester)
 	log.Printf("About to start consuming from queue: %s", queueName)
-	
+
 	// Add a timeout to detect if no messages are received
 	go func() {
 		time.Sleep(10 * time.Second)
 		log.Printf("WARNING: No messages received in 10 seconds for queue: %s", queueName)
 	}()
-	
+
 	if err := rw.consumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming: %v", err)
 	}
@@ -392,7 +394,7 @@ func (rw *ReduceWorker) Close() {
 	if rw.consumer != nil {
 		rw.consumer.Close()
 	}
-	
+
 	if rw.producer != nil {
 		rw.producer.Close()
 	}

@@ -190,6 +190,8 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]TransactionItem, error) {
 		transactions = append(transactions, transaction)
 	}
 
+	fmt.Printf("Parsed %d transactions\n", len(transactions))
+
 	return transactions, nil
 }
 
