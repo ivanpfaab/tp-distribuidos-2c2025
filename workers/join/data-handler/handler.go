@@ -15,11 +15,11 @@ import (
 
 // JoinDataHandler encapsulates the join data handler state and dependencies
 type JoinDataHandler struct {
-	consumer         *exchange.ExchangeConsumer
-	itemIdProducer   *exchange.ExchangeMiddleware
-	storeIdProducer  *workerqueue.QueueMiddleware
-	userIdProducer   *workerqueue.QueueMiddleware
-	config           *middleware.ConnectionConfig
+	consumer          *exchange.ExchangeConsumer
+	itemIdProducer    *exchange.ExchangeMiddleware
+	storeIdProducer   *workerqueue.QueueMiddleware
+	userIdProducer    *workerqueue.QueueMiddleware
+	config            *middleware.ConnectionConfig
 	itemIdWorkerCount int // Number of ItemID worker instances to broadcast to
 }
 
@@ -34,7 +34,7 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		}
 	}
 	fmt.Printf("Join Data Handler: Initializing with %d ItemID worker instance(s)\n", itemIdWorkerCount)
-	
+
 	// Create consumer for fixed join data
 	consumer := exchange.NewExchangeConsumer(
 		FixedJoinDataExchange,
@@ -125,11 +125,11 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	}
 
 	return &JoinDataHandler{
-		consumer:         consumer,
-		itemIdProducer:   itemIdProducer,
-		storeIdProducer:  storeIdProducer,
-		userIdProducer:   userIdProducer,
-		config:           config,
+		consumer:          consumer,
+		itemIdProducer:    itemIdProducer,
+		storeIdProducer:   storeIdProducer,
+		userIdProducer:    userIdProducer,
+		config:            config,
 		itemIdWorkerCount: itemIdWorkerCount,
 	}, nil
 }
@@ -206,8 +206,8 @@ func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []by
 			instanceID := i + 1 // 1-indexed
 			routingKeys[i] = fmt.Sprintf("%s-instance-%d", JoinItemIdDictionaryRoutingKey, instanceID)
 		}
-		
-		fmt.Printf("Join Data Handler: Broadcasting FileID %s to %d ItemID worker instance(s) with routing keys: %v\n", 
+
+		fmt.Printf("Join Data Handler: Broadcasting FileID %s to %d ItemID worker instance(s) with routing keys: %v\n",
 			fileId, jdh.itemIdWorkerCount, routingKeys)
 		return jdh.itemIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "ST") {

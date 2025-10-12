@@ -45,11 +45,11 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 	if instanceID == "" {
 		instanceID = "1"
 	}
-	
+
 	// Create instance-specific routing key for this worker
 	instanceRoutingKey := fmt.Sprintf("%s-instance-%s", ItemIdDictionaryRoutingKey, instanceID)
 	fmt.Printf("ItemID Join Worker: Initializing with instance ID: %s, routing key: %s\n", instanceID, instanceRoutingKey)
-	
+
 	// Create dictionary consumer (exchange for broadcasting to all workers)
 	dictionaryConsumer := exchange.NewExchangeConsumer(
 		ItemIdDictionaryExchange,
