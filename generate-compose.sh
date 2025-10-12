@@ -55,6 +55,12 @@ QUERY_GATEWAY_COUNT=$(prompt_worker_count "query-gateway" 1)
 JOIN_DATA_HANDLER_COUNT=$(prompt_worker_count "join-data-handler" 1)
 
 echo ""
+echo -e "${BLUE}Configure Join Workers (in-memory dictionary with broadcasting)${NC}"
+echo ""
+
+ITEMID_JOIN_WORKER_COUNT=$(prompt_worker_count "itemid-join-worker" 1)
+
+echo ""
 echo -e "${BLUE}Configure User Join Workers (Query 4 - distributed write/read)${NC}"
 echo ""
 
@@ -76,6 +82,7 @@ echo -e "Time Filter Workers:    ${YELLOW}${TIME_FILTER_COUNT}${NC}"
 echo -e "Amount Filter Workers:  ${YELLOW}${AMOUNT_FILTER_COUNT}${NC}"
 echo -e "Query Gateway:          ${YELLOW}${QUERY_GATEWAY_COUNT}${NC}"
 echo -e "Join Data Handler:      ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC}"
+echo -e "ItemID Join Workers:    ${YELLOW}${ITEMID_JOIN_WORKER_COUNT}${NC}"
 echo -e "User Partition Writers: ${YELLOW}${USER_PARTITION_WRITERS}${NC}"
 echo -e "User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC}"
 echo -e "Clients:                ${YELLOW}${CLIENT_COUNT}${NC}"
@@ -197,14 +204,25 @@ generate_year_filter_workers $YEAR_FILTER_COUNT
 generate_time_filter_workers $TIME_FILTER_COUNT
 generate_amount_filter_workers $AMOUNT_FILTER_COUNT
 
-# Add remaining non-scalable services
-cat >> docker-compose.yaml << 'EOF_REMAINING'
-  # ItemID Join Worker (single instance for now)
-  itemid-join-worker:
+# Function to generate itemid-join-worker services
+generate_itemid_join_workers() {
+    local count=$1
+    for i in $(seq 1 $count); do
+        # First worker has simpler container name for backward compatibility
+        local container_name
+        if [ $i -eq 1 ]; then
+            container_name="itemid-join-worker"
+        else
+            container_name="itemid-join-worker-${i}"
+        fi
+        
+        cat >> docker-compose.yaml << EOF
+  # ItemID Join Worker ${i} (scalable with dictionary broadcasting)
+  itemid-join-worker-${i}:
     build:
       context: .
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
-    container_name: itemid-join-worker
+    container_name: ${container_name}
     depends_on:
       join-data-handler-1:
         condition: service_started
@@ -213,8 +231,19 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      WORKER_INSTANCE_ID: "${i}"
     profiles: ["orchestration"]
 
+EOF
+    done
+}
+
+# Generate itemid-join-workers
+echo -e "${BLUE}Generating itemid-join-workers...${NC}"
+generate_itemid_join_workers $ITEMID_JOIN_WORKER_COUNT
+
+# Add remaining non-scalable services
+cat >> docker-compose.yaml << 'EOF_REMAINING'
   # StoreID Join Worker (single instance for now)
   storeid-join-worker:
     build:
@@ -360,6 +389,7 @@ EOF
 # Function to generate join-data-handler services
 generate_join_data_handler() {
     local count=$1
+    local itemid_worker_count=$2
     for i in $(seq 1 $count); do
         # First handler has simpler container name for backward compatibility
         local container_name
@@ -384,6 +414,7 @@ generate_join_data_handler() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      ITEMID_WORKER_COUNT: "${itemid_worker_count}"
     profiles: ["orchestration"]
 
 EOF
@@ -425,7 +456,7 @@ EOF
 
 # Generate join data handlers
 echo -e "${BLUE}Generating join data handlers...${NC}"
-generate_join_data_handler $JOIN_DATA_HANDLER_COUNT
+generate_join_data_handler $JOIN_DATA_HANDLER_COUNT $ITEMID_JOIN_WORKER_COUNT
 
 # Generate user partition components
 echo -e "${BLUE}Generating user partition splitter...${NC}"
@@ -499,9 +530,13 @@ generate_server_dependencies() {
         echo "        condition: service_started"
     done
     
+    # Add dependencies for all itemid-join-worker instances
+    for i in $(seq 1 $ITEMID_JOIN_WORKER_COUNT); do
+        echo "      itemid-join-worker-${i}:"
+        echo "        condition: service_started"
+    done
+    
     # Add remaining dependencies
-    echo "      itemid-join-worker:"
-    echo "        condition: service_started"
     echo "      storeid-join-worker:"
     echo "        condition: service_started"
     echo "      groupby-worker:"
@@ -595,6 +630,7 @@ echo -e "  Time Filter:            ${YELLOW}${TIME_FILTER_COUNT}${NC} instance(s
 echo -e "  Amount Filter:          ${YELLOW}${AMOUNT_FILTER_COUNT}${NC} instance(s)"
 echo -e "  Query Gateway:          ${YELLOW}${QUERY_GATEWAY_COUNT}${NC} instance(s)"
 echo -e "  Join Data Handler:      ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC} instance(s)"
+echo -e "  ItemID Join Workers:    ${YELLOW}${ITEMID_JOIN_WORKER_COUNT}${NC} instance(s)"
 echo -e "  User Partition Writers: ${YELLOW}${USER_PARTITION_WRITERS}${NC} instance(s)"
 echo -e "  User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC} instance(s)"
 echo -e "  Clients:                ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"

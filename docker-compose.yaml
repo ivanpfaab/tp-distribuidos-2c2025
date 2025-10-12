@@ -112,8 +112,8 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # ItemID Join Worker (single instance for now)
-  itemid-join-worker:
+  # ItemID Join Worker 1 (scalable with dictionary broadcasting)
+  itemid-join-worker-1:
     build:
       context: .
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
@@ -126,6 +126,24 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      WORKER_INSTANCE_ID: "1"
+    profiles: ["orchestration"]
+
+  # ItemID Join Worker 2 (scalable with dictionary broadcasting)
+  itemid-join-worker-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/itemid/Dockerfile
+    container_name: itemid-join-worker-2
+    depends_on:
+      join-data-handler-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WORKER_INSTANCE_ID: "2"
     profiles: ["orchestration"]
 
   # StoreID Join Worker (single instance for now)
@@ -190,6 +208,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      ITEMID_WORKER_COUNT: "2"
     profiles: ["orchestration"]
 
   # User Partition Splitter (distributes users to writers)
@@ -346,7 +365,9 @@ services:
         condition: service_started
       user-join-reader-2:
         condition: service_started
-      itemid-join-worker:
+      itemid-join-worker-1:
+        condition: service_started
+      itemid-join-worker-2:
         condition: service_started
       storeid-join-worker:
         condition: service_started

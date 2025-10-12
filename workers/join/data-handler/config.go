@@ -13,8 +13,11 @@ const (
 	FixedJoinDataExchange   = "fixed-join-data-exchange"
 	FixedJoinDataRoutingKey = "fixed-join-data"
 
-	// Output queues for dictionaries
-	JoinItemIdDictionaryQueue  = "join-itemid-dictionary"
+	// Output exchanges for dictionaries (broadcast to all workers)
+	JoinItemIdDictionaryExchange   = "itemid-dictionary-exchange"
+	JoinItemIdDictionaryRoutingKey = "itemid-dictionary"
+
+	// Output queues for dictionaries (point-to-point)
 	JoinStoreIdDictionaryQueue = "join-storeid-dictionary"
 	JoinUserIdDictionaryQueue  = "join-userid-dictionary"
 
