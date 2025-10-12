@@ -14,7 +14,7 @@ help: ## Show this help message
 	@echo "  docker-compose-logs-data-flow    - Show logs for data-flow services only"
 	@echo "  docker-compose-build             - Build all Docker images"
 	@echo "  docker-compose-test              - Run tests"
-	@echo "  docker-compose-generate          - Generate docker-compose.yaml with custom worker scaling"
+	@echo "  docker-compose-generate          - Generate docker-compose.yaml (scale: filters, query-gateway, clients)"
 	@echo "  docker-compose-restore           - Restore original docker-compose.yaml from backup"
 	@echo "  help                             - Show this help message"
 

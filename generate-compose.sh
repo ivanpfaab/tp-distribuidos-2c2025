@@ -48,6 +48,12 @@ TIME_FILTER_COUNT=$(prompt_worker_count "time-filter" 1)
 AMOUNT_FILTER_COUNT=$(prompt_worker_count "amount-filter" 1)
 
 echo ""
+echo -e "${BLUE}Configure Gateway Services (stateless routing)${NC}"
+echo ""
+
+QUERY_GATEWAY_COUNT=$(prompt_worker_count "query-gateway" 1)
+
+echo ""
 echo -e "${BLUE}Configure Clients${NC}"
 echo ""
 
@@ -60,6 +66,7 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "Year Filter Workers:   ${YELLOW}${YEAR_FILTER_COUNT}${NC}"
 echo -e "Time Filter Workers:   ${YELLOW}${TIME_FILTER_COUNT}${NC}"
 echo -e "Amount Filter Workers: ${YELLOW}${AMOUNT_FILTER_COUNT}${NC}"
+echo -e "Query Gateway:         ${YELLOW}${QUERY_GATEWAY_COUNT}${NC}"
 echo -e "Clients:               ${YELLOW}${CLIENT_COUNT}${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
@@ -281,12 +288,27 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # Query gateway service (single instance for now)
-  query-gateway:
+EOF_REMAINING
+
+# Function to generate query-gateway services
+generate_query_gateway() {
+    local count=$1
+    for i in $(seq 1 $count); do
+        # First gateway has simpler container name for backward compatibility
+        local container_name
+        if [ $i -eq 1 ]; then
+            container_name="query-gateway"
+        else
+            container_name="query-gateway-${i}"
+        fi
+        
+        cat >> docker-compose.yaml << EOF
+  # Query Gateway ${i}
+  query-gateway-${i}:
     build:
       context: .
       dockerfile: ./query-gateway/Dockerfile
-    container_name: query-gateway
+    container_name: ${container_name}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -297,7 +319,13 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-EOF_REMAINING
+EOF
+    done
+}
+
+# Generate query gateways
+echo -e "${BLUE}Generating query gateways...${NC}"
+generate_query_gateway $QUERY_GATEWAY_COUNT
 
 # Generate server service with dependencies on all filter workers
 generate_server_dependencies() {
@@ -328,6 +356,12 @@ generate_server_dependencies() {
     # Add dependencies for all amount-filter workers
     for i in $(seq 1 $AMOUNT_FILTER_COUNT); do
         echo "      amount-filter-worker-${i}:"
+        echo "        condition: service_started"
+    done
+    
+    # Add dependencies for all query-gateway instances
+    for i in $(seq 1 $QUERY_GATEWAY_COUNT); do
+        echo "      query-gateway-${i}:"
         echo "        condition: service_started"
     done
     
@@ -429,6 +463,7 @@ echo -e "${BLUE}Configuration Applied:${NC}"
 echo -e "  Year Filter:   ${YELLOW}${YEAR_FILTER_COUNT}${NC} instance(s)"
 echo -e "  Time Filter:   ${YELLOW}${TIME_FILTER_COUNT}${NC} instance(s)"
 echo -e "  Amount Filter: ${YELLOW}${AMOUNT_FILTER_COUNT}${NC} instance(s)"
+echo -e "  Query Gateway: ${YELLOW}${QUERY_GATEWAY_COUNT}${NC} instance(s)"
 echo -e "  Clients:       ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"
 echo ""
 echo -e "  Total Filter Workers: ${YELLOW}$((YEAR_FILTER_COUNT + TIME_FILTER_COUNT + AMOUNT_FILTER_COUNT))${NC} instances"

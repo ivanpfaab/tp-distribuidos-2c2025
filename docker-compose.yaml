@@ -48,6 +48,22 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
+  # Year Filter Worker 3
+  year-filter-worker-3:
+    build:
+      context: .
+      dockerfile: ./workers/filter/year-filter/Dockerfile
+    container_name: year-filter-worker-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
   # Time Filter Worker 1
   time-filter-worker-1:
     build:
@@ -86,22 +102,6 @@ services:
       context: .
       dockerfile: ./workers/filter/amount-filter/Dockerfile
     container_name: amount-filter-worker-1
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
-  # Amount Filter Worker 2
-  amount-filter-worker-2:
-    build:
-      context: .
-      dockerfile: ./workers/filter/amount-filter/Dockerfile
-    container_name: amount-filter-worker-2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -212,12 +212,28 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # Query gateway service (single instance for now)
-  query-gateway:
+  # Query Gateway 1
+  query-gateway-1:
     build:
       context: .
       dockerfile: ./query-gateway/Dockerfile
     container_name: query-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Query Gateway 2
+  query-gateway-2:
+    build:
+      context: .
+      dockerfile: ./query-gateway/Dockerfile
+    container_name: query-gateway-2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -243,13 +259,17 @@ services:
         condition: service_started
       year-filter-worker-2:
         condition: service_started
+      year-filter-worker-3:
+        condition: service_started
       time-filter-worker-1:
         condition: service_started
       time-filter-worker-2:
         condition: service_started
       amount-filter-worker-1:
         condition: service_started
-      amount-filter-worker-2:
+      query-gateway-1:
+        condition: service_started
+      query-gateway-2:
         condition: service_started
       join-data-handler:
         condition: service_started
