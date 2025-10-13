@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	// Alias queue names from centralized config
-	StoreIdDictionaryQueue = queues.StoreIdDictionaryQueue
-	StoreIdChunkQueue      = queues.StoreIdChunkQueue
-	Query3ResultsQueue     = queues.Query3ResultsQueue
+	StoreIdChunkQueue           = queues.StoreIdChunkQueue
+	StoreIdDictionaryExchange   = queues.StoreIdDictionaryExchange
+	StoreIdDictionaryRoutingKey = queues.StoreIdDictionaryRoutingKey
+	Query3ResultsQueue          = queues.Query3ResultsQueue
 
 	// Default values
 	DefaultRabbitMQHost = "localhost"

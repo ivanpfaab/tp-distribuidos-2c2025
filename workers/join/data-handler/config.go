@@ -11,11 +11,14 @@ import (
 
 const (
 	// Alias queue names from centralized config
-	FixedJoinDataExchange      = queues.FixedJoinDataExchange
-	FixedJoinDataRoutingKey    = queues.FixedJoinDataRoutingKey
-	JoinItemIdDictionaryQueue  = queues.JoinItemIdDictionaryQueue
-	JoinStoreIdDictionaryQueue = queues.JoinStoreIdDictionaryQueue
-	JoinUserIdDictionaryQueue  = queues.JoinUserIdDictionaryQueue
+	FixedJoinDataExchange          = queues.FixedJoinDataExchange
+	FixedJoinDataRoutingKey        = queues.FixedJoinDataRoutingKey
+	JoinUserIdDictionaryQueue      = queues.JoinUserIdDictionaryQueue
+	JoinItemIdDictionaryExchange   = queues.ItemIdDictionaryExchange
+	JoinItemIdDictionaryRoutingKey = queues.ItemIdDictionaryRoutingKey
+
+	JoinStoreIdDictionaryExchange   = queues.StoreIdDictionaryExchange
+	JoinStoreIdDictionaryRoutingKey = queues.StoreIdDictionaryRoutingKey
 
 	// Default values
 	DefaultRabbitMQHost = "localhost"

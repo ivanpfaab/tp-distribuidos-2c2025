@@ -3,12 +3,14 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
@@ -25,7 +27,7 @@ type MenuItem struct {
 
 // ItemIdJoinWorker encapsulates the ItemID join worker state and dependencies
 type ItemIdJoinWorker struct {
-	dictionaryConsumer *workerqueue.QueueConsumer
+	dictionaryConsumer *exchange.ExchangeConsumer
 	chunkConsumer      *workerqueue.QueueConsumer
 	outputProducer     *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
@@ -38,9 +40,20 @@ type ItemIdJoinWorker struct {
 
 // NewItemIdJoinWorker creates a new ItemIdJoinWorker instance
 func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker, error) {
-	// Create dictionary consumer
-	dictionaryConsumer := workerqueue.NewQueueConsumer(
-		ItemIdDictionaryQueue,
+	// Get worker instance ID from environment (defaults to "1" for single-worker setups)
+	instanceID := os.Getenv("WORKER_INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = "1"
+	}
+
+	// Create instance-specific routing key for this worker
+	instanceRoutingKey := fmt.Sprintf("%s-instance-%s", ItemIdDictionaryRoutingKey, instanceID)
+	fmt.Printf("ItemID Join Worker: Initializing with instance ID: %s, routing key: %s\n", instanceID, instanceRoutingKey)
+
+	// Create dictionary consumer (exchange for broadcasting to all workers)
+	dictionaryConsumer := exchange.NewExchangeConsumer(
+		ItemIdDictionaryExchange,
+		[]string{instanceRoutingKey},
 		config,
 	)
 	if dictionaryConsumer == nil {
@@ -207,7 +220,7 @@ func (w *ItemIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewar
 		delivery.Nack(false, true) // Reject and requeue
 		return 0
 	}
-	
+
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 	if err != nil {

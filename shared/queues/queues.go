@@ -34,6 +34,12 @@ const (
 	Query2ResultsQueue = "query2-results-chunks"
 	Query3ResultsQueue = "query3-results-chunks"
 
+	StoreIdDictionaryExchange   = "storeid-dictionary-exchange"
+	StoreIdDictionaryRoutingKey = "storeid-dictionary"
+
+	ItemIdDictionaryExchange   = "itemid-dictionary-exchange"
+	ItemIdDictionaryRoutingKey = "itemid-dictionary"
+
 	// ============================================================================
 	// Group By MapReduce Queues
 	// ============================================================================

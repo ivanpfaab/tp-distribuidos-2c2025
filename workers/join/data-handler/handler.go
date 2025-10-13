@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -13,15 +15,38 @@ import (
 
 // JoinDataHandler encapsulates the join data handler state and dependencies
 type JoinDataHandler struct {
-	consumer        *exchange.ExchangeConsumer
-	itemIdProducer  *workerqueue.QueueMiddleware
-	storeIdProducer *workerqueue.QueueMiddleware
-	userIdProducer  *workerqueue.QueueMiddleware
-	config          *middleware.ConnectionConfig
+	consumer           *exchange.ExchangeConsumer
+	itemIdProducer     *exchange.ExchangeMiddleware
+	storeIdProducer    *exchange.ExchangeMiddleware
+	userIdProducer     *workerqueue.QueueMiddleware
+	config             *middleware.ConnectionConfig
+	itemIdWorkerCount  int // Number of ItemID worker instances to broadcast to
+	storeIdWorkerCount int // Number of StoreID worker instances to broadcast to
 }
 
 // NewJoinDataHandler creates a new JoinDataHandler instance
 func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, error) {
+	// Get the number of ItemID workers from environment (defaults to 1)
+	itemIdWorkerCountStr := os.Getenv("ITEMID_WORKER_COUNT")
+	itemIdWorkerCount := 1
+	if itemIdWorkerCountStr != "" {
+		if count, err := strconv.Atoi(itemIdWorkerCountStr); err == nil && count > 0 {
+			itemIdWorkerCount = count
+		}
+	}
+
+	// Get the number of StoreID workers from environment (defaults to 1)
+	storeIdWorkerCountStr := os.Getenv("STOREID_WORKER_COUNT")
+	storeIdWorkerCount := 1
+	if storeIdWorkerCountStr != "" {
+		if count, err := strconv.Atoi(storeIdWorkerCountStr); err == nil && count > 0 {
+			storeIdWorkerCount = count
+		}
+	}
+
+	fmt.Printf("Join Data Handler: Initializing with %d ItemID worker instance(s) and %d StoreID worker instance(s)\n",
+		itemIdWorkerCount, storeIdWorkerCount)
+
 	// Create consumer for fixed join data
 	consumer := exchange.NewExchangeConsumer(
 		FixedJoinDataExchange,
@@ -51,18 +76,23 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	}
 	exchangeProducer.Close() // Close the producer as we don't need it anymore
 
-	// Create producers for each dictionary queue
-	itemIdProducer := workerqueue.NewMessageMiddlewareQueue(
-		JoinItemIdDictionaryQueue,
+	// Create producers for dictionaries
+	// ItemID uses exchange for broadcasting to all workers
+	itemIdProducer := exchange.NewMessageMiddlewareExchange(
+		JoinItemIdDictionaryExchange,
+		[]string{JoinItemIdDictionaryRoutingKey},
 		config,
 	)
 	if itemIdProducer == nil {
 		consumer.Close()
+		exchangeProducer.Close()
 		return nil, fmt.Errorf("failed to create item ID dictionary producer")
 	}
 
-	storeIdProducer := workerqueue.NewMessageMiddlewareQueue(
-		JoinStoreIdDictionaryQueue,
+	// StoreID uses exchange for broadcasting to all workers
+	storeIdProducer := exchange.NewMessageMiddlewareExchange(
+		JoinStoreIdDictionaryExchange,
+		[]string{JoinStoreIdDictionaryRoutingKey},
 		config,
 	)
 	if storeIdProducer == nil {
@@ -82,21 +112,23 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		return nil, fmt.Errorf("failed to create user ID dictionary producer")
 	}
 
-	// Declare all queues
-	if err := itemIdProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare exchanges and queues
+	// ItemID: Declare exchange as direct (durable)
+	if err := itemIdProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
 		consumer.Close()
 		itemIdProducer.Close()
 		storeIdProducer.Close()
 		userIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare item ID dictionary queue: %v", err)
+		return nil, fmt.Errorf("failed to declare item ID dictionary exchange: %v", err)
 	}
 
-	if err := storeIdProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// StoreID: Declare exchange as direct (durable)
+	if err := storeIdProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
 		consumer.Close()
 		itemIdProducer.Close()
 		storeIdProducer.Close()
 		userIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare store ID dictionary queue: %v", err)
+		return nil, fmt.Errorf("failed to declare store ID dictionary exchange: %v", err)
 	}
 
 	if err := userIdProducer.DeclareQueue(false, false, false, false); err != 0 {
@@ -108,11 +140,13 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	}
 
 	return &JoinDataHandler{
-		consumer:        consumer,
-		itemIdProducer:  itemIdProducer,
-		storeIdProducer: storeIdProducer,
-		userIdProducer:  userIdProducer,
-		config:          config,
+		consumer:           consumer,
+		itemIdProducer:     itemIdProducer,
+		storeIdProducer:    storeIdProducer,
+		userIdProducer:     userIdProducer,
+		config:             config,
+		itemIdWorkerCount:  itemIdWorkerCount,
+		storeIdWorkerCount: storeIdWorkerCount,
 	}, nil
 }
 
@@ -151,7 +185,7 @@ func (jdh *JoinDataHandler) createCallback() func(middleware.ConsumeChannel, cha
 	}
 }
 
-// processMessage processes a single message and routes it to the appropriate dictionary queue
+// processMessage processes a single message and routes it to the appropriate dictionary queue/exchange
 func (jdh *JoinDataHandler) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	fmt.Printf("Join Data Handler: Received message: %s\n", string(delivery.Body))
 
@@ -164,39 +198,52 @@ func (jdh *JoinDataHandler) processMessage(delivery amqp.Delivery) middleware.Me
 	}
 
 	// Route based on FileID
-	targetQueue := jdh.routeByFileId(chunkMsg.FileID)
-	if targetQueue == nil {
-		fmt.Printf("Join Data Handler: Unknown FileID: %s, ignoring message\n", chunkMsg.FileID)
-		delivery.Ack(false) // Acknowledge to remove from queue
-		return 0
-	}
-
-	// Forward the chunk to the appropriate dictionary queue
-	if err := targetQueue.Send(delivery.Body); err != 0 {
-		fmt.Printf("Join Data Handler: Failed to send chunk to dictionary queue: %v\n", err)
+	sendErr := jdh.routeAndSendByFileId(chunkMsg.FileID, delivery.Body)
+	if sendErr != 0 {
+		fmt.Printf("Join Data Handler: Failed to route chunk with FileID %s: %v\n", chunkMsg.FileID, sendErr)
 		delivery.Nack(false, true) // Reject and requeue
-		return middleware.MessageMiddlewareMessageError
+		return sendErr
 	}
 
-	fmt.Printf("Join Data Handler: Successfully routed chunk with FileID %s to dictionary queue\n", chunkMsg.FileID)
+	fmt.Printf("Join Data Handler: Successfully routed chunk with FileID %s\n", chunkMsg.FileID)
 	delivery.Ack(false) // Acknowledge the original message
 	return 0
 }
 
-// routeByFileId determines which dictionary queue to use based on FileID
-func (jdh *JoinDataHandler) routeByFileId(fileId string) *workerqueue.QueueMiddleware {
+// routeAndSendByFileId routes and sends message based on FileID
+func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []byte) middleware.MessageMiddlewareError {
 	fileIdUpper := strings.ToUpper(fileId)
 
 	if strings.Contains(fileIdUpper, "MN") {
-		fmt.Printf("Join Data Handler: Routing FileID %s to ItemID dictionary\n", fileId)
-		return jdh.itemIdProducer
+		// ItemID: Send to exchange (broadcast to all worker instances)
+		// Generate routing keys for all ItemID worker instances
+		routingKeys := make([]string, jdh.itemIdWorkerCount)
+		for i := 0; i < jdh.itemIdWorkerCount; i++ {
+			instanceID := i + 1 // 1-indexed
+			routingKeys[i] = fmt.Sprintf("%s-instance-%d", JoinItemIdDictionaryRoutingKey, instanceID)
+		}
+
+		fmt.Printf("Join Data Handler: Broadcasting FileID %s to %d ItemID worker instance(s) with routing keys: %v\n",
+			fileId, jdh.itemIdWorkerCount, routingKeys)
+		return jdh.itemIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "ST") {
-		fmt.Printf("Join Data Handler: Routing FileID %s to StoreID dictionary\n", fileId)
-		return jdh.storeIdProducer
+		// StoreID: Send to exchange (broadcast to all worker instances)
+		// Generate routing keys for all StoreID worker instances
+		routingKeys := make([]string, jdh.storeIdWorkerCount)
+		for i := 0; i < jdh.storeIdWorkerCount; i++ {
+			instanceID := i + 1 // 1-indexed
+			routingKeys[i] = fmt.Sprintf("%s-instance-%d", JoinStoreIdDictionaryRoutingKey, instanceID)
+		}
+
+		fmt.Printf("Join Data Handler: Broadcasting FileID %s to %d StoreID worker instance(s) with routing keys: %v\n",
+			fileId, jdh.storeIdWorkerCount, routingKeys)
+		return jdh.storeIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "US") {
-		fmt.Printf("Join Data Handler: Routing FileID %s to UserID dictionary\n", fileId)
-		return jdh.userIdProducer
+		// UserID: Send to queue (single worker)
+		fmt.Printf("Join Data Handler: Routing FileID %s to UserID dictionary queue\n", fileId)
+		return jdh.userIdProducer.Send(messageData)
 	}
 
-	return nil
+	fmt.Printf("Join Data Handler: Unknown FileID: %s, ignoring message\n", fileId)
+	return 0 // Success - just ignore unknown file types
 }

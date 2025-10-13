@@ -15,6 +15,7 @@ type Chunk struct {
 	ChunkNumber int
 	IsLastChunk bool
 	Step        int
+	Retries     int
 	ChunkData   string
 }
 
@@ -26,6 +27,7 @@ func NewChunk(clientID, fileID string, queryType byte, chunkNumber int, isLastCh
 		ChunkNumber: chunkNumber,
 		IsLastChunk: isLastChunk,
 		Step:        step,
+		Retries:     0, // New chunks start with 0 retries
 		ChunkSize:   chunkSize,
 		TableID:     tableID,
 		ChunkData:   chunkData,
@@ -64,6 +66,9 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 	step := int(data[offset])
 	offset += StepSize
 
+	retries := int(data[offset])
+	offset += RetriesSize
+
 	// Read chunk data
 	chunkData := ""
 	if offset < len(data) {
@@ -79,6 +84,7 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 		ChunkNumber: chunkNumber,
 		IsLastChunk: isLastChunk,
 		Step:        step,
+		Retries:     retries,
 		ChunkData:   chunkData,
 	}, nil
 }

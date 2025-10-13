@@ -12,12 +12,13 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
 	// Join data handler exchange and routing key
-	FixedJoinDataExchange   = "fixed-join-data-exchange"
-	FixedJoinDataRoutingKey = "fixed-join-data"
+	FixedJoinDataExchange   = queues.FixedJoinDataExchange
+	FixedJoinDataRoutingKey = queues.FixedJoinDataRoutingKey
 )
 
 // DataHandler struct
