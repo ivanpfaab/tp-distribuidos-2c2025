@@ -200,6 +200,40 @@ func (jw *JoinByUserIdWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, 
 	fmt.Printf("Join by User ID Worker: Performing join for QueryType: %d, FileID: %s, Retries: %d\n",
 		chunkMsg.QueryType, chunkMsg.FileID, chunkMsg.Retries)
 
+	// Detect if this is top users classification data (Query 4)
+	if jw.isTopUsersData(string(chunkMsg.ChunkData)) {
+		fmt.Printf("Join by User ID Worker: Detected top users classification data\n")
+
+		// Parse top users data
+		topUsers, err := jw.parseTopUsersData(string(chunkMsg.ChunkData))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse top users data: %w", err)
+		}
+
+		// Perform the join with user data from CSV files
+		joinedData := jw.performTopUsersJoin(topUsers)
+
+		// Create new chunk with joined data (if any)
+		var joinedChunk *chunk.Chunk
+		if len(joinedData) > 0 {
+			joinedChunk = &chunk.Chunk{
+				ClientID:    chunkMsg.ClientID,
+				FileID:      chunkMsg.FileID,
+				QueryType:   chunkMsg.QueryType,
+				ChunkNumber: chunkMsg.ChunkNumber,
+				IsLastChunk: chunkMsg.IsLastChunk,
+				Step:        chunkMsg.Step,
+				ChunkSize:   len(joinedData),
+				TableID:     chunkMsg.TableID,
+				ChunkData:   joinedData,
+			}
+		}
+
+		// No buffering/retry for top users (they should always find user data)
+		return joinedChunk, nil, nil
+	}
+
+	// Regular transaction data
 	// Parse transaction data
 	transactions, err := jw.parseTransactionData(string(chunkMsg.ChunkData))
 	if err != nil {
@@ -488,6 +522,83 @@ func (jw *JoinByUserIdWorker) transactionsToCSV(transactions []map[string]string
 			transaction["discount_applied"],
 			transaction["final_amount"],
 			transaction["created_at"],
+		))
+	}
+
+	return result.String()
+}
+
+// isTopUsersData checks if the data is top users classification data (Query 4)
+func (jw *JoinByUserIdWorker) isTopUsersData(data string) bool {
+	lines := strings.Split(data, "\n")
+	if len(lines) < 1 {
+		return false
+	}
+
+	header := lines[0]
+	// Check for top users header: user_id,store_id,purchase_count,rank
+	return strings.Contains(header, "user_id") &&
+		strings.Contains(header, "store_id") &&
+		strings.Contains(header, "purchase_count") &&
+		strings.Contains(header, "rank")
+}
+
+// parseTopUsersData parses top users classification CSV data
+func (jw *JoinByUserIdWorker) parseTopUsersData(csvData string) ([]map[string]string, error) {
+	reader := csv.NewReader(strings.NewReader(csvData))
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CSV: %w", err)
+	}
+
+	var topUsers []map[string]string
+
+	// Skip header row
+	for i := 1; i < len(records); i++ {
+		record := records[i]
+		if len(record) >= 4 {
+			user := map[string]string{
+				"user_id":        record[0],
+				"store_id":       record[1],
+				"purchase_count": record[2],
+				"rank":           record[3],
+			}
+			topUsers = append(topUsers, user)
+		}
+	}
+
+	return topUsers, nil
+}
+
+// performTopUsersJoin performs the join between top users and user data from CSV files
+func (jw *JoinByUserIdWorker) performTopUsersJoin(topUsers []map[string]string) string {
+	var result strings.Builder
+
+	// Write header for top users with enriched user data
+	result.WriteString("user_id,store_id,purchase_count,rank,gender,birthdate,registered_at\n")
+
+	// Join each top user record with user data
+	for _, topUser := range topUsers {
+		userID := topUser["user_id"]
+
+		// Look up user data from CSV files
+		user, err := jw.lookupUserFromFile(userID)
+
+		if err != nil || user == nil {
+			// User not found - skip (inner join behavior)
+			fmt.Printf("Join by User ID Worker: User %s not found in CSV files, skipping\n", userID)
+			continue
+		}
+
+		// Join successful - write all fields
+		result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s\n",
+			topUser["user_id"],
+			topUser["store_id"],
+			topUser["purchase_count"],
+			topUser["rank"],
+			user.Gender,
+			user.Birthdate,
+			user.RegisteredAt,
 		))
 	}
 
