@@ -340,9 +340,11 @@ func (w *ItemIdJoinWorker) parseMenuItemsData(csvData string) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "item_id") {
+			continue
+		}
 		if len(record) >= 7 {
 			menuItem := &MenuItem{
 				ItemID:        record[0],

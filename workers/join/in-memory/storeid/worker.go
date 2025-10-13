@@ -340,8 +340,11 @@ func (w *StoreIdJoinWorker) parseStoresData(csvData string) error {
 	defer w.mutex.Unlock()
 
 	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "store_id") {
+			continue
+		}
 		if len(record) >= 8 {
 			store := &Store{
 				StoreID:    record[0],

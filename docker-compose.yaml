@@ -503,24 +503,6 @@ services:
       STOREID_WORKER_COUNT: "2"
     profiles: ["orchestration"]
 
-  # Join Data Handler 2
-  join-data-handler-2:
-    build:
-      context: .
-      dockerfile: ./workers/join/data-handler/Dockerfile
-    container_name: join-data-handler-2
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      ITEMID_WORKER_COUNT: "2"
-      STOREID_WORKER_COUNT: "2"
-    profiles: ["orchestration"]
-
   # User Partition Splitter (distributes users to writers)
   user-partition-splitter:
     build:
@@ -668,6 +650,26 @@ services:
       - shared-data:/shared-data
     profiles: ["orchestration"]
 
+  # User Join Reader 2 (Query 4 - reads from partition files)
+  user-join-reader-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
+    container_name: user-join-reader-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-writer-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
   # Query Gateway 1
   query-gateway-1:
     build:
@@ -711,8 +713,6 @@ services:
         condition: service_started
       join-data-handler-1:
         condition: service_started
-      join-data-handler-2:
-        condition: service_started
       user-partition-splitter:
         condition: service_started
       user-partition-writer-1:
@@ -726,6 +726,8 @@ services:
       user-partition-writer-5:
         condition: service_started
       user-join-reader-1:
+        condition: service_started
+      user-join-reader-2:
         condition: service_started
       itemid-join-worker-1:
         condition: service_started
