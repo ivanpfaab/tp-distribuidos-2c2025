@@ -68,8 +68,24 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		return nil, fmt.Errorf("failed to create output producer")
 	}
 
-	// Declare output queue
+	// Declare input queue (ItemIdChunkQueue)
+	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(ItemIdChunkQueue, config)
+	if inputQueueDeclarer == nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		return nil, fmt.Errorf("failed to create input queue declarer")
+	}
+	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		inputQueueDeclarer.Close()
+		return nil, fmt.Errorf("failed to declare input queue: %v", err)
+	}
+	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
+	// Declare output queue
 	if err := outputProducer.DeclareQueue(false, false, false, false); err != 0 {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()

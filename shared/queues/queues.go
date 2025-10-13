@@ -44,7 +44,7 @@ const (
 	Query2ReduceQueueS2_2024  = "query2-reduce-s2-2024"
 	Query2ReduceQueueS1_2025  = "query2-reduce-s1-2025"
 	Query2ReduceQueueS2_2025  = "query2-reduce-s2-2025"
-	Query2GroupByResultsQueue = "query2-groupby-results-queue"
+	Query2GroupByResultsQueue = "top-items-queue" 
 
 	// Query 3 (transactions - group by year, semester, store_id)
 	Query3MapQueue            = "query3-map-queue"
@@ -53,12 +53,12 @@ const (
 	Query3ReduceQueueS2_2024  = "query3-reduce-s2-2024"
 	Query3ReduceQueueS1_2025  = "query3-reduce-s1-2025"
 	Query3ReduceQueueS2_2025  = "query3-reduce-s2-2025"
-	Query3GroupByResultsQueue = "query3-groupby-results-queue"
+	Query3GroupByResultsQueue = "itemid-join-chunks"
 
 	// Query 4 (transactions - group by user_id, store_id)
 	Query4MapQueue            = "query4-map-queue"
 	Query4ReduceQueue         = "query4-reduce-queue"
-	Query4GroupByResultsQueue = "query4-groupby-results-queue"
+	Query4GroupByResultsQueue       = "top-users-queue"   
 
 	// ============================================================================
 	// Query Gateway Queues
