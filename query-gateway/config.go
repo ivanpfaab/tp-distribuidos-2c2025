@@ -4,18 +4,16 @@ import (
 	"os"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
+// Alias commonly used queue names from the shared package for convenience
 const (
-	ReplyFilterBusQueueName = "reply-filter-bus"
-
-	// Join worker queues
-	ItemIdJoinChunkQueue  = "top-item-classification-chunk"
-	StoreIdJoinChunkQueue = "itemid-join-chunks"
-	UserIdJoinChunkQueue  = "userid-join-chunks"
-
-	// Result queues for streaming service
-	Query1ResultsQueue = "query1-results-chunks"
+	ReplyFilterBusQueueName  = queues.ReplyFilterBusQueue
+	ItemIdGroupByChunkQueue  = queues.Query2MapQueue
+	StoreIdGroupByChunkQueue = queues.Query3MapQueue
+	Query4MapQueue           = queues.Query4MapQueue
+	Query1ResultsQueue       = queues.Query1ResultsQueue
 )
 
 // Config holds the configuration for the query gateway

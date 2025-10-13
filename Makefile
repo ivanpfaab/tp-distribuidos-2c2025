@@ -1,6 +1,6 @@
 # Simple Makefile for Docker Compose Management
 
-.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-generate docker-compose-restore
+.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-rebuild docker-compose-generate docker-compose-restore
 
 # Default target
 help: ## Show this help message
@@ -13,6 +13,7 @@ help: ## Show this help message
 	@echo "  docker-compose-logs-orchestration - Show logs for orchestration services only"
 	@echo "  docker-compose-logs-data-flow    - Show logs for data-flow services only"
 	@echo "  docker-compose-build             - Build all Docker images"
+	@echo "  docker-compose-rebuild           - Rebuild everything from scratch (no cache)"
 	@echo "  docker-compose-test              - Run tests"
 	@echo "  docker-compose-generate          - Generate docker-compose.yaml (scale: filters, gateways, join workers, clients)"
 	@echo "  docker-compose-restore           - Restore original docker-compose.yaml from backup"
@@ -82,6 +83,28 @@ docker-compose-logs-data-flow: ## Show logs for data-flow services only
 # Build all Docker images
 docker-compose-build: ## Build all Docker images
 	docker compose build
+
+# Rebuild everything from scratch (no cache)
+docker-compose-rebuild: ## Rebuild everything from scratch (no cache)
+	@echo "Rebuilding everything from scratch..."
+	@echo "1. Stopping all services..."
+	docker compose down --remove-orphans --volumes
+	@echo "2. Removing all containers and images..."
+	docker system prune -a -f --volumes
+	@echo "3. Building all images from scratch..."
+	docker compose build --no-cache --pull
+	@echo "4. Starting services in orchestrated order..."
+	@echo "   Starting RabbitMQ..."
+	docker compose up -d rabbitmq
+	@echo "   Waiting for RabbitMQ to be healthy..."
+	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
+	@echo "   Starting Workers..."
+	docker compose --profile orchestration up -d year-filter-worker-1 year-filter-worker-2 year-filter-worker-3 time-filter-worker-1 time-filter-worker-2 amount-filter-worker-1 join-data-handler-1 join-data-handler-2 itemid-join-worker-1 itemid-join-worker-2 itemid-join-worker-3 storeid-join-worker-1 storeid-join-worker-2 storeid-join-worker-3 user-partition-splitter user-partition-writer-1 user-partition-writer-2 user-join-reader-1 user-join-reader-2 query2-map-worker query2-reduce-s2-2023 query2-reduce-s1-2024 query2-reduce-s2-2024 query2-reduce-s1-2025 query2-reduce-s2-2025 query3-map-worker query3-reduce-s2-2023 query3-reduce-s1-2024 query3-reduce-s2-2024 query3-reduce-s1-2025 query3-reduce-s2-2025 query4-map-worker query4-reduce-worker streaming-service query-gateway-1
+	@echo "   Starting Server..."
+	docker compose --profile orchestration --profile data-flow up -d server
+	@echo "   Starting Clients..."
+	docker compose --profile orchestration --profile data-flow up -d client-1 client-2
+	@echo "Rebuild complete! All services started successfully!"
 
 # Run tests
 docker-compose-test: ## Run tests

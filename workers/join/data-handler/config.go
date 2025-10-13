@@ -6,22 +6,19 @@ import (
 	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
-	// Input queues/exchanges
-	FixedJoinDataExchange   = "fixed-join-data-exchange"
-	FixedJoinDataRoutingKey = "fixed-join-data"
+	// Alias queue names from centralized config
+	FixedJoinDataExchange          = queues.FixedJoinDataExchange
+	FixedJoinDataRoutingKey        = queues.FixedJoinDataRoutingKey
+	JoinUserIdDictionaryQueue      = queues.JoinUserIdDictionaryQueue
+	JoinItemIdDictionaryExchange   = queues.ItemIdDictionaryExchange
+	JoinItemIdDictionaryRoutingKey = queues.ItemIdDictionaryRoutingKey
 
-	// Output exchanges for dictionaries (broadcast to all workers)
-	JoinItemIdDictionaryExchange   = "itemid-dictionary-exchange"
-	JoinItemIdDictionaryRoutingKey = "itemid-dictionary"
-
-	JoinStoreIdDictionaryExchange   = "storeid-dictionary-exchange"
-	JoinStoreIdDictionaryRoutingKey = "storeid-dictionary"
-
-	// Output queues for dictionaries (point-to-point)
-	JoinUserIdDictionaryQueue = "join-userid-dictionary"
+	JoinStoreIdDictionaryExchange   = queues.StoreIdDictionaryExchange
+	JoinStoreIdDictionaryRoutingKey = queues.StoreIdDictionaryRoutingKey
 
 	// Default values
 	DefaultRabbitMQHost = "localhost"

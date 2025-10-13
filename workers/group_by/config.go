@@ -9,8 +9,6 @@ import (
 )
 
 const (
-	GroupByExchangeName = "groupby-exchange"
-	GroupByRoutingKey   = "groupby"
 	DefaultRabbitMQHost = "localhost"
 	DefaultRabbitMQPort = "5672"
 	DefaultRabbitMQUser = "admin"

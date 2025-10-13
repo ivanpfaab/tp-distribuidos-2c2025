@@ -6,18 +6,15 @@ import (
 	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
+	ItemIdChunkQueue   = queues.ItemIdChunkQueue
+	Query2ResultsQueue = queues.Query2ResultsQueue
 	// Dictionary exchange (for broadcasting to all workers)
-	ItemIdDictionaryExchange   = "itemid-dictionary-exchange"
-	ItemIdDictionaryRoutingKey = "itemid-dictionary"
-
-	// Input queue for chunks (load balanced across workers)
-	ItemIdChunkQueue = "top-item-classification-chunk"
-
-	// Output queue
-	Query2ResultsQueue = "query2-results-chunks"
+	ItemIdDictionaryExchange   = queues.ItemIdDictionaryExchange
+	ItemIdDictionaryRoutingKey = queues.ItemIdDictionaryRoutingKey
 
 	// Default values
 	DefaultRabbitMQHost = "localhost"

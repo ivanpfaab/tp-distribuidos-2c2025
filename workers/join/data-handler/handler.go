@@ -113,8 +113,8 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	}
 
 	// Declare exchanges and queues
-	// ItemID: Declare exchange as fanout (durable)
-	if err := itemIdProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	// ItemID: Declare exchange as direct (durable)
+	if err := itemIdProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
 		consumer.Close()
 		itemIdProducer.Close()
 		storeIdProducer.Close()
@@ -122,8 +122,8 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		return nil, fmt.Errorf("failed to declare item ID dictionary exchange: %v", err)
 	}
 
-	// StoreID: Declare exchange as fanout (durable)
-	if err := storeIdProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	// StoreID: Declare exchange as direct (durable)
+	if err := storeIdProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
 		consumer.Close()
 		itemIdProducer.Close()
 		storeIdProducer.Close()
