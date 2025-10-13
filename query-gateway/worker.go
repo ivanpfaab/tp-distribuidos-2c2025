@@ -9,12 +9,12 @@ import (
 
 // QueryGateway encapsulates the query gateway state and dependencies
 type QueryGateway struct {
-	consumer                 *workerqueue.QueueConsumer
-	itemIdGroupByProducer    *workerqueue.QueueMiddleware // Query 2 - MapReduce
-	storeIdGroupByProducer   *workerqueue.QueueMiddleware // Query 3 - MapReduce
-	userIdGroupByProducer    *workerqueue.QueueMiddleware // Query 4 - MapReduce
-	query1ResultsProducer    *workerqueue.QueueMiddleware
-	config                   *middleware.ConnectionConfig
+	consumer              *workerqueue.QueueConsumer
+	query2GroupByProducer *workerqueue.QueueMiddleware // Query 2 - MapReduce
+	query3GroupByProducer *workerqueue.QueueMiddleware // Query 3 - MapReduce
+	query4GroupByProducer *workerqueue.QueueMiddleware // Query 4 - MapReduce
+	query1ResultsProducer *workerqueue.QueueMiddleware
+	config                *middleware.ConnectionConfig
 }
 
 // NewQueryGateway creates a new QueryGateway instance
@@ -44,59 +44,61 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 	}
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
-	// Initialize queue producer for sending chunks to ItemID GroupBy (Query 2 Map Worker)
-	itemIdGroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		ItemIdGroupByChunkQueue,
+	// Initialize queue producer for sending chunks to Query 2 GroupBy (MapReduce Worker)
+	query2GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
+		ItemIdGroupByChunkQueue, // query2-map-queue
 		config,
 	)
-	if itemIdGroupByProducer == nil {
+	if query2GroupByProducer == nil {
 		consumer.Close()
-		return nil, fmt.Errorf("failed to create ItemID GroupBy producer")
+		return nil, fmt.Errorf("failed to create Query 2 GroupBy producer")
 	}
 
-	// Declare the ItemID GroupBy producer queue
-	if err := itemIdGroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the Query 2 GroupBy producer queue
+	if err := query2GroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		itemIdGroupByProducer.Close()
-		return nil, fmt.Errorf("failed to declare ItemID GroupBy queue: %v", err)
+		query2GroupByProducer.Close()
+		return nil, fmt.Errorf("failed to declare Query 2 GroupBy queue: %v", err)
 	}
 
-	// Initialize queue producer for sending chunks to StoreID GroupBy (Query 3 MapReduce Worker)
-	storeIdGroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		StoreIdGroupByChunkQueue,
+	// Initialize queue producer for sending chunks to Query 3 GroupBy (MapReduce Worker)
+	query3GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
+		StoreIdGroupByChunkQueue, // query3-map-queue
 		config,
 	)
-	if storeIdGroupByProducer == nil {
+	if query3GroupByProducer == nil {
 		consumer.Close()
-		itemIdGroupByProducer.Close()
-		return nil, fmt.Errorf("failed to create StoreID GroupBy producer")
+		query2GroupByProducer.Close()
+		return nil, fmt.Errorf("failed to create Query 3 GroupBy producer")
 	}
 
-	// Declare the StoreID GroupBy producer queue
-	if err := storeIdGroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the Query 3 GroupBy producer queue
+	if err := query3GroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		itemIdGroupByProducer.Close()
-		storeIdGroupByProducer.Close()
-		return nil, fmt.Errorf("failed to declare StoreID GroupBy queue: %v", err)
+		query2GroupByProducer.Close()
+		query3GroupByProducer.Close()
+		return nil, fmt.Errorf("failed to declare Query 3 GroupBy queue: %v", err)
 	}
 
-	// Initialize queue producer for sending chunks to UserID GroupBy (Query 4 MapReduce Worker)
-	userIdGroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		UserIdGroupByChunkQueue,
+	// Initialize queue producer for sending chunks to Query 4 GroupBy (MapReduce Worker)
+	query4GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
+		Query4MapQueue, // query4-map-queue
 		config,
 	)
-	if userIdGroupByProducer == nil {
+	if query4GroupByProducer == nil {
 		consumer.Close()
-		storeIdGroupByProducer.Close()
-		return nil, fmt.Errorf("failed to create UserID GroupBy producer")
+		query2GroupByProducer.Close()
+		query3GroupByProducer.Close()
+		return nil, fmt.Errorf("failed to create Query 4 GroupBy producer")
 	}
 
-	// Declare the UserID GroupBy producer queue
-	if err := userIdGroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the Query 4 GroupBy producer queue
+	if err := query4GroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		storeIdGroupByProducer.Close()
-		userIdGroupByProducer.Close()
-		return nil, fmt.Errorf("failed to declare UserID GroupBy queue: %v", err)
+		query2GroupByProducer.Close()
+		query3GroupByProducer.Close()
+		query4GroupByProducer.Close()
+		return nil, fmt.Errorf("failed to declare Query 4 GroupBy queue: %v", err)
 	}
 
 	// Initialize queue producer for Query 1 results
@@ -106,29 +108,29 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 	)
 	if query1ResultsProducer == nil {
 		consumer.Close()
-		itemIdGroupByProducer.Close()
-		storeIdGroupByProducer.Close()
-		userIdGroupByProducer.Close()
-		return nil, fmt.Errorf("failed to create Query1 results producer")
+		query2GroupByProducer.Close()
+		query3GroupByProducer.Close()
+		query4GroupByProducer.Close()
+		return nil, fmt.Errorf("failed to create Query 1 results producer")
 	}
 
-	// Declare the Query1 results queue
+	// Declare the Query 1 results queue
 	if err := query1ResultsProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		itemIdGroupByProducer.Close()
-		storeIdGroupByProducer.Close()
-		userIdGroupByProducer.Close()
+		query2GroupByProducer.Close()
+		query3GroupByProducer.Close()
+		query4GroupByProducer.Close()
 		query1ResultsProducer.Close()
-		return nil, fmt.Errorf("failed to declare Query1 results queue: %v", err)
+		return nil, fmt.Errorf("failed to declare Query 1 results queue: %v", err)
 	}
 
 	return &QueryGateway{
-		consumer:               consumer,
-		itemIdGroupByProducer:  itemIdGroupByProducer,
-		storeIdGroupByProducer: storeIdGroupByProducer,
-		userIdGroupByProducer:  userIdGroupByProducer,
-		query1ResultsProducer:  query1ResultsProducer,
-		config:                 config,
+		consumer:              consumer,
+		query2GroupByProducer: query2GroupByProducer,
+		query3GroupByProducer: query3GroupByProducer,
+		query4GroupByProducer: query4GroupByProducer,
+		query1ResultsProducer: query1ResultsProducer,
+		config:                config,
 	}, nil
 }
 
@@ -143,14 +145,14 @@ func (qg *QueryGateway) Close() {
 	if qg.consumer != nil {
 		qg.consumer.Close()
 	}
-	if qg.itemIdGroupByProducer != nil {
-		qg.itemIdGroupByProducer.Close()
+	if qg.query2GroupByProducer != nil {
+		qg.query2GroupByProducer.Close()
 	}
-	if qg.storeIdGroupByProducer != nil {
-		qg.storeIdGroupByProducer.Close()
+	if qg.query3GroupByProducer != nil {
+		qg.query3GroupByProducer.Close()
 	}
-	if qg.userIdGroupByProducer != nil {
-		qg.userIdGroupByProducer.Close()
+	if qg.query4GroupByProducer != nil {
+		qg.query4GroupByProducer.Close()
 	}
 	if qg.query1ResultsProducer != nil {
 		qg.query1ResultsProducer.Close()

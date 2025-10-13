@@ -12,7 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	groupbyshared "github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // min returns the minimum of two integers
@@ -62,13 +62,13 @@ func NewMapWorker() *MapWorker {
 	}
 
 	// Create consumer for input chunks (Query 3 uses storeid-groupby-chunks)
-	consumer := workerqueue.NewQueueConsumer(groupbyshared.StoreIdGroupByChunkQueue, config)
+	consumer := workerqueue.NewQueueConsumer(queues.Query3MapQueue, config)
 	if consumer == nil {
 		log.Fatal("Failed to create consumer")
 	}
 
 	// Declare the input queue before consuming
-	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.StoreIdGroupByChunkQueue, config)
+	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(queues.Query3MapQueue, config)
 	if inputQueueDeclarer == nil {
 		consumer.Close()
 		log.Fatal("Failed to create input queue declarer")
@@ -76,7 +76,7 @@ func NewMapWorker() *MapWorker {
 	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
 		inputQueueDeclarer.Close()
-		log.Fatalf("Failed to declare input queue '%s': %v", groupbyshared.StoreIdGroupByChunkQueue, err)
+		log.Fatalf("Failed to declare input queue '%s': %v", queues.Query3MapQueue, err)
 	}
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 

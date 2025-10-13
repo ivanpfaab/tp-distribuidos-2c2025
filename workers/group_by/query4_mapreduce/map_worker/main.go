@@ -11,7 +11,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	groupbyshared "github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // min returns the minimum of two integers
@@ -59,13 +59,13 @@ func NewMapWorker() *MapWorker {
 	}
 
 	// Create consumer for input chunks (Query 4 uses query4-map-queue)
-	consumer := workerqueue.NewQueueConsumer(groupbyshared.Query4MapQueue, config)
+	consumer := workerqueue.NewQueueConsumer(queues.Query4MapQueue, config)
 	if consumer == nil {
 		log.Fatal("Failed to create consumer")
 	}
 
 	// Declare the input queue before consuming
-	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query4MapQueue, config)
+	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(queues.Query4MapQueue, config)
 	if inputQueueDeclarer == nil {
 		consumer.Close()
 		log.Fatal("Failed to create input queue declarer")
@@ -73,12 +73,12 @@ func NewMapWorker() *MapWorker {
 	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
 		inputQueueDeclarer.Close()
-		log.Fatalf("Failed to declare input queue '%s': %v", groupbyshared.Query4MapQueue, err)
+		log.Fatalf("Failed to declare input queue '%s': %v", queues.Query4MapQueue, err)
 	}
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producer for the reduce queue
-	producer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query4ReduceQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query4ReduceQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatal("Failed to create producer for reduce-q4-userid queue")
@@ -139,7 +139,7 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]Transaction, error) {
 	// Skip header row
 	transactions := make([]Transaction, 0, len(records)-1)
 
-	for _, record := range records[1:] {
+	for i, record := range records[1:] {
 		if len(record) < 9 {
 			continue // Skip malformed records
 		}
@@ -151,10 +151,16 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]Transaction, error) {
 			UserID:        record[4],
 		}
 
+		// Debug: Log first 5 transactions to see what UserIDs look like
+		if i < 5 {
+			log.Printf("DEBUG: Record %d - TransactionID: %s, StoreID: %s, UserID: '%s' (len=%d)",
+				i, record[0], record[1], record[4], len(record[4]))
+		}
+
 		transactions = append(transactions, transaction)
 	}
 
-	fmt.Printf("Parsed %d transactions\n", len(transactions))
+	log.Printf("Parsed %d transactions from CSV", len(transactions))
 
 	return transactions, nil
 }
@@ -164,6 +170,11 @@ func (mw *MapWorker) groupTransactions(transactions []Transaction) map[string]*G
 	groupedData := make(map[string]*GroupedResult)
 
 	for _, transaction := range transactions {
+		// Skip transactions with empty user_id
+		if transaction.UserID == "" || strings.TrimSpace(transaction.UserID) == "" {
+			continue
+		}
+
 		// Create composite key: user_id + "|" + store_id
 		key := transaction.UserID + "|" + transaction.StoreID
 
@@ -228,8 +239,14 @@ func (mw *MapWorker) convertToCSV(groupedData map[string]*GroupedResult) string 
 	// Write header
 	csvBuilder.WriteString("user_id,store_id,count\n")
 
-	// Write data rows
+	// Debug: Log first 5 grouped results
+	count := 0
 	for _, result := range groupedData {
+		if count < 5 {
+			log.Printf("DEBUG: Grouped result %d - UserID: '%s' (len=%d), StoreID: '%s', Count: %d",
+				count, result.UserID, len(result.UserID), result.StoreID, result.Count)
+			count++
+		}
 		csvBuilder.WriteString(fmt.Sprintf("%s,%s,%d\n",
 			result.UserID,
 			result.StoreID,

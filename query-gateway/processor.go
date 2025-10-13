@@ -30,28 +30,28 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 		fmt.Printf("Query Gateway: Routed Query 1 chunk to results queue - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 2:
-		// Query 2: Send to ItemID GroupBy (MapReduce)
-		if err := qg.sendToItemIdGroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to ItemID GroupBy worker: %v\n", err)
+		// Query 2: Send to Query 2 GroupBy (MapReduce)
+		if err := qg.sendToQuery2GroupBy(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 2 GroupBy worker: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 2 chunk to ItemID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 2 chunk to Query 2 GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 3:
-		// Query 3: Send to StoreID GroupBy (Dummy Pass-Through)
-		if err := qg.sendToStoreIdGroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to StoreID GroupBy worker: %v\n", err)
+		// Query 3: Send to Query 3 GroupBy (MapReduce)
+		if err := qg.sendToQuery3GroupBy(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 3 GroupBy worker: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 3 chunk to StoreID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 3 chunk to Query 3 GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 4:
-		// Query 4: Send to UserID GroupBy (Dummy Pass-Through)
-		if err := qg.sendToUserIdGroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to UserID GroupBy worker: %v\n", err)
+		// Query 4: Send to Query 4 GroupBy (MapReduce)
+		if err := qg.sendToQuery4GroupBy(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 4 GroupBy worker: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 4 chunk to UserID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 4 chunk to Query 4 GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Query Gateway: Unknown query type %d, printing result\n", chunkMsg.QueryType)
@@ -88,34 +88,50 @@ func (qg *QueryGateway) sendToQuery1Results(chunkMsg *chunk.Chunk) middleware.Me
 	return qg.query1ResultsProducer.Send(messageData)
 }
 
-// sendToItemIdGroupBy sends a chunk message to the ItemID GroupBy worker (Query 2 MapReduce)
-func (qg *QueryGateway) sendToItemIdGroupBy(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+// sendToQuery2GroupBy sends a chunk message to the Query 2 GroupBy worker (MapReduce)
+func (qg *QueryGateway) sendToQuery2GroupBy(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 
 	// Serialize the chunk message
 	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
 	if err != nil {
-		fmt.Printf("Query Gateway: Failed to serialize chunk message for ItemID GroupBy: %v\n", err)
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for Query 2 GroupBy: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send to ItemID GroupBy queue
-	return qg.itemIdGroupByProducer.Send(messageData)
+	// Send to Query 2 GroupBy queue (query2-map-queue)
+	return qg.query2GroupByProducer.Send(messageData)
 }
 
-// sendToStoreIdGroupBy sends a chunk message to the StoreID GroupBy worker (Query 3/4 Dummy Pass-Through)
-func (qg *QueryGateway) sendToStoreIdGroupBy(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+// sendToQuery3GroupBy sends a chunk message to the Query 3 GroupBy worker (MapReduce)
+func (qg *QueryGateway) sendToQuery3GroupBy(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 
 	// Serialize the chunk message
 	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
 	if err != nil {
-		fmt.Printf("Query Gateway: Failed to serialize chunk message for StoreID GroupBy: %v\n", err)
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for Query 3 GroupBy: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send to StoreID GroupBy queue
-	return qg.storeIdGroupByProducer.Send(messageData)
+	// Send to Query 3 GroupBy queue (query3-map-queue)
+	return qg.query3GroupByProducer.Send(messageData)
+}
+
+// sendToQuery4GroupBy sends a chunk message to the Query 4 GroupBy worker (MapReduce)
+func (qg *QueryGateway) sendToQuery4GroupBy(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+	// Create a chunk message for serialization
+	chunkMessage := chunk.NewChunkMessage(chunkMsg)
+
+	// Serialize the chunk message
+	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
+	if err != nil {
+		fmt.Printf("Query Gateway: Failed to serialize chunk message for Query 4 GroupBy: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Send to Query 4 GroupBy queue (query4-map-queue)
+	return qg.query4GroupByProducer.Send(messageData)
 }

@@ -6,16 +6,17 @@ import (
 	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
 	// Shared data directory for CSV files
 	SharedDataDir = "/shared-data"
 
-	// Queue names
-	JoinUserIdDictionaryQueue = "join-userid-dictionary"
-	UserIdChunkQueue          = "userid-join-chunks"
-	Query4ResultsQueue        = "query4-results-chunks"
+	// Alias queue names from centralized config
+	JoinUserIdDictionaryQueue = queues.JoinUserIdDictionaryQueue
+	UserIdChunkQueue          = queues.UserIdChunkQueue
+	Query4ResultsQueue        = queues.Query4ResultsQueue
 
 	// Default configuration
 	DefaultRabbitMQHost = "localhost"

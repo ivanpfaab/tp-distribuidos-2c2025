@@ -6,15 +6,14 @@ import (
 	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
-	// Input queues
-	StoreIdDictionaryQueue = "join-storeid-dictionary"
-	StoreIdChunkQueue      = "itemid-join-chunks"
-
-	// Output queue
-	Query3ResultsQueue = "query3-results-chunks"
+	// Alias queue names from centralized config
+	StoreIdDictionaryQueue = queues.StoreIdDictionaryQueue
+	StoreIdChunkQueue      = queues.StoreIdChunkQueue
+	Query3ResultsQueue     = queues.Query3ResultsQueue
 
 	// Default values
 	DefaultRabbitMQHost = "localhost"

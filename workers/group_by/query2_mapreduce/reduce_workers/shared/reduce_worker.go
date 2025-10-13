@@ -12,7 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	groupbyshared "github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // min returns the minimum of two integers
@@ -82,7 +82,7 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producer for the final results queue
-	producer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query2GroupByResultsQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2GroupByResultsQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")

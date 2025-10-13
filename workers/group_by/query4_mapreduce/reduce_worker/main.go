@@ -12,7 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	groupbyshared "github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // min returns the minimum of two integers
@@ -50,7 +50,7 @@ func NewReduceWorker() *ReduceWorker {
 	}
 
 	// Create consumer for the reduce queue
-	queueName := groupbyshared.Query4ReduceQueue
+	queueName := queues.Query4ReduceQueue
 	consumer := workerqueue.NewQueueConsumer(queueName, config)
 	if consumer == nil {
 		log.Fatalf("Failed to create consumer for queue: %s", queueName)
@@ -70,7 +70,7 @@ func NewReduceWorker() *ReduceWorker {
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producer for the final results queue
-	producer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query4GroupByResultsQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query4GroupByResultsQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")
@@ -159,6 +159,11 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 // aggregateData aggregates data by user_id and store_id
 func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 	for _, result := range results {
+		// Skip results with empty user_id
+		if result.UserID == "" || strings.TrimSpace(result.UserID) == "" {
+			continue
+		}
+
 		// Create composite key: user_id + "|" + store_id
 		key := result.UserID + "|" + result.StoreID
 
@@ -340,7 +345,7 @@ func (rw *ReduceWorker) Start() {
 		done <- nil
 	}
 
-	queueName := groupbyshared.Query4ReduceQueue
+	queueName := queues.Query4ReduceQueue
 	log.Printf("About to start consuming from queue: %s", queueName)
 
 	// Add a timeout to detect if no messages are received
