@@ -286,6 +286,32 @@ services:
     command: ["./reduce-worker-s2-2025"]
     profiles: ["orchestration"]
 
+  # Query 2 Top Items Classification (Top N per month)
+  query2-top-items-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_top_classification/Dockerfile
+    container_name: query2-top-items-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-reduce-s2-2023:
+        condition: service_started
+      query2-reduce-s1-2024:
+        condition: service_started
+      query2-reduce-s2-2024:
+        condition: service_started
+      query2-reduce-s1-2025:
+        condition: service_started
+      query2-reduce-s2-2025:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
   # Query 3 MapReduce Workers
   query3-map-worker:
     build:
@@ -425,32 +451,6 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # Query 2 Top Items Classification (Top N per month)
-  query2-top-items-worker:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/query2_top_classification/Dockerfile
-    container_name: query2-top-items-worker
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      query2-reduce-s2-2023:
-        condition: service_started
-      query2-reduce-s1-2024:
-        condition: service_started
-      query2-reduce-s2-2024:
-        condition: service_started
-      query2-reduce-s1-2025:
-        condition: service_started
-      query2-reduce-s2-2025:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
   # Query 4 Top Users Classification (Top N per store)
   query4-top-users-worker:
     build:
@@ -535,7 +535,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-      NUM_WRITERS: 2
+      NUM_WRITERS: 5
     profiles: ["orchestration"]
 
   # User Partition Writer 1
@@ -555,7 +555,7 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WRITER_ID: 1
-      NUM_WRITERS: 2
+      NUM_WRITERS: 5
     volumes:
       - shared-data:/shared-data
     profiles: ["orchestration"]
@@ -577,7 +577,73 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WRITER_ID: 2
-      NUM_WRITERS: 2
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 3
+  user-partition-writer-3:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 3
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 4
+  user-partition-writer-4:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-4
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 4
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 5
+  user-partition-writer-5:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 5
+      NUM_WRITERS: 5
     volumes:
       - shared-data:/shared-data
     profiles: ["orchestration"]
@@ -588,26 +654,6 @@ services:
       context: .
       dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
     container_name: user-join-reader
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      user-partition-writer-1:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    volumes:
-      - shared-data:/shared-data
-    profiles: ["orchestration"]
-
-  # User Join Reader 2 (Query 4 - reads from partition files)
-  user-join-reader-2:
-    build:
-      context: .
-      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
-    container_name: user-join-reader-2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -673,9 +719,13 @@ services:
         condition: service_started
       user-partition-writer-2:
         condition: service_started
-      user-join-reader-1:
+      user-partition-writer-3:
         condition: service_started
-      user-join-reader-2:
+      user-partition-writer-4:
+        condition: service_started
+      user-partition-writer-5:
+        condition: service_started
+      user-join-reader-1:
         condition: service_started
       itemid-join-worker-1:
         condition: service_started
@@ -697,6 +747,8 @@ services:
         condition: service_started
       query2-reduce-s2-2025:
         condition: service_started
+      query2-top-items-worker:
+        condition: service_started
       query3-map-worker:
         condition: service_started
       query3-reduce-s2-2023:
@@ -712,8 +764,6 @@ services:
       query4-map-worker:
         condition: service_started
       query4-reduce-worker:
-        condition: service_started
-      query2-top-items-worker:
         condition: service_started
       query4-top-users-worker:
         condition: service_started
