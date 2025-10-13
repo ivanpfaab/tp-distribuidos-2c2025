@@ -3,6 +3,8 @@ package shared
 import (
 	"fmt"
 	"time"
+
+	groupbyshared "github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 )
 
 // Semester represents a semester with year and semester number
@@ -47,9 +49,9 @@ func GetSemesterFromString(dateStr string) (Semester, error) {
 	return Semester{}, fmt.Errorf("unable to parse date: %s", dateStr)
 }
 
-// GetQueueNameForSemester returns the queue name for a specific semester
+// GetQueueNameForSemester returns the queue name for a specific semester (Query 2)
 func GetQueueNameForSemester(semester Semester) string {
-	return fmt.Sprintf("reduce-%d-%d", semester.Year, semester.Semester)
+	return groupbyshared.GetQuery2ReduceQueueName(semester.Year, semester.Semester)
 }
 
 // GetAllSemesters returns all semesters from S2-2023 to S2-2025

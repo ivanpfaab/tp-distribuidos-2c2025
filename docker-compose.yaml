@@ -39,8 +39,6 @@ services:
         condition: service_started
       in-file-join-worker:
         condition: service_started
-      groupby-worker:
-        condition: service_started
       query2-map-worker:
         condition: service_started
       query2-reduce-s2-2023:
@@ -52,6 +50,22 @@ services:
       query2-reduce-s1-2025:
         condition: service_started
       query2-reduce-s2-2025:
+        condition: service_started
+      query3-map-worker:
+        condition: service_started
+      query3-reduce-s2-2023:
+        condition: service_started
+      query3-reduce-s1-2024:
+        condition: service_started
+      query3-reduce-s2-2024:
+        condition: service_started
+      query3-reduce-s1-2025:
+        condition: service_started
+      query3-reduce-s2-2025:
+        condition: service_started
+      query4-map-worker:
+        condition: service_started
+      query4-reduce-worker:
         condition: service_started
       streaming-service:
         condition: service_started
@@ -214,22 +228,6 @@ services:
       - shared-data:/shared-data
     profiles: ["orchestration"]
 
-  # GroupBy Worker (Query 3 and 4 only - dummy pass-through)
-  groupby-worker:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/Dockerfile
-    container_name: groupby-worker
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
   # Query 2 MapReduce Workers
   query2-map-worker:
     build:
@@ -334,6 +332,145 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
     command: ["./reduce-worker-s2-2025"]
+    profiles: ["orchestration"]
+
+  # Query 3 MapReduce Workers
+  query3-map-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/map_worker/Dockerfile
+    container_name: query3-map-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2023:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2023
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2023"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s1-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s1-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2024"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2024"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s1-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s1-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2025"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2025"]
+    profiles: ["orchestration"]
+
+  # Query 4 MapReduce Workers
+  query4-map-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_mapreduce/map_worker/Dockerfile
+    container_name: query4-map-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query4-reduce-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_mapreduce/reduce_worker/Dockerfile
+    container_name: query4-reduce-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
   # Streaming service

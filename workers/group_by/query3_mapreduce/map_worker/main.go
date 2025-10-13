@@ -23,34 +23,36 @@ func min(a, b int) int {
 	return b
 }
 
-// TransactionItem represents a single transaction item record
-type TransactionItem struct {
-	TransactionID string
-	ItemID        string
-	Quantity      int
-	UnitPrice     float64
-	Subtotal      float64
-	CreatedAt     time.Time
+// Transaction represents a single transaction record
+type Transaction struct {
+	TransactionID  string
+	StoreID        string
+	PaymentMethodID string
+	VoucherID      string
+	UserID         string
+	OriginalAmount float64
+	DiscountApplied float64
+	FinalAmount    float64
+	CreatedAt      time.Time
 }
 
-// GroupedResult represents the grouped data by year, semester, item_id
+// GroupedResult represents the grouped data by year, semester, store_id
 type GroupedResult struct {
-	Year        int
-	Semester    int
-	ItemID      string
-	TotalQuantity int
-	TotalSubtotal float64
-	Count       int
+	Year             int
+	Semester         int
+	StoreID          string
+	TotalFinalAmount float64
+	Count            int
 }
 
-// MapWorker processes chunks and groups by year, semester, item_id
+// MapWorker processes chunks and groups by year, semester, store_id
 type MapWorker struct {
 	consumer     *workerqueue.QueueConsumer
 	producers    map[string]*workerqueue.QueueMiddleware
 	config       *middleware.ConnectionConfig
 }
 
-// NewMapWorker creates a new map worker instance
+// NewMapWorker creates a new map worker instance for Query 3
 func NewMapWorker() *MapWorker {
 	config := &middleware.ConnectionConfig{
 		Host:     "rabbitmq",
@@ -59,14 +61,14 @@ func NewMapWorker() *MapWorker {
 		Password: "password",
 	}
 
-	// Create consumer for input chunks
-	consumer := workerqueue.NewQueueConsumer(groupbyshared.ItemIdGroupByChunkQueue, config)
+	// Create consumer for input chunks (Query 3 uses storeid-groupby-chunks)
+	consumer := workerqueue.NewQueueConsumer(groupbyshared.StoreIdGroupByChunkQueue, config)
 	if consumer == nil {
 		log.Fatal("Failed to create consumer")
 	}
 
 	// Declare the input queue before consuming
-	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.ItemIdGroupByChunkQueue, config)
+	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.StoreIdGroupByChunkQueue, config)
 	if inputQueueDeclarer == nil {
 		consumer.Close()
 		log.Fatal("Failed to create input queue declarer")
@@ -74,7 +76,7 @@ func NewMapWorker() *MapWorker {
 	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
 		inputQueueDeclarer.Close()
-		log.Fatalf("Failed to declare input queue '%s': %v", groupbyshared.ItemIdGroupByChunkQueue, err)
+		log.Fatalf("Failed to declare input queue '%s': %v", groupbyshared.StoreIdGroupByChunkQueue, err)
 	}
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
@@ -89,12 +91,12 @@ func NewMapWorker() *MapWorker {
 		if producer == nil {
 			log.Fatalf("Failed to create producer for queue: %s", queueName)
 		}
-		
+
 		// Declare the queue before using it
 		if err := producer.DeclareQueue(false, false, false, false); err != 0 {
 			log.Fatalf("Failed to declare queue %s: %v", queueName, err)
 		}
-		
+
 		producers[queueName] = producer
 	}
 
@@ -115,12 +117,12 @@ func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 		return fmt.Errorf("failed to parse CSV data: %v", err)
 	}
 
-	// Group transactions by year, semester, item_id
+	// Group transactions by year, semester, store_id
 	groupedData := mw.groupTransactions(transactions)
 
 	log.Printf("Grouped data for chunk %d: %d semesters", chunk.ChunkNumber, len(groupedData))
 	for semester := range groupedData {
-		log.Printf("  Semester: %s (%d items)", semester.String(), len(groupedData[semester]))
+		log.Printf("  Semester: %s (%d stores)", semester.String(), len(groupedData[semester]))
 	}
 
 	// Send grouped data to appropriate reduce queues
@@ -129,14 +131,14 @@ func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 		return fmt.Errorf("failed to send to reduce queues: %v", err)
 	}
 
-	log.Printf("Successfully processed chunk %d, sent to %d reduce queues", 
+	log.Printf("Successfully processed chunk %d, sent to %d reduce queues",
 		chunk.ChunkNumber, len(groupedData))
-	
+
 	return nil
 }
 
 // parseCSVData parses CSV data from chunk
-func (mw *MapWorker) parseCSVData(csvData string) ([]TransactionItem, error) {
+func (mw *MapWorker) parseCSVData(csvData string) ([]Transaction, error) {
 	reader := csv.NewReader(strings.NewReader(csvData))
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -144,48 +146,51 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]TransactionItem, error) {
 	}
 
 	if len(records) < 2 {
-		return []TransactionItem{}, nil
+		return []Transaction{}, nil
 	}
 
 	// Skip header row
-	transactions := make([]TransactionItem, 0, len(records)-1)
-	
+	transactions := make([]Transaction, 0, len(records)-1)
+
 	for _, record := range records[1:] {
-		if len(record) < 6 {
+		if len(record) < 9 {
 			continue // Skip malformed records
 		}
 
-		quantity, err := strconv.Atoi(record[2])
+		originalAmount, err := strconv.ParseFloat(record[5], 64)
 		if err != nil {
-			continue // Skip records with invalid quantity
+			continue // Skip records with invalid original amount
 		}
 
-		unitPrice, err := strconv.ParseFloat(record[3], 64)
+		discountApplied, err := strconv.ParseFloat(record[6], 64)
 		if err != nil {
-			continue // Skip records with invalid unit price
+			continue // Skip records with invalid discount
 		}
 
-		subtotal, err := strconv.ParseFloat(record[4], 64)
+		finalAmount, err := strconv.ParseFloat(record[7], 64)
 		if err != nil {
-			continue // Skip records with invalid subtotal
+			continue // Skip records with invalid final amount
 		}
 
-		createdAt, err := time.Parse("2006-01-02 15:04:05", record[5])
+		createdAt, err := time.Parse("2006-01-02 15:04:05", record[8])
 		if err != nil {
 			// Try alternative date format
-			createdAt, err = time.Parse("2006-01-02", record[5])
+			createdAt, err = time.Parse("2006-01-02", record[8])
 			if err != nil {
 				continue // Skip records with invalid date
 			}
 		}
 
-		transaction := TransactionItem{
-			TransactionID: record[0],
-			ItemID:        record[1],
-			Quantity:      quantity,
-			UnitPrice:     unitPrice,
-			Subtotal:      subtotal,
-			CreatedAt:     createdAt,
+		transaction := Transaction{
+			TransactionID:   record[0],
+			StoreID:         record[1],
+			PaymentMethodID: record[2],
+			VoucherID:       record[3],
+			UserID:          record[4],
+			OriginalAmount:  originalAmount,
+			DiscountApplied: discountApplied,
+			FinalAmount:     finalAmount,
+			CreatedAt:       createdAt,
 		}
 
 		transactions = append(transactions, transaction)
@@ -196,14 +201,14 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]TransactionItem, error) {
 	return transactions, nil
 }
 
-// groupTransactions groups transactions by year, semester, item_id
-func (mw *MapWorker) groupTransactions(transactions []TransactionItem) map[Semester]map[string]*GroupedResult {
+// groupTransactions groups transactions by year, semester, store_id
+func (mw *MapWorker) groupTransactions(transactions []Transaction) map[Semester]map[string]*GroupedResult {
 	groupedData := make(map[Semester]map[string]*GroupedResult)
 
 	for _, transaction := range transactions {
 		// Calculate semester from date
 		semester := GetSemesterFromDate(transaction.CreatedAt)
-		
+
 		// Skip invalid semesters (outside our range)
 		if !IsValidSemester(semester) {
 			continue
@@ -214,23 +219,21 @@ func (mw *MapWorker) groupTransactions(transactions []TransactionItem) map[Semes
 			groupedData[semester] = make(map[string]*GroupedResult)
 		}
 
-		// Get or create grouped result for this item_id
-		itemID := transaction.ItemID
-		if groupedData[semester][itemID] == nil {
-			groupedData[semester][itemID] = &GroupedResult{
-				Year:         semester.Year,
-				Semester:     semester.Semester,
-				ItemID:       itemID,
-				TotalQuantity: 0,
-				TotalSubtotal: 0,
-				Count:        0,
+		// Get or create grouped result for this store_id
+		storeID := transaction.StoreID
+		if groupedData[semester][storeID] == nil {
+			groupedData[semester][storeID] = &GroupedResult{
+				Year:             semester.Year,
+				Semester:         semester.Semester,
+				StoreID:          storeID,
+				TotalFinalAmount: 0,
+				Count:            0,
 			}
 		}
 
 		// Aggregate data
-		groupedData[semester][itemID].TotalQuantity += transaction.Quantity
-		groupedData[semester][itemID].TotalSubtotal += transaction.Subtotal
-		groupedData[semester][itemID].Count++
+		groupedData[semester][storeID].TotalFinalAmount += transaction.FinalAmount
+		groupedData[semester][storeID].Count++
 	}
 
 	return groupedData
@@ -238,7 +241,7 @@ func (mw *MapWorker) groupTransactions(transactions []TransactionItem) map[Semes
 
 // sendToReduceQueues sends grouped data to appropriate reduce queues
 func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData map[Semester]map[string]*GroupedResult) error {
-	for semester, itemGroups := range groupedData {
+	for semester, storeGroups := range groupedData {
 		queueName := GetQueueNameForSemester(semester)
 		producer, exists := mw.producers[queueName]
 		if !exists {
@@ -246,8 +249,8 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 		}
 
 		// Convert grouped data to CSV
-		csvData := mw.convertToCSV(itemGroups)
-		
+		csvData := mw.convertToCSV(storeGroups)
+
 		// Create new chunk for reduce queue
 		reduceChunk := chunk.NewChunk(
 			originalChunk.ClientID,
@@ -257,7 +260,7 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 			originalChunk.IsLastChunk,
 			originalChunk.Step, // Step 1 for reduce workers
 			len(csvData),
-			originalChunk.TableID, // Table ID 2 for transaction_items
+			originalChunk.TableID, // Table ID 1 for transactions
 			csvData,
 		)
 
@@ -268,45 +271,44 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 			return fmt.Errorf("failed to serialize chunk for queue %s: %v", queueName, err)
 		}
 
-		log.Printf("Sending to queue %s: %d bytes, %d item groups", queueName, len(serializedData), len(itemGroups))
+		log.Printf("Sending to queue %s: %d bytes, %d store groups", queueName, len(serializedData), len(storeGroups))
 		log.Printf("Serialized data preview: %s", string(serializedData[:min(100, len(serializedData))]))
-		
+
 		sendErr := producer.Send(serializedData)
 		if sendErr != 0 {
 			return fmt.Errorf("failed to send to queue %s: error code %v", queueName, sendErr)
 		}
 
-		log.Printf("Successfully sent %d item groups to reduce queue: %s", len(itemGroups), queueName)
+		log.Printf("Successfully sent %d store groups to reduce queue: %s", len(storeGroups), queueName)
 	}
 
 	return nil
 }
 
 // convertToCSV converts grouped data to CSV format
-func (mw *MapWorker) convertToCSV(itemGroups map[string]*GroupedResult) string {
+func (mw *MapWorker) convertToCSV(storeGroups map[string]*GroupedResult) string {
 	var csvBuilder strings.Builder
-	
+
 	// Write header
-	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
-	
+	csvBuilder.WriteString("year,semester,store_id,total_final_amount,count\n")
+
 	// Write data rows
-	for _, result := range itemGroups {
-		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
+	for _, result := range storeGroups {
+		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%.2f,%d\n",
 			result.Year,
 			result.Semester,
-			result.ItemID,
-			result.TotalQuantity,
-			result.TotalSubtotal,
+			result.StoreID,
+			result.TotalFinalAmount,
 			result.Count,
 		))
 	}
-	
+
 	return csvBuilder.String()
 }
 
 // Start starts the map worker
 func (mw *MapWorker) Start() {
-	log.Println("Starting Map Worker for Query 2...")
+	log.Println("Starting Map Worker for Query 3...")
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
@@ -326,9 +328,9 @@ func (mw *MapWorker) Start() {
 				continue
 			}
 
-			// Process only Query Type 2 chunks
-			if chunk.QueryType != 2 {
-				log.Printf("Received non-Query 2 chunk: QueryType=%d, skipping", chunk.QueryType)
+			// Process only Query Type 3 chunks
+			if chunk.QueryType != 3 {
+				log.Printf("Received non-Query 3 chunk: QueryType=%d, skipping", chunk.QueryType)
 				delivery.Ack(false)
 				continue
 			}
@@ -350,7 +352,7 @@ func (mw *MapWorker) Start() {
 	if err := mw.consumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming: %v", err)
 	}
-	
+
 	// Keep the main thread alive to prevent the program from exiting
 	// The consumer runs in a goroutine, so we need to block here
 	select {}
@@ -361,7 +363,7 @@ func (mw *MapWorker) Close() {
 	if mw.consumer != nil {
 		mw.consumer.Close()
 	}
-	
+
 	for _, producer := range mw.producers {
 		if producer != nil {
 			producer.Close()

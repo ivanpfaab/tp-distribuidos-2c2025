@@ -23,22 +23,20 @@ func min(a, b int) int {
 	return b
 }
 
-// GroupedResult represents the grouped data by item_id (already grouped by semester)
+// GroupedResult represents the grouped data by store_id (already grouped by semester)
 type GroupedResult struct {
-	ItemID        string
-	TotalQuantity int
-	TotalSubtotal float64
-	Count         int
+	StoreID          string
+	TotalFinalAmount float64
+	Count            int
 }
 
 // FinalResult represents the final aggregated result
 type FinalResult struct {
-	Year          int
-	Semester      int
-	ItemID        string
-	TotalQuantity int
-	TotalSubtotal float64
-	Count         int
+	Year             int
+	Semester         int
+	StoreID          string
+	TotalFinalAmount float64
+	Count            int
 }
 
 // ReduceWorker processes chunks for a specific semester
@@ -47,7 +45,7 @@ type ReduceWorker struct {
 	consumer    *workerqueue.QueueConsumer
 	producer    *workerqueue.QueueMiddleware
 	config      *middleware.ConnectionConfig
-	groupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
+	groupedData map[string]*GroupedResult // Key: store_id, Value: aggregated data
 	chunkCount  int                       // Track number of chunks received
 	clientID    string                    // Store the client ID from incoming chunks
 }
@@ -82,7 +80,7 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producer for the final results queue
-	producer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query2GroupByResultsQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query3GroupByResultsQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")
@@ -106,7 +104,7 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	}
 }
 
-// ProcessChunk processes a chunk immediately and aggregates data by item_id
+// ProcessChunk processes a chunk immediately and aggregates data by store_id
 func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	log.Printf("Processing chunk %d for semester %s", chunk.ChunkNumber, rw.semester.String())
 
@@ -122,11 +120,11 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 		return fmt.Errorf("failed to parse CSV data: %v", err)
 	}
 
-	// Aggregate data by item_id immediately
+	// Aggregate data by store_id immediately
 	rw.aggregateData(results)
 
 	rw.chunkCount++
-	log.Printf("Processed chunk %d, now have %d unique items (total chunks: %d)",
+	log.Printf("Processed chunk %d, now have %d unique stores (total chunks: %d)",
 		chunk.ChunkNumber, len(rw.groupedData), rw.chunkCount)
 
 	return nil
@@ -148,30 +146,24 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	results := make([]GroupedResult, 0, len(records)-1)
 
 	for _, record := range records[1:] {
-		if len(record) < 6 {
+		if len(record) < 5 {
 			continue // Skip malformed records
 		}
 
-		quantity, err := strconv.Atoi(record[3])
+		totalFinalAmount, err := strconv.ParseFloat(record[3], 64)
 		if err != nil {
-			continue // Skip records with invalid quantity
+			continue // Skip records with invalid total final amount
 		}
 
-		subtotal, err := strconv.ParseFloat(record[4], 64)
-		if err != nil {
-			continue // Skip records with invalid subtotal
-		}
-
-		count, err := strconv.Atoi(record[5])
+		count, err := strconv.Atoi(record[4])
 		if err != nil {
 			continue // Skip records with invalid count
 		}
 
 		result := GroupedResult{
-			ItemID:        record[2],
-			TotalQuantity: quantity,
-			TotalSubtotal: subtotal,
-			Count:         count,
+			StoreID:          record[2],
+			TotalFinalAmount: totalFinalAmount,
+			Count:            count,
 		}
 
 		results = append(results, result)
@@ -180,89 +172,84 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	return results, nil
 }
 
-// aggregateData aggregates data by item_id
+// aggregateData aggregates data by store_id
 func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 	for _, result := range results {
-		itemID := result.ItemID
+		storeID := result.StoreID
 
-		// Get or create grouped result for this item_id
-		if rw.groupedData[itemID] == nil {
-			rw.groupedData[itemID] = &GroupedResult{
-				ItemID:        itemID,
-				TotalQuantity: 0,
-				TotalSubtotal: 0,
-				Count:         0,
+		// Get or create grouped result for this store_id
+		if rw.groupedData[storeID] == nil {
+			rw.groupedData[storeID] = &GroupedResult{
+				StoreID:          storeID,
+				TotalFinalAmount: 0,
+				Count:            0,
 			}
 		}
 
 		// Aggregate data
-		rw.groupedData[itemID].TotalQuantity += result.TotalQuantity
-		rw.groupedData[itemID].TotalSubtotal += result.TotalSubtotal
-		rw.groupedData[itemID].Count += result.Count
+		rw.groupedData[storeID].TotalFinalAmount += result.TotalFinalAmount
+		rw.groupedData[storeID].Count += result.Count
 	}
 }
 
 // FinalizeResults sends the final aggregated results
 func (rw *ReduceWorker) FinalizeResults() error {
-	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique items",
+	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique stores",
 		rw.semester.String(), rw.chunkCount, len(rw.groupedData))
 
 	// Convert to final results
 	finalResults := make([]FinalResult, 0, len(rw.groupedData))
 	for _, grouped := range rw.groupedData {
 		finalResult := FinalResult{
-			Year:          rw.semester.Year,
-			Semester:      rw.semester.Semester,
-			ItemID:        grouped.ItemID,
-			TotalQuantity: grouped.TotalQuantity,
-			TotalSubtotal: grouped.TotalSubtotal,
-			Count:         grouped.Count,
+			Year:             rw.semester.Year,
+			Semester:         rw.semester.Semester,
+			StoreID:          grouped.StoreID,
+			TotalFinalAmount: grouped.TotalFinalAmount,
+			Count:            grouped.Count,
 		}
 		finalResults = append(finalResults, finalResult)
 	}
 
 	// Log detailed final results
 	log.Printf("FINAL RESULTS for semester %s:", rw.semester.String())
-	log.Printf("   Total unique items: %d", len(finalResults))
+	log.Printf("   Total unique stores: %d", len(finalResults))
 
-	// Show top 10 items by total quantity for debugging
-	items := make([]FinalResult, len(finalResults))
-	copy(items, finalResults)
+	// Show top 10 stores by total final amount for debugging
+	stores := make([]FinalResult, len(finalResults))
+	copy(stores, finalResults)
 
-	// Sort by total quantity (descending)
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[i].TotalQuantity < items[j].TotalQuantity {
-				items[i], items[j] = items[j], items[i]
+	// Sort by total final amount (descending)
+	for i := 0; i < len(stores)-1; i++ {
+		for j := i + 1; j < len(stores); j++ {
+			if stores[i].TotalFinalAmount < stores[j].TotalFinalAmount {
+				stores[i], stores[j] = stores[j], stores[i]
 			}
 		}
 	}
 
-	// Show top 10 items
+	// Show top 10 stores
 	topCount := 10
-	if len(items) < topCount {
-		topCount = len(items)
+	if len(stores) < topCount {
+		topCount = len(stores)
 	}
 
-	log.Printf("   Top %d items by quantity:", topCount)
+	log.Printf("   Top %d stores by total final amount:", topCount)
 	for i := 0; i < topCount; i++ {
-		item := items[i]
-		log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d",
-			i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
+		store := stores[i]
+		log.Printf("      %d. StoreID: %s | TotalFinalAmount: %.2f | Count: %d",
+			i+1, store.StoreID, store.TotalFinalAmount, store.Count)
 	}
 
 	// Calculate totals
-	totalQuantity := 0
-	totalSubtotal := 0.0
+	totalFinalAmount := 0.0
 	totalCount := 0
 	for _, result := range finalResults {
-		totalQuantity += result.TotalQuantity
-		totalSubtotal += result.TotalSubtotal
+		totalFinalAmount += result.TotalFinalAmount
 		totalCount += result.Count
 	}
 
-	log.Printf("   Grand totals: Quantity=%d, Subtotal=%.2f, Transactions=%d",
-		totalQuantity, totalSubtotal, totalCount)
+	log.Printf("   Grand totals: TotalFinalAmount=%.2f, Transactions=%d",
+		totalFinalAmount, totalCount)
 
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
@@ -273,12 +260,12 @@ func (rw *ReduceWorker) FinalizeResults() error {
 	finalChunk := chunk.NewChunk(
 		rw.clientID, // Use the actual client ID from the original request
 		fileID,      // File ID (max 4 bytes)
-		2,           // Query Type
+		3,           // Query Type 3
 		1,           // Chunk Number
 		true,        // Is Last Chunk
 		2,           // Step 2 for final results
 		len(csvData),
-		2, // Table ID 2 for transaction_items
+		1, // Table ID 1 for transactions
 		csvData,
 	)
 
@@ -294,7 +281,7 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
-	log.Printf("Successfully sent final results for semester %s: %d items (ClientID: %s)",
+	log.Printf("Successfully sent final results for semester %s: %d stores (ClientID: %s)",
 		rw.semester.String(), len(finalResults), rw.clientID)
 
 	// Clear aggregated data to free memory
@@ -305,7 +292,7 @@ func (rw *ReduceWorker) FinalizeResults() error {
 
 // clearAggregatedData clears the aggregated data to free memory
 func (rw *ReduceWorker) clearAggregatedData() {
-	log.Printf("Clearing aggregated data for semester %s (%d items)", rw.semester.String(), len(rw.groupedData))
+	log.Printf("Clearing aggregated data for semester %s (%d stores)", rw.semester.String(), len(rw.groupedData))
 	rw.groupedData = make(map[string]*GroupedResult)
 	rw.chunkCount = 0
 	rw.clientID = "" // Reset client ID for next batch
@@ -316,16 +303,15 @@ func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 	var csvBuilder strings.Builder
 
 	// Write header
-	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
+	csvBuilder.WriteString("year,semester,store_id,total_final_amount,count\n")
 
 	// Write data rows
 	for _, result := range results {
-		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
+		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%.2f,%d\n",
 			result.Year,
 			result.Semester,
-			result.ItemID,
-			result.TotalQuantity,
-			result.TotalSubtotal,
+			result.StoreID,
+			result.TotalFinalAmount,
 			result.Count,
 		))
 	}

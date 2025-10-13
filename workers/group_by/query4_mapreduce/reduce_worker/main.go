@@ -1,4 +1,4 @@
-package shared
+package main
 
 import (
 	"encoding/csv"
@@ -23,37 +23,25 @@ func min(a, b int) int {
 	return b
 }
 
-// GroupedResult represents the grouped data by item_id (already grouped by semester)
+// GroupedResult represents the grouped data by user_id and store_id
 type GroupedResult struct {
-	ItemID        string
-	TotalQuantity int
-	TotalSubtotal float64
-	Count         int
+	UserID  string
+	StoreID string
+	Count   int
 }
 
-// FinalResult represents the final aggregated result
-type FinalResult struct {
-	Year          int
-	Semester      int
-	ItemID        string
-	TotalQuantity int
-	TotalSubtotal float64
-	Count         int
-}
-
-// ReduceWorker processes chunks for a specific semester
+// ReduceWorker processes chunks and aggregates by user_id and store_id
 type ReduceWorker struct {
-	semester    Semester
 	consumer    *workerqueue.QueueConsumer
 	producer    *workerqueue.QueueMiddleware
 	config      *middleware.ConnectionConfig
-	groupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
+	groupedData map[string]*GroupedResult // Key: "user_id|store_id", Value: aggregated data
 	chunkCount  int                       // Track number of chunks received
 	clientID    string                    // Store the client ID from incoming chunks
 }
 
-// NewReduceWorker creates a new reduce worker for a specific semester
-func NewReduceWorker(semester Semester) *ReduceWorker {
+// NewReduceWorker creates a new reduce worker for Query 4
+func NewReduceWorker() *ReduceWorker {
 	config := &middleware.ConnectionConfig{
 		Host:     "rabbitmq",
 		Port:     5672,
@@ -61,8 +49,8 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		Password: "password",
 	}
 
-	// Create consumer for the specific semester queue
-	queueName := GetQueueNameForSemester(semester)
+	// Create consumer for the reduce queue
+	queueName := groupbyshared.Query4ReduceQueue
 	consumer := workerqueue.NewQueueConsumer(queueName, config)
 	if consumer == nil {
 		log.Fatalf("Failed to create consumer for queue: %s", queueName)
@@ -82,7 +70,7 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producer for the final results queue
-	producer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query2GroupByResultsQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(groupbyshared.Query4GroupByResultsQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")
@@ -96,7 +84,6 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	}
 
 	return &ReduceWorker{
-		semester:    semester,
 		consumer:    consumer,
 		producer:    producer,
 		config:      config,
@@ -106,9 +93,9 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	}
 }
 
-// ProcessChunk processes a chunk immediately and aggregates data by item_id
+// ProcessChunk processes a chunk immediately and aggregates data by user_id and store_id
 func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
-	log.Printf("Processing chunk %d for semester %s", chunk.ChunkNumber, rw.semester.String())
+	log.Printf("Processing chunk %d for Query 4", chunk.ChunkNumber)
 
 	// Store client ID from the first chunk (all chunks should have the same client ID)
 	if rw.clientID == "" {
@@ -122,11 +109,11 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 		return fmt.Errorf("failed to parse CSV data: %v", err)
 	}
 
-	// Aggregate data by item_id immediately
+	// Aggregate data by user_id and store_id immediately
 	rw.aggregateData(results)
 
 	rw.chunkCount++
-	log.Printf("Processed chunk %d, now have %d unique items (total chunks: %d)",
+	log.Printf("Processed chunk %d, now have %d unique user-store combinations (total chunks: %d)",
 		chunk.ChunkNumber, len(rw.groupedData), rw.chunkCount)
 
 	return nil
@@ -148,30 +135,19 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	results := make([]GroupedResult, 0, len(records)-1)
 
 	for _, record := range records[1:] {
-		if len(record) < 6 {
+		if len(record) < 3 {
 			continue // Skip malformed records
 		}
 
-		quantity, err := strconv.Atoi(record[3])
-		if err != nil {
-			continue // Skip records with invalid quantity
-		}
-
-		subtotal, err := strconv.ParseFloat(record[4], 64)
-		if err != nil {
-			continue // Skip records with invalid subtotal
-		}
-
-		count, err := strconv.Atoi(record[5])
+		count, err := strconv.Atoi(record[2])
 		if err != nil {
 			continue // Skip records with invalid count
 		}
 
 		result := GroupedResult{
-			ItemID:        record[2],
-			TotalQuantity: quantity,
-			TotalSubtotal: subtotal,
-			Count:         count,
+			UserID:  record[0],
+			StoreID: record[1],
+			Count:   count,
 		}
 
 		results = append(results, result)
@@ -180,105 +156,88 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	return results, nil
 }
 
-// aggregateData aggregates data by item_id
+// aggregateData aggregates data by user_id and store_id
 func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 	for _, result := range results {
-		itemID := result.ItemID
+		// Create composite key: user_id + "|" + store_id
+		key := result.UserID + "|" + result.StoreID
 
-		// Get or create grouped result for this item_id
-		if rw.groupedData[itemID] == nil {
-			rw.groupedData[itemID] = &GroupedResult{
-				ItemID:        itemID,
-				TotalQuantity: 0,
-				TotalSubtotal: 0,
-				Count:         0,
+		// Get or create grouped result for this key
+		if rw.groupedData[key] == nil {
+			rw.groupedData[key] = &GroupedResult{
+				UserID:  result.UserID,
+				StoreID: result.StoreID,
+				Count:   0,
 			}
 		}
 
 		// Aggregate data
-		rw.groupedData[itemID].TotalQuantity += result.TotalQuantity
-		rw.groupedData[itemID].TotalSubtotal += result.TotalSubtotal
-		rw.groupedData[itemID].Count += result.Count
+		rw.groupedData[key].Count += result.Count
 	}
 }
 
 // FinalizeResults sends the final aggregated results
 func (rw *ReduceWorker) FinalizeResults() error {
-	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique items",
-		rw.semester.String(), rw.chunkCount, len(rw.groupedData))
+	log.Printf("Finalizing results for Query 4 with %d processed chunks and %d unique user-store combinations",
+		rw.chunkCount, len(rw.groupedData))
 
 	// Convert to final results
-	finalResults := make([]FinalResult, 0, len(rw.groupedData))
+	finalResults := make([]GroupedResult, 0, len(rw.groupedData))
 	for _, grouped := range rw.groupedData {
-		finalResult := FinalResult{
-			Year:          rw.semester.Year,
-			Semester:      rw.semester.Semester,
-			ItemID:        grouped.ItemID,
-			TotalQuantity: grouped.TotalQuantity,
-			TotalSubtotal: grouped.TotalSubtotal,
-			Count:         grouped.Count,
-		}
-		finalResults = append(finalResults, finalResult)
+		finalResults = append(finalResults, *grouped)
 	}
 
 	// Log detailed final results
-	log.Printf("FINAL RESULTS for semester %s:", rw.semester.String())
-	log.Printf("   Total unique items: %d", len(finalResults))
+	log.Printf("FINAL RESULTS for Query 4:")
+	log.Printf("   Total unique user-store combinations: %d", len(finalResults))
 
-	// Show top 10 items by total quantity for debugging
-	items := make([]FinalResult, len(finalResults))
-	copy(items, finalResults)
+	// Show top 10 user-store combinations by count for debugging
+	userStores := make([]GroupedResult, len(finalResults))
+	copy(userStores, finalResults)
 
-	// Sort by total quantity (descending)
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[i].TotalQuantity < items[j].TotalQuantity {
-				items[i], items[j] = items[j], items[i]
+	// Sort by count (descending)
+	for i := 0; i < len(userStores)-1; i++ {
+		for j := i + 1; j < len(userStores); j++ {
+			if userStores[i].Count < userStores[j].Count {
+				userStores[i], userStores[j] = userStores[j], userStores[i]
 			}
 		}
 	}
 
-	// Show top 10 items
+	// Show top 10 combinations
 	topCount := 10
-	if len(items) < topCount {
-		topCount = len(items)
+	if len(userStores) < topCount {
+		topCount = len(userStores)
 	}
 
-	log.Printf("   Top %d items by quantity:", topCount)
+	log.Printf("   Top %d user-store combinations by count:", topCount)
 	for i := 0; i < topCount; i++ {
-		item := items[i]
-		log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d",
-			i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
+		combo := userStores[i]
+		log.Printf("      %d. UserID: %s | StoreID: %s | Count: %d",
+			i+1, combo.UserID, combo.StoreID, combo.Count)
 	}
 
-	// Calculate totals
-	totalQuantity := 0
-	totalSubtotal := 0.0
+	// Calculate total count
 	totalCount := 0
 	for _, result := range finalResults {
-		totalQuantity += result.TotalQuantity
-		totalSubtotal += result.TotalSubtotal
 		totalCount += result.Count
 	}
 
-	log.Printf("   Grand totals: Quantity=%d, Subtotal=%.2f, Transactions=%d",
-		totalQuantity, totalSubtotal, totalCount)
+	log.Printf("   Grand total: Transactions=%d", totalCount)
 
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
 
 	// Create chunk for final results
-	// FileID format: S{semester}{last2digitsOfYear} - e.g., "S125" for S1-2025
-	fileID := fmt.Sprintf("S%d%02d", rw.semester.Semester, rw.semester.Year%100)
 	finalChunk := chunk.NewChunk(
 		rw.clientID, // Use the actual client ID from the original request
-		fileID,      // File ID (max 4 bytes)
-		2,           // Query Type
+		"Q4",        // File ID
+		4,           // Query Type 4
 		1,           // Chunk Number
 		true,        // Is Last Chunk
 		2,           // Step 2 for final results
 		len(csvData),
-		2, // Table ID 2 for transaction_items
+		1, // Table ID 1 for transactions
 		csvData,
 	)
 
@@ -294,8 +253,8 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
-	log.Printf("Successfully sent final results for semester %s: %d items (ClientID: %s)",
-		rw.semester.String(), len(finalResults), rw.clientID)
+	log.Printf("Successfully sent final results for Query 4: %d user-store combinations (ClientID: %s)",
+		len(finalResults), rw.clientID)
 
 	// Clear aggregated data to free memory
 	rw.clearAggregatedData()
@@ -305,27 +264,24 @@ func (rw *ReduceWorker) FinalizeResults() error {
 
 // clearAggregatedData clears the aggregated data to free memory
 func (rw *ReduceWorker) clearAggregatedData() {
-	log.Printf("Clearing aggregated data for semester %s (%d items)", rw.semester.String(), len(rw.groupedData))
+	log.Printf("Clearing aggregated data for Query 4 (%d user-store combinations)", len(rw.groupedData))
 	rw.groupedData = make(map[string]*GroupedResult)
 	rw.chunkCount = 0
 	rw.clientID = "" // Reset client ID for next batch
 }
 
 // convertToCSV converts final results to CSV format
-func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
+func (rw *ReduceWorker) convertToCSV(results []GroupedResult) string {
 	var csvBuilder strings.Builder
 
 	// Write header
-	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
+	csvBuilder.WriteString("user_id,store_id,count\n")
 
 	// Write data rows
 	for _, result := range results {
-		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
-			result.Year,
-			result.Semester,
-			result.ItemID,
-			result.TotalQuantity,
-			result.TotalSubtotal,
+		csvBuilder.WriteString(fmt.Sprintf("%s,%s,%d\n",
+			result.UserID,
+			result.StoreID,
 			result.Count,
 		))
 	}
@@ -335,13 +291,13 @@ func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 
 // Start starts the reduce worker
 func (rw *ReduceWorker) Start() {
-	log.Printf("Starting Reduce Worker for semester %s...", rw.semester.String())
+	log.Printf("Starting Reduce Worker for Query 4...")
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		log.Printf("Reduce worker for semester %s started consuming messages", rw.semester.String())
+		log.Printf("Reduce worker for Query 4 started consuming messages")
 		chunkCount := 0
 		for delivery := range *consumeChannel {
-			log.Printf("Received message for semester %s - Message size: %d bytes", rw.semester.String(), len(delivery.Body))
+			log.Printf("Received message for Query 4 - Message size: %d bytes", len(delivery.Body))
 			log.Printf("Message body preview: %s", string(delivery.Body[:min(100, len(delivery.Body))]))
 			// Deserialize the chunk message
 			message, err := deserializer.Deserialize(delivery.Body)
@@ -371,7 +327,7 @@ func (rw *ReduceWorker) Start() {
 
 			// If this is the last chunk, finalize results
 			if chunk.IsLastChunk {
-				log.Printf("Received last chunk for semester %s, finalizing results...", rw.semester.String())
+				log.Printf("Received last chunk for Query 4, finalizing results...")
 				err = rw.FinalizeResults()
 				if err != nil {
 					log.Printf("Failed to finalize results: %v", err)
@@ -384,7 +340,7 @@ func (rw *ReduceWorker) Start() {
 		done <- nil
 	}
 
-	queueName := GetQueueNameForSemester(rw.semester)
+	queueName := groupbyshared.Query4ReduceQueue
 	log.Printf("About to start consuming from queue: %s", queueName)
 
 	// Add a timeout to detect if no messages are received
@@ -408,4 +364,14 @@ func (rw *ReduceWorker) Close() {
 	if rw.producer != nil {
 		rw.producer.Close()
 	}
+}
+
+func main() {
+	reduceWorker := NewReduceWorker()
+	defer reduceWorker.Close()
+
+	log.Printf("Starting Reduce Worker for Query 4...")
+	reduceWorker.Start()
+
+	select {}
 }

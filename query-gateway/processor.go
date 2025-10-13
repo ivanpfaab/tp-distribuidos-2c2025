@@ -46,12 +46,12 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 		fmt.Printf("Query Gateway: Routed Query 3 chunk to StoreID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 4:
-		// Query 4: Send to StoreID GroupBy (Dummy Pass-Through)
-		if err := qg.sendToStoreIdGroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to StoreID GroupBy worker: %v\n", err)
+		// Query 4: Send to UserID GroupBy (Dummy Pass-Through)
+		if err := qg.sendToUserIdGroupBy(chunkMsg); err != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to UserID GroupBy worker: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 4 chunk to StoreID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 4 chunk to UserID GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Query Gateway: Unknown query type %d, printing result\n", chunkMsg.QueryType)
