@@ -9,13 +9,13 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 )
 
 // JoinDataHandler encapsulates the join data handler state and dependencies
 type JoinDataHandler struct {
-	consumer           *exchange.ExchangeConsumer
+	consumer           *workerqueue.QueueConsumer
 	itemIdProducer     *exchange.ExchangeMiddleware
 	storeIdProducer    *exchange.ExchangeMiddleware
 	userIdProducer     *workerqueue.QueueMiddleware
@@ -47,34 +47,32 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	fmt.Printf("Join Data Handler: Initializing with %d ItemID worker instance(s) and %d StoreID worker instance(s)\n",
 		itemIdWorkerCount, storeIdWorkerCount)
 
-	// Create consumer for fixed join data
-	consumer := exchange.NewExchangeConsumer(
-		FixedJoinDataExchange,
-		[]string{FixedJoinDataRoutingKey},
+	// Create consumer for fixed join data queue
+	consumer := workerqueue.NewQueueConsumer(
+		FixedJoinDataQueue,
 		config,
 	)
 	if consumer == nil {
 		return nil, fmt.Errorf("failed to create fixed join data consumer")
 	}
 
-	// Declare the exchange before consuming
-	exchangeProducer := exchange.NewMessageMiddlewareExchange(
-		FixedJoinDataExchange,
-		[]string{FixedJoinDataRoutingKey},
+	// Declare the queue before consuming
+	queueProducer := workerqueue.NewMessageMiddlewareQueue(
+		FixedJoinDataQueue,
 		config,
 	)
-	if exchangeProducer == nil {
+	if queueProducer == nil {
 		consumer.Close()
-		return nil, fmt.Errorf("failed to create exchange producer for declaration")
+		return nil, fmt.Errorf("failed to create queue producer for declaration")
 	}
 
-	// Declare the exchange (creating it twice is not harmful in RabbitMQ)
-	if err := exchangeProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
+	// Declare the queue
+	if err := queueProducer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		exchangeProducer.Close()
-		return nil, fmt.Errorf("failed to declare fixed join data exchange: %v", err)
+		queueProducer.Close()
+		return nil, fmt.Errorf("failed to declare fixed join data queue: %v", err)
 	}
-	exchangeProducer.Close() // Close the producer as we don't need it anymore
+	queueProducer.Close() // Close the producer as we don't need it anymore
 
 	// Create producers for dictionaries
 	// ItemID uses exchange for broadcasting to all workers
@@ -85,7 +83,6 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	)
 	if itemIdProducer == nil {
 		consumer.Close()
-		exchangeProducer.Close()
 		return nil, fmt.Errorf("failed to create item ID dictionary producer")
 	}
 

@@ -131,10 +131,10 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 		return []GroupedResult{}, nil
 	}
 
-	// Skip header row
-	results := make([]GroupedResult, 0, len(records)-1)
+	results := make([]GroupedResult, 0, len(records))
 
-	for _, record := range records[1:] {
+	for _, record := range records {
+
 		if len(record) < 3 {
 			continue // Skip malformed records
 		}

@@ -161,8 +161,11 @@ func (tw *TopItemsWorker) processChunkData(chunkMsg *chunk.Chunk, clientState *C
 	}
 
 	// Skip header row
-	for i := 1; i < len(records); i++ {
-		record := records[i]
+	for _, record := range records {
+		if strings.Contains(record[0], "year") {
+			continue
+		}
+
 		if len(record) < 6 {
 			continue
 		}
