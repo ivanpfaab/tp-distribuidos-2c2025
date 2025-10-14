@@ -12,6 +12,8 @@ import (
 const (
 	// Alias queue names from centralized config
 	FixedJoinDataQueue             = queues.FixedJoinDataQueue
+	FixedJoinDataExchange          = queues.FixedJoinDataExchange
+	FixedJoinDataRoutingKey        = queues.FixedJoinDataRoutingKey
 	JoinUserIdDictionaryQueue      = queues.JoinUserIdDictionaryQueue
 	JoinItemIdDictionaryExchange   = queues.ItemIdDictionaryExchange
 	JoinItemIdDictionaryRoutingKey = queues.ItemIdDictionaryRoutingKey

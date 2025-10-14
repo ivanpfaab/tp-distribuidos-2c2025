@@ -9,8 +9,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 // JoinDataHandler encapsulates the join data handler state and dependencies
@@ -47,7 +47,7 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	fmt.Printf("Join Data Handler: Initializing with %d ItemID worker instance(s) and %d StoreID worker instance(s)\n",
 		itemIdWorkerCount, storeIdWorkerCount)
 
-	// Create consumer for fixed join data queue
+	// Create consumer for fixed join data (consume from queue, not exchange)
 	consumer := workerqueue.NewQueueConsumer(
 		FixedJoinDataQueue,
 		config,
@@ -57,22 +57,19 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	}
 
 	// Declare the queue before consuming
-	queueProducer := workerqueue.NewMessageMiddlewareQueue(
-		FixedJoinDataQueue,
-		config,
-	)
-	if queueProducer == nil {
+	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(FixedJoinDataQueue, config)
+	if queueDeclarer == nil {
 		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue producer for declaration")
+		return nil, fmt.Errorf("failed to create queue declarer")
 	}
 
 	// Declare the queue
-	if err := queueProducer.DeclareQueue(false, false, false, false); err != 0 {
+	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
-		queueProducer.Close()
+		queueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare fixed join data queue: %v", err)
 	}
-	queueProducer.Close() // Close the producer as we don't need it anymore
+	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producers for dictionaries
 	// ItemID uses exchange for broadcasting to all workers

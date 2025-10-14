@@ -16,6 +16,8 @@ const (
 	// ============================================================================
 	// Join Data Handler
 	FixedJoinDataQueue         = "fixed-join-data-queue"
+	FixedJoinDataExchange      = "fixed-join-data-exchange"
+	FixedJoinDataRoutingKey    = "fixed-join-data"
 	JoinItemIdDictionaryQueue  = "join-itemid-dictionary"
 	JoinStoreIdDictionaryQueue = "join-storeid-dictionary"
 	JoinUserIdDictionaryQueue  = "join-userid-dictionary"
