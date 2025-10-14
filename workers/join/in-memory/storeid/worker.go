@@ -121,19 +121,14 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("StoreID Join Worker: Starting to listen for messages...")
 
-	// Start consuming from dictionary queue
-	go func() {
-		if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
-			fmt.Printf("Failed to start dictionary consumer: %v\n", err)
-		}
-	}()
+	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
+		fmt.Printf("Failed to start dictionary consumer: %v\n", err)
+	}
 
-	// Start consuming from chunk queue
-	go func() {
-		if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
-			fmt.Printf("Failed to start chunk consumer: %v\n", err)
-		}
-	}()
+
+	if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
+		fmt.Printf("Failed to start chunk consumer: %v\n", err)
+	}
 
 	return 0
 }
