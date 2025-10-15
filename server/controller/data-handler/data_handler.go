@@ -274,6 +274,9 @@ func (dh *DataHandler) SendChunkToJoinDataHandler(chunkMsg *chunk.ChunkMessage) 
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	fmt.Printf("Data Handler: Sending chunk to join data handler - ClientID: %s, FileID: %s, ChunkNumber: %d /n",
+		chunkMsg.Chunk.ClientID, chunkMsg.Chunk.FileID, chunkMsg.Chunk.ChunkNumber)
+
 	// Send to join data handler queue
 	return dh.joinDataHandlerProducer.Send(messageData)
 }

@@ -213,8 +213,11 @@ func (jdh *JoinDataHandler) processMessage(delivery amqp.Delivery) middleware.Me
 // routeAndSendByFileId routes and sends message based on FileID
 func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []byte) middleware.MessageMiddlewareError {
 	fileIdUpper := strings.ToUpper(fileId)
+	logWithTimestamp("Join Data Handler: Received message with FileID %s", fileId)
 
 	if strings.Contains(fileIdUpper, "MN") {
+		logWithTimestamp("Join Data Handler: Received FileID %s, routing to %d ItemID worker instance(s)",
+			fileId, jdh.itemIdWorkerCount)
 		// ItemID: Send to exchange (broadcast to all worker instances)
 		// Generate routing keys for all ItemID worker instances
 		routingKeys := make([]string, jdh.itemIdWorkerCount)
@@ -227,6 +230,8 @@ func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []by
 			fileId, jdh.itemIdWorkerCount, routingKeys)
 		return jdh.itemIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "ST") {
+		logWithTimestamp("Join Data Handler: Received FileID %s, routing to %d StoreID worker instance(s)",
+			fileId, jdh.storeIdWorkerCount)
 		// StoreID: Send to exchange (broadcast to all worker instances)
 		// Generate routing keys for all StoreID worker instances
 		routingKeys := make([]string, jdh.storeIdWorkerCount)
@@ -239,6 +244,7 @@ func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []by
 			fileId, jdh.storeIdWorkerCount, routingKeys)
 		return jdh.storeIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "US") {
+		logWithTimestamp("Join Data Handler: Received FileID %s, routing to UserID dictionary queue", fileId)
 		// UserID: Send to queue (single worker)
 		logWithTimestamp("Join Data Handler: Routing FileID %s to UserID dictionary queue", fileId)
 		return jdh.userIdProducer.Send(messageData)

@@ -119,6 +119,8 @@ services:
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
     container_name: itemid-join-worker
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
@@ -136,6 +138,8 @@ services:
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
     container_name: itemid-join-worker-2
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
@@ -153,6 +157,8 @@ services:
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
     container_name: storeid-join-worker
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
@@ -170,6 +176,8 @@ services:
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
     container_name: storeid-join-worker-2
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
