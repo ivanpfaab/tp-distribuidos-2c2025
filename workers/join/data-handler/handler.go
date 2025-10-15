@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -12,6 +13,12 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
+
+// logWithTimestamp prints a formatted message with timestamp
+func logWithTimestamp(format string, args ...interface{}) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
+	fmt.Printf("[%s] %s\n", timestamp, fmt.Sprintf(format, args...))
+}
 
 // JoinDataHandler encapsulates the join data handler state and dependencies
 type JoinDataHandler struct {
@@ -44,7 +51,7 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		}
 	}
 
-	fmt.Printf("Join Data Handler: Initializing with %d ItemID worker instance(s) and %d StoreID worker instance(s)\n",
+	logWithTimestamp("Join Data Handler: Initializing with %d ItemID worker instance(s) and %d StoreID worker instance(s)",
 		itemIdWorkerCount, storeIdWorkerCount)
 
 	// Create consumer for fixed join data (consume from queue, not exchange)
@@ -146,7 +153,7 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 
 // Start starts the join data handler
 func (jdh *JoinDataHandler) Start() middleware.MessageMiddlewareError {
-	fmt.Println("Join Data Handler: Starting to listen for fixed join data...")
+	logWithTimestamp("Join Data Handler: Starting to listen for fixed join data...")
 	return jdh.consumer.StartConsuming(jdh.createCallback())
 }
 
@@ -181,12 +188,11 @@ func (jdh *JoinDataHandler) createCallback() func(middleware.ConsumeChannel, cha
 
 // processMessage processes a single message and routes it to the appropriate dictionary queue/exchange
 func (jdh *JoinDataHandler) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	fmt.Printf("Join Data Handler: Received message: %s\n", string(delivery.Body))
 
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 	if err != nil {
-		fmt.Printf("Join Data Handler: Failed to deserialize chunk message: %v\n", err)
+		logWithTimestamp("Join Data Handler: Failed to deserialize chunk message: %v", err)
 		delivery.Nack(false, false) // Reject the message
 		return middleware.MessageMiddlewareMessageError
 	}
@@ -194,12 +200,12 @@ func (jdh *JoinDataHandler) processMessage(delivery amqp.Delivery) middleware.Me
 	// Route based on FileID
 	sendErr := jdh.routeAndSendByFileId(chunkMsg.FileID, delivery.Body)
 	if sendErr != 0 {
-		fmt.Printf("Join Data Handler: Failed to route chunk with FileID %s: %v\n", chunkMsg.FileID, sendErr)
+		logWithTimestamp("Join Data Handler: Failed to route chunk with FileID %s: %v", chunkMsg.FileID, sendErr)
 		delivery.Nack(false, true) // Reject and requeue
 		return sendErr
 	}
 
-	fmt.Printf("Join Data Handler: Successfully routed chunk with FileID %s\n", chunkMsg.FileID)
+	logWithTimestamp("Join Data Handler: Successfully routed chunk with FileID %s", chunkMsg.FileID)
 	delivery.Ack(false) // Acknowledge the original message
 	return 0
 }
@@ -217,7 +223,7 @@ func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []by
 			routingKeys[i] = fmt.Sprintf("%s-instance-%d", JoinItemIdDictionaryRoutingKey, instanceID)
 		}
 
-		fmt.Printf("Join Data Handler: Broadcasting FileID %s to %d ItemID worker instance(s) with routing keys: %v\n",
+		logWithTimestamp("Join Data Handler: Broadcasting FileID %s to %d ItemID worker instance(s) with routing keys: %v",
 			fileId, jdh.itemIdWorkerCount, routingKeys)
 		return jdh.itemIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "ST") {
@@ -229,15 +235,15 @@ func (jdh *JoinDataHandler) routeAndSendByFileId(fileId string, messageData []by
 			routingKeys[i] = fmt.Sprintf("%s-instance-%d", JoinStoreIdDictionaryRoutingKey, instanceID)
 		}
 
-		fmt.Printf("Join Data Handler: Broadcasting FileID %s to %d StoreID worker instance(s) with routing keys: %v\n",
+		logWithTimestamp("Join Data Handler: Broadcasting FileID %s to %d StoreID worker instance(s) with routing keys: %v",
 			fileId, jdh.storeIdWorkerCount, routingKeys)
 		return jdh.storeIdProducer.Send(messageData, routingKeys)
 	} else if strings.Contains(fileIdUpper, "US") {
 		// UserID: Send to queue (single worker)
-		fmt.Printf("Join Data Handler: Routing FileID %s to UserID dictionary queue\n", fileId)
+		logWithTimestamp("Join Data Handler: Routing FileID %s to UserID dictionary queue", fileId)
 		return jdh.userIdProducer.Send(messageData)
 	}
 
-	fmt.Printf("Join Data Handler: Unknown FileID: %s, ignoring message\n", fileId)
+	logWithTimestamp("Join Data Handler: Unknown FileID: %s, ignoring message", fileId)
 	return 0 // Success - just ignore unknown file types
 }
