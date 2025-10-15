@@ -240,7 +240,7 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 		}
 
 		// Try to join pending users
-		found, notFound := jw.attemptJoinAll(state.pendingUsers)
+		found, notFound := jw.attemptJoinAll(state.pendingUsers, clientID)
 
 		// Send found users immediately
 		if len(found) > 0 {
@@ -275,12 +275,12 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 }
 
 // attemptJoinAll attempts to join all pending users, returns (found, notFound)
-func (jw *JoinByUserIdWorker) attemptJoinAll(pendingUsers []TopUserRecord) ([]TopUserRecord, []TopUserRecord) {
+func (jw *JoinByUserIdWorker) attemptJoinAll(pendingUsers []TopUserRecord, clientID string) ([]TopUserRecord, []TopUserRecord) {
 	var found []TopUserRecord
 	var notFound []TopUserRecord
 
 	for _, topUser := range pendingUsers {
-		user, err := jw.lookupUserFromFile(topUser.UserID)
+		user, err := jw.lookupUserFromFile(topUser.UserID, clientID)
 		if err != nil || user == nil {
 			// User not found yet, keep in pending
 			notFound = append(notFound, topUser)
@@ -300,7 +300,7 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, state *ClientStat
 	csvBuilder.WriteString("user_id,store_id,purchase_count,rank,gender,birthdate,registered_at\n")
 
 	for _, topUser := range foundUsers {
-		user, err := jw.lookupUserFromFile(topUser.UserID)
+		user, err := jw.lookupUserFromFile(topUser.UserID, clientID)
 		if err != nil || user == nil {
 			// Should not happen since we already found them
 			continue
@@ -402,7 +402,7 @@ type UserData struct {
 }
 
 // lookupUserFromFile looks up user data from the appropriate partition file
-func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string) (*UserData, error) {
+func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string) (*UserData, error) {
 	// Normalize user ID (remove decimal point if present, e.g., "13060.0" -> "13060")
 	normalizedUserID := strings.TrimSuffix(userID, ".0")
 
@@ -412,8 +412,8 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string) (*UserData, erro
 		return nil, fmt.Errorf("failed to get partition for user %s: %w", normalizedUserID, err)
 	}
 
-	// Open the partition file
-	filename := fmt.Sprintf("users-partition-%03d.csv", partition)
+	// Open the partition file with client ID prefix
+	filename := fmt.Sprintf("%s-users-partition-%03d.csv", clientID, partition)
 	filePath := filepath.Join(SharedDataDir, filename)
 
 	file, err := os.Open(filePath)
