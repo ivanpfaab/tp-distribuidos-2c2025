@@ -33,21 +33,21 @@ type TransactionItem struct {
 	CreatedAt     time.Time
 }
 
-// GroupedResult represents the grouped data by year, semester, item_id
+// GroupedResult represents the grouped data by year, month, item_id
 type GroupedResult struct {
-	Year        int
-	Semester    int
-	ItemID      string
+	Year          int
+	Month         int
+	ItemID        string
 	TotalQuantity int
 	TotalSubtotal float64
-	Count       int
+	Count         int
 }
 
 // MapWorker processes chunks and groups by year, semester, item_id
 type MapWorker struct {
-	consumer     *workerqueue.QueueConsumer
-	producers    map[string]*workerqueue.QueueMiddleware
-	config       *middleware.ConnectionConfig
+	consumer  *workerqueue.QueueConsumer
+	producers map[string]*workerqueue.QueueMiddleware
+	config    *middleware.ConnectionConfig
 }
 
 // NewMapWorker creates a new map worker instance
@@ -89,12 +89,12 @@ func NewMapWorker() *MapWorker {
 		if producer == nil {
 			log.Fatalf("Failed to create producer for queue: %s", queueName)
 		}
-		
+
 		// Declare the queue before using it
 		if err := producer.DeclareQueue(false, false, false, false); err != 0 {
 			log.Fatalf("Failed to declare queue %s: %v", queueName, err)
 		}
-		
+
 		producers[queueName] = producer
 	}
 
@@ -129,9 +129,9 @@ func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 		return fmt.Errorf("failed to send to reduce queues: %v", err)
 	}
 
-	log.Printf("Successfully processed chunk %d, sent to %d reduce queues", 
+	log.Printf("Successfully processed chunk %d, sent to %d reduce queues",
 		chunk.ChunkNumber, len(groupedData))
-	
+
 	return nil
 }
 
@@ -149,7 +149,7 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]TransactionItem, error) {
 
 	// Skip header row
 	transactions := make([]TransactionItem, 0, len(records)-1)
-	
+
 	for _, record := range records[1:] {
 		if len(record) < 6 {
 			continue // Skip malformed records
@@ -196,41 +196,47 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]TransactionItem, error) {
 	return transactions, nil
 }
 
-// groupTransactions groups transactions by year, semester, item_id
+// groupTransactions groups transactions by year, month, item_id
+// Returns data grouped by semester (for routing) containing month-level aggregations
 func (mw *MapWorker) groupTransactions(transactions []TransactionItem) map[Semester]map[string]*GroupedResult {
 	groupedData := make(map[Semester]map[string]*GroupedResult)
 
 	for _, transaction := range transactions {
-		// Calculate semester from date
+		// Calculate semester from date (for routing to correct reduce worker)
 		semester := GetSemesterFromDate(transaction.CreatedAt)
-		
+
 		// Skip invalid semesters (outside our range)
 		if !IsValidSemester(semester) {
 			continue
 		}
+
+		// Get year and month for grouping
+		year, month := GetMonthFromDate(transaction.CreatedAt)
 
 		// Initialize semester map if needed
 		if groupedData[semester] == nil {
 			groupedData[semester] = make(map[string]*GroupedResult)
 		}
 
-		// Get or create grouped result for this item_id
+		// Create composite key: year-month-itemID (e.g., "2024-03-ITM001")
 		itemID := transaction.ItemID
-		if groupedData[semester][itemID] == nil {
-			groupedData[semester][itemID] = &GroupedResult{
-				Year:         semester.Year,
-				Semester:     semester.Semester,
-				ItemID:       itemID,
+		compositeKey := fmt.Sprintf("%d-%02d-%s", year, month, itemID)
+
+		if groupedData[semester][compositeKey] == nil {
+			groupedData[semester][compositeKey] = &GroupedResult{
+				Year:          year,
+				Month:         month,
+				ItemID:        itemID,
 				TotalQuantity: 0,
 				TotalSubtotal: 0,
-				Count:        0,
+				Count:         0,
 			}
 		}
 
 		// Aggregate data
-		groupedData[semester][itemID].TotalQuantity += transaction.Quantity
-		groupedData[semester][itemID].TotalSubtotal += transaction.Subtotal
-		groupedData[semester][itemID].Count++
+		groupedData[semester][compositeKey].TotalQuantity += transaction.Quantity
+		groupedData[semester][compositeKey].TotalSubtotal += transaction.Subtotal
+		groupedData[semester][compositeKey].Count++
 	}
 
 	return groupedData
@@ -247,7 +253,7 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 
 		// Convert grouped data to CSV
 		csvData := mw.convertToCSV(itemGroups)
-		
+
 		// Create new chunk for reduce queue
 		reduceChunk := chunk.NewChunk(
 			originalChunk.ClientID,
@@ -270,7 +276,7 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 
 		log.Printf("Sending to queue %s: %d bytes, %d item groups", queueName, len(serializedData), len(itemGroups))
 		log.Printf("Serialized data preview: %s", string(serializedData[:min(100, len(serializedData))]))
-		
+
 		sendErr := producer.Send(serializedData)
 		if sendErr != 0 {
 			return fmt.Errorf("failed to send to queue %s: error code %v", queueName, sendErr)
@@ -285,22 +291,22 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 // convertToCSV converts grouped data to CSV format
 func (mw *MapWorker) convertToCSV(itemGroups map[string]*GroupedResult) string {
 	var csvBuilder strings.Builder
-	
-	// Write header
-	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
-	
+
+	// Write header (changed from semester to month)
+	csvBuilder.WriteString("year,month,item_id,total_quantity,total_subtotal,count\n")
+
 	// Write data rows
 	for _, result := range itemGroups {
 		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
 			result.Year,
-			result.Semester,
+			result.Month,
 			result.ItemID,
 			result.TotalQuantity,
 			result.TotalSubtotal,
 			result.Count,
 		))
 	}
-	
+
 	return csvBuilder.String()
 }
 
@@ -350,7 +356,7 @@ func (mw *MapWorker) Start() {
 	if err := mw.consumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming: %v", err)
 	}
-	
+
 	// Keep the main thread alive to prevent the program from exiting
 	// The consumer runs in a goroutine, so we need to block here
 	select {}
@@ -361,7 +367,7 @@ func (mw *MapWorker) Close() {
 	if mw.consumer != nil {
 		mw.consumer.Close()
 	}
-	
+
 	for _, producer := range mw.producers {
 		if producer != nil {
 			producer.Close()

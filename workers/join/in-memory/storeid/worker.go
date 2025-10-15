@@ -121,19 +121,14 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("StoreID Join Worker: Starting to listen for messages...")
 
-	// Start consuming from dictionary queue
-	go func() {
-		if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
-			fmt.Printf("Failed to start dictionary consumer: %v\n", err)
-		}
-	}()
+	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
+		fmt.Printf("Failed to start dictionary consumer: %v\n", err)
+	}
 
-	// Start consuming from chunk queue
-	go func() {
-		if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
-			fmt.Printf("Failed to start chunk consumer: %v\n", err)
-		}
-	}()
+
+	if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
+		fmt.Printf("Failed to start chunk consumer: %v\n", err)
+	}
 
 	return 0
 }
@@ -340,8 +335,11 @@ func (w *StoreIdJoinWorker) parseStoresData(csvData string) error {
 	defer w.mutex.Unlock()
 
 	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "store_id") {
+			continue
+		}
 		if len(record) >= 8 {
 			store := &Store{
 				StoreID:    record[0],

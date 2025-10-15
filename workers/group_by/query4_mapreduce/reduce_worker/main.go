@@ -69,8 +69,8 @@ func NewReduceWorker() *ReduceWorker {
 	}
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
-	// Create producer for the final results queue
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query4GroupByResultsQueue, config)
+	// Create producer for the top users queue (goes to top classification component)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query4TopUsersQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")
@@ -131,10 +131,10 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 		return []GroupedResult{}, nil
 	}
 
-	// Skip header row
-	results := make([]GroupedResult, 0, len(records)-1)
+	results := make([]GroupedResult, 0, len(records))
 
-	for _, record := range records[1:] {
+	for _, record := range records {
+
 		if len(record) < 3 {
 			continue // Skip malformed records
 		}

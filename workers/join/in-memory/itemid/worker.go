@@ -121,18 +121,15 @@ func (w *ItemIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("ItemID Join Worker: Starting to listen for messages...")
 
 	// Start consuming from dictionary queue
-	go func() {
-		if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
-			fmt.Printf("Failed to start dictionary consumer: %v\n", err)
-		}
-	}()
+	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
+		fmt.Printf("Failed to start dictionary consumer: %v\n", err)
+	}
+	
 
 	// Start consuming from chunk queue
-	go func() {
-		if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
-			fmt.Printf("Failed to start chunk consumer: %v\n", err)
-		}
-	}()
+	if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
+		fmt.Printf("Failed to start chunk consumer: %v\n", err)
+	}
 
 	return 0
 }
@@ -340,9 +337,11 @@ func (w *ItemIdJoinWorker) parseMenuItemsData(csvData string) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "item_id") {
+			continue
+		}
 		if len(record) >= 7 {
 			menuItem := &MenuItem{
 				ItemID:        record[0],

@@ -1,6 +1,8 @@
 package workerqueue
 
 import (
+	"context"
+
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 
@@ -70,7 +72,8 @@ func (m *QueueMiddleware) Send(
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
-	err := (*m.MessageMiddlewareQueue.Channel).Publish(
+	err := (*m.MessageMiddlewareQueue.Channel).PublishWithContext(
+		context.Background(),
 		"",                                 // exchange (empty for default queue)
 		m.MessageMiddlewareQueue.QueueName, // routing key
 		false,                              // mandatory

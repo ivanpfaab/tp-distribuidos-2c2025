@@ -1,6 +1,8 @@
 package exchange
 
 import (
+	"context"
+
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 
@@ -77,7 +79,8 @@ func (m *ExchangeMiddleware) Send(
 
 	// Fanout case (maybe handle this a bit more nicely?)
 	if len(routeKeys) == 0 {
-		err := (*m.AmqpChannel).Publish(
+		err := (*m.AmqpChannel).PublishWithContext(
+			context.Background(),
 			m.ExchangeName,
 			"", // routing key ignored
 			false,
@@ -91,7 +94,8 @@ func (m *ExchangeMiddleware) Send(
 
 	// Send to each routing key
 	for _, routeKey := range routeKeys {
-		err := (*m.AmqpChannel).Publish(
+		err := (*m.AmqpChannel).PublishWithContext(
+			context.Background(),
 			m.ExchangeName, // The target exchange
 			routeKey,       // The routing key
 			false,          // mandatory

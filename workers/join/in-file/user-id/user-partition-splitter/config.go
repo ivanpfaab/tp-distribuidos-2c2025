@@ -6,9 +6,13 @@ import (
 	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
+	// Queue names from centralized config
+	JoinUserIdDictionaryQueue = queues.JoinUserIdDictionaryQueue
+
 	// Partition configuration
 	NumPartitions = 100 // Total number of partition files (must match reader)
 

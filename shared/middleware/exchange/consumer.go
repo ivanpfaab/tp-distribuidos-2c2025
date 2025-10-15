@@ -77,11 +77,10 @@ func (m *ExchangeConsumer) StartConsuming(
 		false, // no-wait
 		nil,   // arguments
 	)
-	//	if err != nil {
-	// 		testing_utils.LogError("Exchange Consumer", "Failed to bind queue for exchange '%s' with key '%s': %v", m.ExchangeName, routingKey, err)
-	// 		return middleware.MessageMiddlewareMessageError
-	// 	}
-	// }
+	if err != nil {
+		testing_utils.LogError("Exchange Consumer", "Failed to bind queue for exchange '%s' with key '%s': %v", m.ExchangeName, m.RouteKeys[0], err)
+		return middleware.MessageMiddlewareMessageError
+	}
 
 	// Start consuming from the queue
 	deliveries, err := (*m.AmqpChannel).Consume(
@@ -97,6 +96,8 @@ func (m *ExchangeConsumer) StartConsuming(
 		testing_utils.LogError("Exchange Consumer", "Failed to start consuming for exchange '%s': %v", m.ExchangeName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
+
+	testing_utils.LogDebug("Exchange Consumer", "Consumer started for exchange '%s' on queue '%s'", m.ExchangeName, queue.Name)
 
 	// Set the consume channel
 	m.ConsumeChannel = &deliveries

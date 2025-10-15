@@ -23,18 +23,20 @@ func min(a, b int) int {
 	return b
 }
 
-// GroupedResult represents the grouped data by item_id (already grouped by semester)
+// GroupedResult represents the grouped data by year, month, item_id
 type GroupedResult struct {
+	Year          int
+	Month         int
 	ItemID        string
 	TotalQuantity int
 	TotalSubtotal float64
 	Count         int
 }
 
-// FinalResult represents the final aggregated result
+// FinalResult represents the final aggregated result (aggregated by month)
 type FinalResult struct {
 	Year          int
-	Semester      int
+	Month         int
 	ItemID        string
 	TotalQuantity int
 	TotalSubtotal float64
@@ -47,7 +49,7 @@ type ReduceWorker struct {
 	consumer    *workerqueue.QueueConsumer
 	producer    *workerqueue.QueueMiddleware
 	config      *middleware.ConnectionConfig
-	groupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
+	groupedData map[string]*GroupedResult // Key: year-month-item_id, Value: aggregated data
 	chunkCount  int                       // Track number of chunks received
 	clientID    string                    // Store the client ID from incoming chunks
 }
@@ -81,8 +83,8 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	}
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
-	// Create producer for the final results queue
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2GroupByResultsQueue, config)
+	// Create producer for the top items queue (goes to top classification component)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2TopItemsQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")
@@ -132,7 +134,7 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	return nil
 }
 
-// parseCSVData parses CSV data from chunk
+// parseCSVData parses CSV data from chunk (now with year and month)
 func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	reader := csv.NewReader(strings.NewReader(csvData))
 	records, err := reader.ReadAll()
@@ -144,12 +146,22 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 		return []GroupedResult{}, nil
 	}
 
-	// Skip header row
-	results := make([]GroupedResult, 0, len(records)-1)
+	results := make([]GroupedResult, 0, len(records))
 
-	for _, record := range records[1:] {
+	for _, record := range records {
+
 		if len(record) < 6 {
 			continue // Skip malformed records
+		}
+
+		year, err := strconv.Atoi(record[0])
+		if err != nil {
+			continue // Skip records with invalid year
+		}
+
+		month, err := strconv.Atoi(record[1])
+		if err != nil {
+			continue // Skip records with invalid month
 		}
 
 		quantity, err := strconv.Atoi(record[3])
@@ -168,6 +180,8 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 		}
 
 		result := GroupedResult{
+			Year:          year,
+			Month:         month,
 			ItemID:        record[2],
 			TotalQuantity: quantity,
 			TotalSubtotal: subtotal,
@@ -180,15 +194,18 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	return results, nil
 }
 
-// aggregateData aggregates data by item_id
+// aggregateData aggregates data by year-month-item_id
 func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 	for _, result := range results {
-		itemID := result.ItemID
+		// Create composite key: year-month-itemID (e.g., "2024-03-ITM001")
+		compositeKey := fmt.Sprintf("%d-%02d-%s", result.Year, result.Month, result.ItemID)
 
-		// Get or create grouped result for this item_id
-		if rw.groupedData[itemID] == nil {
-			rw.groupedData[itemID] = &GroupedResult{
-				ItemID:        itemID,
+		// Get or create grouped result for this composite key
+		if rw.groupedData[compositeKey] == nil {
+			rw.groupedData[compositeKey] = &GroupedResult{
+				Year:          result.Year,
+				Month:         result.Month,
+				ItemID:        result.ItemID,
 				TotalQuantity: 0,
 				TotalSubtotal: 0,
 				Count:         0,
@@ -196,9 +213,9 @@ func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 		}
 
 		// Aggregate data
-		rw.groupedData[itemID].TotalQuantity += result.TotalQuantity
-		rw.groupedData[itemID].TotalSubtotal += result.TotalSubtotal
-		rw.groupedData[itemID].Count += result.Count
+		rw.groupedData[compositeKey].TotalQuantity += result.TotalQuantity
+		rw.groupedData[compositeKey].TotalSubtotal += result.TotalSubtotal
+		rw.groupedData[compositeKey].Count += result.Count
 	}
 }
 
@@ -207,12 +224,12 @@ func (rw *ReduceWorker) FinalizeResults() error {
 	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique items",
 		rw.semester.String(), rw.chunkCount, len(rw.groupedData))
 
-	// Convert to final results
+	// Convert to final results (now with year and month from the data)
 	finalResults := make([]FinalResult, 0, len(rw.groupedData))
 	for _, grouped := range rw.groupedData {
 		finalResult := FinalResult{
-			Year:          rw.semester.Year,
-			Semester:      rw.semester.Semester,
+			Year:          grouped.Year,
+			Month:         grouped.Month,
 			ItemID:        grouped.ItemID,
 			TotalQuantity: grouped.TotalQuantity,
 			TotalSubtotal: grouped.TotalSubtotal,
@@ -315,14 +332,14 @@ func (rw *ReduceWorker) clearAggregatedData() {
 func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 	var csvBuilder strings.Builder
 
-	// Write header
-	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
+	// Write header (changed from semester to month)
+	csvBuilder.WriteString("year,month,item_id,total_quantity,total_subtotal,count\n")
 
 	// Write data rows
 	for _, result := range results {
 		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
 			result.Year,
-			result.Semester,
+			result.Month,
 			result.ItemID,
 			result.TotalQuantity,
 			result.TotalSubtotal,
