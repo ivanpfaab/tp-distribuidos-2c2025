@@ -11,7 +11,7 @@ import (
 
 const (
 	// Queue names from centralized config
-	FixedJoinDataQueue = queues.FixedJoinDataQueue
+	JoinUserIdDictionaryQueue = queues.JoinUserIdDictionaryQueue
 
 	// Partition configuration
 	NumPartitions = 100 // Total number of partition files (must match reader)

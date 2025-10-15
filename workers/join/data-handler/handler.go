@@ -27,8 +27,9 @@ type JoinDataHandler struct {
 	storeIdProducer    *exchange.ExchangeMiddleware
 	userIdProducer     *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
-	itemIdWorkerCount  int // Number of ItemID worker instances to broadcast to
-	storeIdWorkerCount int // Number of StoreID worker instances to broadcast to
+	itemIdWorkerCount  int       // Number of ItemID worker instances to broadcast to
+	storeIdWorkerCount int       // Number of StoreID worker instances to broadcast to
+	readyChan          chan bool // Channel to signal when consumer is actually ready
 }
 
 // NewJoinDataHandler creates a new JoinDataHandler instance
@@ -148,6 +149,7 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		config:             config,
 		itemIdWorkerCount:  itemIdWorkerCount,
 		storeIdWorkerCount: storeIdWorkerCount,
+		readyChan:          make(chan bool, 1), // Buffered channel
 	}, nil
 }
 
@@ -155,6 +157,22 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 func (jdh *JoinDataHandler) Start() middleware.MessageMiddlewareError {
 	logWithTimestamp("Join Data Handler: Starting to listen for fixed join data...")
 	return jdh.consumer.StartConsuming(jdh.createCallback())
+}
+
+// WaitUntilReady blocks until the consumer goroutine is actually running and ready
+// Returns true if ready, false if timeout (after 10 seconds)
+func (jdh *JoinDataHandler) WaitUntilReady() bool {
+	logWithTimestamp("Join Data Handler: Waiting for consumer to be ready...")
+
+	// Wait up to 10 seconds for the consumer to signal readiness
+	select {
+	case <-jdh.readyChan:
+		logWithTimestamp("Join Data Handler: Consumer is confirmed ready!")
+		return true
+	case <-time.After(10 * time.Second):
+		logWithTimestamp("Join Data Handler: WARNING - Timeout waiting for consumer readiness")
+		return false
+	}
 }
 
 // Close closes all connections
@@ -176,6 +194,14 @@ func (jdh *JoinDataHandler) Close() {
 // createCallback creates the message processing callback
 func (jdh *JoinDataHandler) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		// Signal that we're actually consuming (goroutine is running and channel is open)
+		select {
+		case jdh.readyChan <- true:
+			logWithTimestamp("Join Data Handler: Consumer goroutine is ready and listening")
+		default:
+			// Channel already signaled or full, ignore
+		}
+
 		for delivery := range *consumeChannel {
 			err := jdh.processMessage(delivery)
 			if err != 0 {

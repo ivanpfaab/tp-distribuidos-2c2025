@@ -31,9 +31,9 @@ type UserPartitionSplitter struct {
 
 // NewUserPartitionSplitter creates a new splitter instance
 func NewUserPartitionSplitter(connConfig *middleware.ConnectionConfig, splitterConfig *Config) (*UserPartitionSplitter, error) {
-	// Create consumer for user data from join-data-handler (consume from queue, not exchange)
+	// Create consumer for user data from join-data-handler (consume from user ID dictionary queue)
 	consumer := workerqueue.NewQueueConsumer(
-		FixedJoinDataQueue,
+		JoinUserIdDictionaryQueue,
 		connConfig,
 	)
 	if consumer == nil {
@@ -41,7 +41,7 @@ func NewUserPartitionSplitter(connConfig *middleware.ConnectionConfig, splitterC
 	}
 
 	// Declare the input queue before consuming
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(FixedJoinDataQueue, connConfig)
+	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(JoinUserIdDictionaryQueue, connConfig)
 	if queueDeclarer == nil {
 		consumer.Close()
 		return nil, fmt.Errorf("failed to create queue declarer")
