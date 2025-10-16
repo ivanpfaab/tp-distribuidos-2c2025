@@ -83,7 +83,12 @@ func NewMapWorker() *MapWorker {
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create exchange producer for topic exchange
-	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.Query4MapReduceExchange, []string{}, config)
+	routingKey := queues.GetQuery4RoutingKey()
+	if routingKey == "" {
+		consumer.Close()
+		log.Fatalf("No routing key found for Query 4")
+	}
+	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.Query4MapReduceExchange, []string{routingKey}, config)
 	if exchangeProducer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create exchange producer for exchange: %s", queues.Query4MapReduceExchange)
@@ -95,15 +100,6 @@ func NewMapWorker() *MapWorker {
 		exchangeProducer.Close()
 		log.Fatalf("Failed to declare topic exchange %s: %v", queues.Query4MapReduceExchange, err)
 	}
-
-	// Get routing key for Query 4
-	routingKey := queues.GetQuery4RoutingKey()
-	if routingKey == "" {
-		consumer.Close()
-		exchangeProducer.Close()
-		log.Fatalf("No routing key found for Query 4")
-	}
-	log.Printf("Using routing key: %s", routingKey)
 
 	// Create orchestrator communicator
 	orchestratorComm := NewOrchestratorCommunicator("query4-map-worker", config)

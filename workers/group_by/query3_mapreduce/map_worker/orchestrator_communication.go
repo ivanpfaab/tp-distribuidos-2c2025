@@ -52,7 +52,7 @@ func NewOrchestratorCommunicator(mapWorkerID string, config *middleware.Connecti
 		log.Fatalf("Failed to create termination signal consumer")
 	}
 
-	// Declare the termination exchange (fanout)
+	// Declare the termination exchange (fanout). TODO CHECK IF WE SHOULD USE []string{""} OR []string{}
 	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(queues.Query3MapTerminationExchange, []string{}, config)
 	if exchangeDeclarer == nil {
 		chunkNotificationProducer.Close()

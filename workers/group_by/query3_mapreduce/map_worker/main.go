@@ -85,8 +85,27 @@ func NewMapWorker() *MapWorker {
 	}
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
+	// Create routing keys mapping
+	routingKeys := make(map[string]string)
+	semesters := GetAllSemesters()
+	for _, semester := range semesters {
+		queueName := GetQueueNameForSemester(semester)
+		routingKey := queues.GetQuery3RoutingKey(semester.Year, semester.Semester)
+		if routingKey == "" {
+			consumer.Close()
+			log.Fatalf("No routing key found for semester %d-%d", semester.Year, semester.Semester)
+		}
+		routingKeys[queueName] = routingKey
+		log.Printf("Mapped queue %s to routing key: %s", queueName, routingKey)
+	}
+
+	routingKeysArray := make([]string, 0)
+	for _, routingKey := range routingKeys {
+		routingKeysArray = append(routingKeysArray, routingKey)
+	}
+
 	// Create exchange producer for topic exchange
-	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.Query3MapReduceExchange, []string{}, config)
+	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.Query3MapReduceExchange, routingKeysArray, config)
 	if exchangeProducer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create exchange producer for exchange: %s", queues.Query3MapReduceExchange)
@@ -97,21 +116,6 @@ func NewMapWorker() *MapWorker {
 		consumer.Close()
 		exchangeProducer.Close()
 		log.Fatalf("Failed to declare topic exchange %s: %v", queues.Query3MapReduceExchange, err)
-	}
-
-	// Create routing keys mapping
-	routingKeys := make(map[string]string)
-	semesters := GetAllSemesters()
-	for _, semester := range semesters {
-		queueName := GetQueueNameForSemester(semester)
-		routingKey := queues.GetQuery3RoutingKey(semester.Year, semester.Semester)
-		if routingKey == "" {
-			consumer.Close()
-			exchangeProducer.Close()
-			log.Fatalf("No routing key found for semester %d-%d", semester.Year, semester.Semester)
-		}
-		routingKeys[queueName] = routingKey
-		log.Printf("Mapped queue %s to routing key: %s", queueName, routingKey)
 	}
 
 	// Create orchestrator communicator

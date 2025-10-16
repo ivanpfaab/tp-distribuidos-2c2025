@@ -83,20 +83,6 @@ func NewMapWorker() *MapWorker {
 	}
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
-	// Create topic exchange producer for all semesters
-	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.Query2MapReduceExchange, []string{}, config)
-	if exchangeProducer == nil {
-		consumer.Close()
-		log.Fatal("Failed to create topic exchange producer")
-	}
-
-	// Declare the topic exchange
-	if err := exchangeProducer.DeclareExchange("topic", false, false, false, false); err != 0 {
-		consumer.Close()
-		exchangeProducer.Close()
-		log.Fatalf("Failed to declare topic exchange '%s': %v", queues.Query2MapReduceExchange, err)
-	}
-
 	// Create routing keys map for each semester
 	routingKeys := make(map[string]string)
 	semesters := GetAllSemesters()
@@ -108,6 +94,25 @@ func NewMapWorker() *MapWorker {
 		}
 		routingKeys[GetQueueNameForSemester(semester)] = routingKey
 		log.Printf("Mapped queue %s to routing key: %s", GetQueueNameForSemester(semester), routingKey)
+	}
+
+	routingKeysArray := make([]string, 0)
+	for _, routingKey := range routingKeys {
+		routingKeysArray = append(routingKeysArray, routingKey)
+	}
+
+	// Create topic exchange producer for all semesters
+	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.Query2MapReduceExchange, routingKeysArray, config)
+	if exchangeProducer == nil {
+		consumer.Close()
+		log.Fatal("Failed to create topic exchange producer")
+	}
+
+	// Declare the topic exchange
+	if err := exchangeProducer.DeclareExchange("topic", false, false, false, false); err != 0 {
+		consumer.Close()
+		exchangeProducer.Close()
+		log.Fatalf("Failed to declare topic exchange '%s': %v", queues.Query2MapReduceExchange, err)
 	}
 
 	// Create orchestrator communicator
