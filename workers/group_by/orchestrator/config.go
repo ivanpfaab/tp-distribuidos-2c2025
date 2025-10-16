@@ -26,13 +26,13 @@ func NewOrchestratorConfig(queryType int) *OrchestratorConfig {
 // GetTotalExpectedFiles returns the total expected number of files for a query type
 func GetTotalExpectedFiles(queryType int) int {
 	if queryType == 2 {
-		return 2 // transaction_items
+		return 3 // transaction_items
 	}
 	if queryType == 3 {
-		return 2 // transactions
+		return 3 // transactions
 	}
 	if queryType == 4 {
-		return 2 // transactions
+		return 3 // transactions
 	}
 	return 0
 }
