@@ -182,9 +182,11 @@ func (ups *UserPartitionSplitter) distributeUsers(chunkMsg *chunk.Chunk) error {
 	userCount := 0
 	routingStats := make(map[int]int) // Track users per writer
 
-	// Process each user record (skip header)
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "user_id") {
+			continue
+		}
 		if len(record) < 4 {
 			fmt.Printf("User Partition Splitter: Skipping malformed record: %v\n", record)
 			continue

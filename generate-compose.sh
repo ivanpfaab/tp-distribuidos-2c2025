@@ -824,6 +824,25 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
+  join-garbage-collector:
+    build:
+      context: .
+      dockerfile: ./workers/join/garbage-collector/Dockerfile
+    container_name: join-garbage-collector
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      COMPLETION_QUEUE: "join-completion-queue"
+      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
+      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
+      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
+    profiles: ["orchestration"]
+
 EOF_REMAINING
 
 # Function to generate user-partition-splitter
@@ -1110,6 +1129,8 @@ generate_server_dependencies() {
     echo "        condition: service_started"
     echo "      streaming-service:"
     echo "        condition: service_started"
+    echo "      join-garbage-collector:"
+    echo "        condition: service_started"
     echo "    environment:"
     echo "      - SERVER_PORT=8080"
     echo "      - RABBITMQ_HOST=rabbitmq"
@@ -1209,6 +1230,7 @@ echo ""
 echo -e "${BLUE}Additional services included:${NC}"
 echo -e "  - Query 2 Top Items Worker (1 instance)"
 echo -e "  - Query 4 Top Users Worker (1 instance)"
+echo -e "  - Join Garbage Collector (1 instance)"
 echo ""
 echo -e "${GREEN}You can now run: ${YELLOW}make docker-compose-up${NC}"
 echo ""

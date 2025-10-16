@@ -11,12 +11,13 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 const (
-	InitialWaitDuration = 2 * time.Second // Wait after IsLastChunk before first join attempt
+	InitialWaitDuration = 2 * time.Second
 	JoinTickerInterval  = 1 * time.Second // How often to check for ready clients
 	MaxJoinAttempts     = 10              // Maximum join retry attempts per client
 )
@@ -41,9 +42,11 @@ type ClientState struct {
 
 // JoinByUserIdWorker handles joining top users data with user data from CSV files
 type JoinByUserIdWorker struct {
-	consumer *workerqueue.QueueConsumer
-	producer *workerqueue.QueueMiddleware
-	config   *middleware.ConnectionConfig
+	consumer           *workerqueue.QueueConsumer
+	producer           *workerqueue.QueueMiddleware
+	completionProducer *workerqueue.QueueMiddleware
+	config             *middleware.ConnectionConfig
+	workerID           string
 
 	clientStates map[string]*ClientState
 	stateMutex   sync.RWMutex
@@ -96,12 +99,40 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 		return nil, fmt.Errorf("failed to declare query 4 results queue: %v", err)
 	}
 
+	// Create completion producer for garbage collector
+	completionProducer := workerqueue.NewMessageMiddlewareQueue(
+		"join-completion-queue",
+		config,
+	)
+	if completionProducer == nil {
+		consumer.Close()
+		producer.Close()
+		return nil, fmt.Errorf("failed to create completion producer")
+	}
+
+	// Declare completion queue
+	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
+		consumer.Close()
+		producer.Close()
+		completionProducer.Close()
+		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
+	}
+
+	// Generate worker ID
+	instanceID := os.Getenv("WORKER_INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = "1"
+	}
+	workerID := fmt.Sprintf("userid-reader-%s", instanceID)
+
 	return &JoinByUserIdWorker{
-		consumer:     consumer,
-		producer:     producer,
-		config:       config,
-		clientStates: make(map[string]*ClientState),
-		stopChan:     make(chan struct{}),
+		consumer:           consumer,
+		producer:           producer,
+		completionProducer: completionProducer,
+		config:             config,
+		workerID:           workerID,
+		clientStates:       make(map[string]*ClientState),
+		stopChan:           make(chan struct{}),
 	}, nil
 }
 
@@ -135,6 +166,9 @@ func (jw *JoinByUserIdWorker) Close() {
 	}
 	if jw.producer != nil {
 		jw.producer.Close()
+	}
+	if jw.completionProducer != nil {
+		jw.completionProducer.Close()
 	}
 
 	fmt.Println("Join by User ID Worker: Shutdown complete")
@@ -260,7 +294,8 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 
 		// Cleanup if done or max attempts reached
 		if len(notFound) == 0 {
-			fmt.Printf("Join by User ID Worker: All users joined for client %s, cleaning up\n", clientID)
+			fmt.Printf("Join by User ID Worker: All users joined for client %s\n", clientID)
+			jw.sendCompletionNotification(clientID)
 			delete(jw.clientStates, clientID)
 		} else if state.attemptCount >= MaxJoinAttempts {
 			fmt.Printf("Join by User ID Worker: Max attempts reached for client %s, %d users not found (INNER JOIN - dropping)\n",
@@ -269,6 +304,7 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 			if state.chunkCounter > 1 {
 				jw.sendEmptyEOS(clientID, state)
 			}
+			jw.sendCompletionNotification(clientID)
 			delete(jw.clientStates, clientID)
 		}
 	}
@@ -376,9 +412,11 @@ func (jw *JoinByUserIdWorker) parseTopUsersData(csvData string) ([]TopUserRecord
 
 	var topUsers []TopUserRecord
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "user_id") {
+			continue
+		}
 		if len(record) >= 4 {
 			user := TopUserRecord{
 				UserID:        record[0],
@@ -434,8 +472,11 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 	}
 
 	// Search for the specific user ID (skip header)
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "user_id") {
+			continue
+		}
 		if len(record) >= 4 && record[0] == normalizedUserID {
 			return &UserData{
 				UserID:       record[0],
@@ -449,4 +490,21 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 	// User not found - return error to trigger buffering and retry
 	// After MaxRetries attempts, this will be dropped at the processMessage level
 	return nil, fmt.Errorf("user %s not found in partition %d", normalizedUserID, partition)
+}
+
+// sendCompletionNotification sends a completion signal to the garbage collector
+func (jw *JoinByUserIdWorker) sendCompletionNotification(clientID string) {
+	completionSignal := signals.NewJoinCompletionSignal(clientID, "users", jw.workerID)
+
+	messageData, err := signals.SerializeJoinCompletionSignal(completionSignal)
+	if err != nil {
+		fmt.Printf("Join by User ID Worker: Failed to serialize completion signal: %v\n", err)
+		return
+	}
+
+	if err := jw.completionProducer.Send(messageData); err != 0 {
+		fmt.Printf("Join by User ID Worker: Failed to send completion signal: %v\n", err)
+	} else {
+		fmt.Printf("Join by User ID Worker: Sent completion signal for client %s\n", clientID)
+	}
 }
