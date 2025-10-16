@@ -61,13 +61,13 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 	return 0
 }
 
-// printResult prints the chunk data in a formatted way (same format as streaming service)
+// printResult prints the chunk data in a formatted way with ClientID (same format as streaming service)
 func (qg *QueryGateway) printResult(chunkData *chunk.Chunk) {
 	// Split the CSV data into individual rows and print each one
 	rows := strings.Split(strings.TrimSpace(chunkData.ChunkData), "\n")
 	for _, row := range rows {
 		if strings.TrimSpace(row) != "" { // Skip empty rows
-			fmt.Printf("Q%d | %s\n", chunkData.QueryType, row)
+			fmt.Printf("%s | Q%d | %s\n", chunkData.ClientID, chunkData.QueryType, row)
 		}
 	}
 }

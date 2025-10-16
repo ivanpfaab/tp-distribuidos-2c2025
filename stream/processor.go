@@ -32,13 +32,13 @@ func (sw *StreamingWorker) processMessage(delivery amqp.Delivery) middleware.Mes
 	return 0
 }
 
-// printResult prints the chunk data in a formatted way
+// printResult prints the chunk data in a formatted way with ClientID
 func (sw *StreamingWorker) printResult(chunkData *chunk.Chunk) {
 	// Split the CSV data into individual rows and print each one
 	rows := strings.Split(strings.TrimSpace(chunkData.ChunkData), "\n")
 	for _, row := range rows {
 		if strings.TrimSpace(row) != "" { // Skip empty rows
-			fmt.Printf("Q%d | %s\n", chunkData.QueryType, row)
+			fmt.Printf("%s | Q%d | %s\n", chunkData.ClientID, chunkData.QueryType, row)
 		}
 	}
 }
