@@ -6,6 +6,8 @@ import (
 	"log"
 	"sync"
 
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -29,15 +31,7 @@ type ClientStatus struct {
 	IsCompleted    bool
 }
 
-// ChunkNotification represents a notification from a map worker about chunk processing
-type ChunkNotification struct {
-	ClientID    string
-	FileID      string
-	TableID     int
-	ChunkNumber int
-	IsLastChunk bool
-	MapWorkerID string
-}
+// ChunkNotification is now defined in the protocol/signals package
 
 // TerminationSignal represents a signal to terminate processing
 type TerminationSignal struct {
@@ -113,7 +107,7 @@ func (gbo *GroupByOrchestrator) initializeQueues() {
 }
 
 // ProcessChunkNotification processes a chunk notification from a map worker
-func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *ChunkNotification) error {
+func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *signals.ChunkNotification) error {
 	gbo.mutex.Lock()
 	defer gbo.mutex.Unlock()
 
@@ -230,16 +224,23 @@ func (gbo *GroupByOrchestrator) Start() {
 		for delivery := range *consumeChannel {
 			log.Printf("Received chunk notification: %d bytes", len(delivery.Body))
 
-			// Deserialize chunk notification
-			var notification ChunkNotification
-			if err := json.Unmarshal(delivery.Body, &notification); err != nil {
+			// Deserialize chunk notification using protocol
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
 				log.Printf("Failed to deserialize chunk notification: %v", err)
 				delivery.Ack(false)
 				continue
 			}
 
+			notification, ok := message.(*signals.ChunkNotification)
+			if !ok {
+				log.Printf("Received message is not a ChunkNotification: %T", message)
+				delivery.Ack(false)
+				continue
+			}
+
 			// Process the notification
-			if err := gbo.ProcessChunkNotification(&notification); err != nil {
+			if err := gbo.ProcessChunkNotification(notification); err != nil {
 				log.Printf("Failed to process chunk notification: %v", err)
 				delivery.Ack(false)
 				continue

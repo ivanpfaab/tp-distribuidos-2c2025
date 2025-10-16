@@ -33,6 +33,8 @@ func Deserialize(data []byte) (interface{}, error) {
 		return chunk.DeserializeChunk(data)
 	case common.GroupByCompletionSignalType:
 		return signals.DeserializeGroupByCompletionSignal(data)
+	case common.ChunkNotificationType:
+		return signals.DeserializeChunkNotification(data)
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msgType)
 	}

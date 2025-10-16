@@ -6,21 +6,14 @@ import (
 	"log"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
-// ChunkNotification represents a notification to the orchestrator about chunk processing
-type ChunkNotification struct {
-	ClientID    string
-	FileID      string
-	TableID     int
-	ChunkNumber int
-	IsLastChunk bool
-	MapWorkerID string
-}
+// ChunkNotification is now defined in the protocol/signals package
 
 // TerminationSignal represents a signal to terminate processing for a specific client
 type TerminationSignal struct {
@@ -70,17 +63,17 @@ func NewOrchestratorCommunicator(mapWorkerID string, config *middleware.Connecti
 
 // NotifyChunkProcessed sends a notification to the orchestrator about a processed chunk
 func (oc *OrchestratorCommunicator) NotifyChunkProcessed(chunk *chunk.Chunk) error {
-	notification := ChunkNotification{
-		ClientID:    chunk.ClientID,
-		FileID:      chunk.FileID,
-		TableID:     chunk.TableID,
-		ChunkNumber: chunk.ChunkNumber,
-		IsLastChunk: chunk.IsLastChunk,
-		MapWorkerID: oc.mapWorkerID,
-	}
+	notification := signals.NewChunkNotification(
+		chunk.ClientID,
+		chunk.FileID,
+		oc.mapWorkerID,
+		chunk.TableID,
+		chunk.ChunkNumber,
+		chunk.IsLastChunk,
+	)
 
-	// Serialize notification
-	notificationData, err := json.Marshal(notification) // TODO: serialize manually?
+	// Serialize notification using protocol
+	notificationData, err := signals.SerializeChunkNotification(notification)
 	if err != nil {
 		return fmt.Errorf("failed to serialize chunk notification: %v", err)
 	}
