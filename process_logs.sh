@@ -3,7 +3,7 @@
 # Process Existing Logs Script
 # This script processes already available logs without capturing new ones
 
-#First run  make docker-compose-logs SERVICE=streaming-service | tee results.txt
+#First run docker logs --tail=40000 streaming-service > results.txt
 
 RESULTS_FILE="results.txt"
 
@@ -41,15 +41,15 @@ fi
 # Process queries for CLI1
 echo "Processing queries for CLI1..."
 cat cli1_results.txt | grep "Q1" | cut -d'|' -f3,4 | cut -d',' -f1,6 | sort -t, -k2,2 > cli1_q1_results.txt
-cat cli1_results.txt | grep "Q2" | cut -d'|' -f3,4 | cut -d',' -f1,2,7,6,4,5 | sort -t, -k6,6 -k1,1 -k2,2n > cli1_q2_results.txt
-cat cli1_results.txt | grep "Q3" | cut -d'|' -f3,4 | cut -d',' -f1,2,6,4 | sort -t, -k3,3 -k1,1 -k2,2n > cli1_q3_results.txt
+cat cli1_results.txt | grep "Q2" | cut -d'|' -f3,4 | cut -d',' -f1,2,7,6,4,5 | sort -t, -k5,5 -k1,1 -k2,2n > cli1_q2_results.txt
+cat cli1_results.txt | grep "Q3" | cut -d'|' -f3,4 | cut -d',' -f1,2,6,4 | sort -t, -k1,1 -k2,2 -k3,3n > cli1_q3_results.txt
 cat cli1_results.txt | grep "Q4" | cut -d'|' -f3,4 | cut -d',' -f2,3,4,6 | sort -t, -k1,1 -k3,3n > cli1_q4_results.txt
 
 # Process queries for CLI2
 echo "Processing queries for CLI2..."
 cat cli2_results.txt | grep "Q1" | cut -d'|' -f3,4 | cut -d',' -f1,6 | sort -t, -k2,2 > cli2_q1_results.txt
-cat cli2_results.txt | grep "Q2" | cut -d'|' -f3,4 | cut -d',' -f1,2,7,6,4,5 | sort -t, -k6,6 -k1,1 -k2,2n > cli2_q2_results.txt
-cat cli2_results.txt | grep "Q3" | cut -d'|' -f3,4 | cut -d',' -f1,2,6,4 | sort -t, -k3,3 -k1,1 -k2,2n > cli2_q3_results.txt
+cat cli2_results.txt | grep "Q2" | cut -d'|' -f3,4 | cut -d',' -f1,2,7,6,4,5 | sort -t, -k5,5 -k1,1 -k2,2n > cli2_q2_results.txt
+cat cli2_results.txt | grep "Q3" | cut -d'|' -f3,4 | cut -d',' -f1,2,6,4 | sort -t, -k1,1 -k2,2 -k3,3n > cli2_q3_results.txt
 cat cli2_results.txt | grep "Q4" | cut -d'|' -f3,4 | cut -d',' -f2,3,4,6 | sort -t, -k1,1 -k3,3n > cli2_q4_results.txt
 
 echo ""
