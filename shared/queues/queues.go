@@ -45,6 +45,7 @@ const (
 	// ============================================================================
 	// Query 2 (transaction_items - group by year, month, item_id)
 	Query2MapQueue            = "query2-map-queue"
+	Query2MapReduceExchange   = "query2-map-reduce"
 	Query2ReduceQueueS2_2023  = "query2-reduce-s2-2023"
 	Query2ReduceQueueS1_2024  = "query2-reduce-s1-2024"
 	Query2ReduceQueueS2_2024  = "query2-reduce-s2-2024"
@@ -55,6 +56,13 @@ const (
 	// Group By Orchestrator Queues and Exchanges
 	Query2OrchestratorChunksQueue = "query2-orchestrator-chunks"
 	Query2MapTerminationExchange  = "query2-map-termination"
+
+	// Query 2 Map-Reduce Routing Keys
+	Query2RoutingKeyS2_2023 = "query2.semester.2.2023"
+	Query2RoutingKeyS1_2024 = "query2.semester.1.2024"
+	Query2RoutingKeyS2_2024 = "query2.semester.2.2024"
+	Query2RoutingKeyS1_2025 = "query2.semester.1.2025"
+	Query2RoutingKeyS2_2025 = "query2.semester.2.2025"
 
 	// Query 3 (transactions - group by year, semester, store_id)
 	Query3MapQueue            = "query3-map-queue"
@@ -99,6 +107,22 @@ func GetQuery2ReduceQueueName(year int, semester int) string {
 		return Query2ReduceQueueS1_2025
 	} else if year == 2025 && semester == 2 {
 		return Query2ReduceQueueS2_2025
+	}
+	return ""
+}
+
+// GetQuery2RoutingKey returns the routing key for a specific semester in Query 2
+func GetQuery2RoutingKey(year int, semester int) string {
+	if year == 2023 && semester == 2 {
+		return Query2RoutingKeyS2_2023
+	} else if year == 2024 && semester == 1 {
+		return Query2RoutingKeyS1_2024
+	} else if year == 2024 && semester == 2 {
+		return Query2RoutingKeyS2_2024
+	} else if year == 2025 && semester == 1 {
+		return Query2RoutingKeyS1_2025
+	} else if year == 2025 && semester == 2 {
+		return Query2RoutingKeyS2_2025
 	}
 	return ""
 }

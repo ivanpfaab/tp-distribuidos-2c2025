@@ -12,6 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
@@ -52,7 +53,7 @@ type ClientData struct {
 // ReduceWorker processes chunks for a specific semester
 type ReduceWorker struct {
 	semester   Semester
-	consumer   *workerqueue.QueueConsumer
+	consumer   *exchange.ExchangeConsumer
 	producer   *workerqueue.QueueMiddleware
 	config     *middleware.ConnectionConfig
 	clientData map[string]*ClientData // Key: clientID, Value: client-specific data
@@ -67,14 +68,33 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		Password: "password",
 	}
 
-	// Create consumer for the specific semester queue
+	// Create consumer for the specific semester queue via topic exchange
 	queueName := GetQueueNameForSemester(semester)
-	consumer := workerqueue.NewQueueConsumer(queueName, config)
-	if consumer == nil {
-		log.Fatalf("Failed to create consumer for queue: %s", queueName)
+	routingKey := queues.GetQuery2RoutingKey(semester.Year, semester.Semester)
+	if routingKey == "" {
+		log.Fatalf("No routing key found for semester %d-%d", semester.Year, semester.Semester)
 	}
 
-	// Declare the reduce queue before consuming
+	// Create exchange consumer for the specific routing key
+	consumer := exchange.NewExchangeConsumer(queues.Query2MapReduceExchange, []string{routingKey}, config)
+	if consumer == nil {
+		log.Fatalf("Failed to create exchange consumer for routing key: %s", routingKey)
+	}
+
+	// Declare the topic exchange
+	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(queues.Query2MapReduceExchange, []string{}, config)
+	if exchangeDeclarer == nil {
+		consumer.Close()
+		log.Fatalf("Failed to create exchange declarer for exchange: %s", queues.Query2MapReduceExchange)
+	}
+	if err := exchangeDeclarer.DeclareExchange("topic", false, false, false, false); err != 0 {
+		consumer.Close()
+		exchangeDeclarer.Close()
+		log.Fatalf("Failed to declare topic exchange %s: %v", queues.Query2MapReduceExchange, err)
+	}
+	exchangeDeclarer.Close() // Close the declarer as we don't need it anymore
+
+	// Declare the reduce queue for this routing key
 	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(queueName, config)
 	if queueDeclarer == nil {
 		consumer.Close()
