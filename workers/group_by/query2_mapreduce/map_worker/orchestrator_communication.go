@@ -44,14 +44,28 @@ func NewOrchestratorCommunicator(mapWorkerID string, config *middleware.Connecti
 		log.Fatalf("Failed to declare chunk notification queue: %v", err)
 	}
 
-	// Create consumer for termination signals
-	terminationConsumer := exchange.NewExchangeConsumer(queues.Query2MapTerminationExchange, []string{}, config)
+	// Create consumer for termination signals (fanout exchange)
+	// For fanout exchanges, we need to use a special approach since ExchangeConsumer expects routing keys
+	terminationConsumer := exchange.NewExchangeConsumer(queues.Query2MapTerminationExchange, []string{""}, config)
 	if terminationConsumer == nil {
 		chunkNotificationProducer.Close()
 		log.Fatalf("Failed to create termination signal consumer")
 	}
 
-	// TODO: should we declare the exchange here?
+	// Declare the termination exchange (fanout)
+	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(queues.Query2MapTerminationExchange, []string{}, config)
+	if exchangeDeclarer == nil {
+		chunkNotificationProducer.Close()
+		terminationConsumer.Close()
+		log.Fatalf("Failed to create exchange declarer for exchange: %s", queues.Query2MapTerminationExchange)
+	}
+	if err := exchangeDeclarer.DeclareExchange("fanout", false, false, false, false); err != 0 {
+		chunkNotificationProducer.Close()
+		terminationConsumer.Close()
+		exchangeDeclarer.Close()
+		log.Fatalf("Failed to declare termination exchange %s: %v", queues.Query2MapTerminationExchange, err)
+	}
+	exchangeDeclarer.Close() // Close the declarer as we don't need it anymore\
 
 	return &OrchestratorCommunicator{
 		chunkNotificationProducer: chunkNotificationProducer,

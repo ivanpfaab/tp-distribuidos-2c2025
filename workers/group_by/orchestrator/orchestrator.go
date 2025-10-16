@@ -96,7 +96,7 @@ func (gbo *GroupByOrchestrator) initializeQueues() {
 	}
 
 	// Declare the termination exchange
-	if err := gbo.terminationProducer.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	if err := gbo.terminationProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
 		gbo.chunkConsumer.Close()
 		gbo.terminationProducer.Close()
 		log.Fatalf("Failed to declare termination exchange: %v", err)

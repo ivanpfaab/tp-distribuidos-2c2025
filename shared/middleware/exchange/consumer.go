@@ -1,8 +1,6 @@
 package exchange
 
 import (
-	"fmt"
-
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 )
@@ -34,7 +32,6 @@ func NewExchangeConsumer(
 	}
 }
 
-// StartConsuming implements the consumer startup logic for MessageMiddlewareExchange.
 func (m *ExchangeConsumer) StartConsuming(
 	onMessageCallback middleware.OnMessageCallback,
 ) middleware.MessageMiddlewareError {
@@ -42,71 +39,75 @@ func (m *ExchangeConsumer) StartConsuming(
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
-	queueName := ""
-	testing_utils.LogDebug("Exchange Consumer", "Starting consumer for exchange '%s' with route keys '%v'", m.ExchangeName, m.RouteKeys)
-	if len(m.RouteKeys) == 1 {
-		queueName = fmt.Sprintf("queue-%s", m.RouteKeys[0])
-	} else {
-		queueName = ""
-	}
+	testing_utils.LogDebug("Exchange Consumer",
+		"Starting consumer for exchange '%s' with route keys '%v'",
+		m.ExchangeName, m.RouteKeys)
 
-	// Create a temporary queue for this consumer
+	// 1. Create a temporary queue for this consumer
+	// Empty name means RabbitMQ auto-generates one
 	queue, err := (*m.AmqpChannel).QueueDeclare(
-		queueName, // name (empty for auto-generated)
-		false,     // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
-	)
-	if err != nil {
-		testing_utils.LogError("Exchange Consumer", "Failed to declare queue for exchange '%s': %v", m.ExchangeName, err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// TODO: Handle multiple keys
-	// Bind the queue to the exchange with all routing keys
-	testing_utils.LogDebug("Exchange Consumer", "Binding queue '%s' to exchange '%s' with key '%s'", queue.Name, m.ExchangeName, m.RouteKeys[0])
-
-	testing_utils.LogDebug("Exchange Consumer", "Consumer with '%v' keys ", len(m.RouteKeys))
-	//for _, routingKey := range m.RouteKeys {
-	err = (*m.AmqpChannel).QueueBind(
-		queueName,
-		m.RouteKeys[0],
-		m.ExchangeName,
+		"",    // name (empty for auto-generated)
+		false, // durable
+		false, // delete when unused
+		false, // exclusive (only this consumer can use it)
 		false, // no-wait
 		nil,   // arguments
 	)
-	//	if err != nil {
-	// 		testing_utils.LogError("Exchange Consumer", "Failed to bind queue for exchange '%s' with key '%s': %v", m.ExchangeName, routingKey, err)
-	// 		return middleware.MessageMiddlewareMessageError
-	// 	}
-	// }
+	if err != nil {
+		testing_utils.LogError("Exchange Consumer",
+			"Failed to declare queue for exchange '%s': %v",
+			m.ExchangeName, err)
+		return middleware.MessageMiddlewareMessageError
+	}
 
-	// Start consuming from the queue
+	// 2. Bind the queue
+	// If it's a fanout exchange, routing key doesn’t matter — use ""
+	routingKeys := m.RouteKeys
+	if len(routingKeys) == 0 {
+		routingKeys = []string{""}
+	}
+
+	for _, routingKey := range routingKeys {
+		err := (*m.AmqpChannel).QueueBind(
+			queue.Name,
+			routingKey,
+			m.ExchangeName,
+			false, // no-wait
+			nil,   // args
+		)
+		if err != nil {
+			testing_utils.LogError("Exchange Consumer",
+				"Failed to bind queue '%s' to exchange '%s' with key '%s': %v",
+				queue.Name, m.ExchangeName, routingKey, err)
+			return middleware.MessageMiddlewareMessageError
+		}
+	}
+
+	// 3. Start consuming
 	deliveries, err := (*m.AmqpChannel).Consume(
 		queue.Name,
-		"",    // consumer tag (empty for auto-generated)
-		false, // auto-ack --> the callback will handle the acknowledgments manually
+		"",    // consumer tag (auto-generated)
+		false, // auto-ack (false means you’ll manually ack)
 		false, // exclusive
 		false, // no-local
 		false, // no-wait
-		nil,   // arguments
+		nil,   // args
 	)
 	if err != nil {
-		testing_utils.LogError("Exchange Consumer", "Failed to start consuming for exchange '%s': %v", m.ExchangeName, err)
+		testing_utils.LogError("Exchange Consumer",
+			"Failed to start consuming for exchange '%s': %v",
+			m.ExchangeName, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Set the consume channel
+	// 4. Save channel and start callback
 	m.ConsumeChannel = &deliveries
 
-	// Start the processing loop in a goroutine
 	go func() {
 		done := make(chan error, 1)
-		testing_utils.LogDebug("Exchange Consumer", "Starting consumer for exchange '%s' on queue '%s'", m.ExchangeName, queue.Name)
-
-		// Call the onMessageCallback with the consume channel
+		testing_utils.LogDebug("Exchange Consumer",
+			"Consuming from exchange '%s' on queue '%s'",
+			m.ExchangeName, queue.Name)
 		onMessageCallback(m.ConsumeChannel, done)
 	}()
 
