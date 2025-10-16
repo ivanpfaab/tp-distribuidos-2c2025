@@ -9,6 +9,8 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -29,8 +31,11 @@ type MenuItem struct {
 type ItemIdJoinWorker struct {
 	dictionaryConsumer *exchange.ExchangeConsumer
 	chunkConsumer      *workerqueue.QueueConsumer
+	cleanupConsumer    *exchange.ExchangeConsumer
 	outputProducer     *workerqueue.QueueMiddleware
+	completionProducer *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
+	workerID           string
 
 	// Dictionary state - now client-aware
 	dictionaryReady map[string]bool                 // client_id -> ready status
@@ -81,18 +86,48 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		return nil, fmt.Errorf("failed to create output producer")
 	}
 
+	// Create cleanup consumer (exchange for cleanup commands)
+	cleanupConsumer := exchange.NewExchangeConsumer(
+		"itemid-cleanup-exchange",
+		[]string{fmt.Sprintf("itemid-cleanup-instance-%s", instanceID)},
+		config,
+	)
+	if cleanupConsumer == nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		return nil, fmt.Errorf("failed to create cleanup consumer")
+	}
+
+	// Create completion producer
+	completionProducer := workerqueue.NewMessageMiddlewareQueue(
+		"join-completion-queue",
+		config,
+	)
+	if completionProducer == nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		cleanupConsumer.Close()
+		return nil, fmt.Errorf("failed to create completion producer")
+	}
+
 	// Declare input queue (ItemIdChunkQueue)
 	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(ItemIdChunkQueue, config)
 	if inputQueueDeclarer == nil {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
+		cleanupConsumer.Close()
+		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create input queue declarer")
 	}
 	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
+		cleanupConsumer.Close()
+		completionProducer.Close()
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
 	}
@@ -102,14 +137,29 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
+		cleanupConsumer.Close()
+		completionProducer.Close()
 		return nil, fmt.Errorf("failed to declare output queue: %v", err)
+	}
+
+	// Declare completion queue
+	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		cleanupConsumer.Close()
+		completionProducer.Close()
+		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
 	}
 
 	return &ItemIdJoinWorker{
 		dictionaryConsumer: dictionaryConsumer,
 		chunkConsumer:      chunkConsumer,
+		cleanupConsumer:    cleanupConsumer,
 		outputProducer:     outputProducer,
+		completionProducer: completionProducer,
 		config:             config,
+		workerID:           fmt.Sprintf("itemid-worker-%s", instanceID),
 		dictionaryReady:    make(map[string]bool),
 		menuItems:          make(map[string]map[string]*MenuItem),
 	}, nil
@@ -129,6 +179,11 @@ func (w *ItemIdJoinWorker) Start() middleware.MessageMiddlewareError {
 		fmt.Printf("Failed to start chunk consumer: %v\n", err)
 	}
 
+	// Start consuming from cleanup queue
+	if err := w.cleanupConsumer.StartConsuming(w.createCleanupCallback()); err != 0 {
+		fmt.Printf("Failed to start cleanup consumer: %v\n", err)
+	}
+
 	return 0
 }
 
@@ -140,8 +195,14 @@ func (w *ItemIdJoinWorker) Close() {
 	if w.chunkConsumer != nil {
 		w.chunkConsumer.Close()
 	}
+	if w.cleanupConsumer != nil {
+		w.cleanupConsumer.Close()
+	}
 	if w.outputProducer != nil {
 		w.outputProducer.Close()
+	}
+	if w.completionProducer != nil {
+		w.completionProducer.Close()
 	}
 }
 
@@ -262,8 +323,8 @@ func (w *ItemIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messag
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// SUCCESS: Data sent successfully - cleanup client's dictionary immediately
-	w.cleanupClientItems(chunkMsg.ClientID)
+	// SUCCESS: Data sent successfully - send completion notification to garbage collector
+	w.sendCompletionNotification(chunkMsg.ClientID)
 
 	fmt.Printf("ItemID Join Worker: Successfully processed and sent joined chunk\n")
 	return 0
@@ -560,6 +621,63 @@ func (w *ItemIdJoinWorker) performGroupedTransactionItemMenuJoin(groupedItems []
 	}
 
 	return result.String()
+}
+
+// sendCompletionNotification sends a completion signal to the garbage collector
+func (w *ItemIdJoinWorker) sendCompletionNotification(clientID string) {
+	completionSignal := signals.NewJoinCompletionSignal(clientID, "items", w.workerID)
+
+	messageData, err := signals.SerializeJoinCompletionSignal(completionSignal)
+	if err != nil {
+		fmt.Printf("ItemID Join Worker: Failed to serialize completion signal: %v\n", err)
+		return
+	}
+
+	if err := w.completionProducer.Send(messageData); err != 0 {
+		fmt.Printf("ItemID Join Worker: Failed to send completion signal: %v\n", err)
+	} else {
+		fmt.Printf("ItemID Join Worker: Sent completion signal for client %s\n", clientID)
+	}
+}
+
+// createCleanupCallback creates the cleanup message processing callback
+func (w *ItemIdJoinWorker) createCleanupCallback() func(middleware.ConsumeChannel, chan error) {
+	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		for delivery := range *consumeChannel {
+			err := w.processCleanupMessage(delivery)
+			if err != nil {
+				done <- fmt.Errorf("failed to process cleanup message: %v", err)
+				return
+			}
+		}
+	}
+}
+
+// processCleanupMessage processes a cleanup signal
+func (w *ItemIdJoinWorker) processCleanupMessage(delivery amqp.Delivery) error {
+	// Deserialize the message using the deserializer
+	message, err := deserializer.Deserialize(delivery.Body)
+	if err != nil {
+		fmt.Printf("ItemID Join Worker: Failed to deserialize message: %v\n", err)
+		delivery.Nack(false, false) // Reject the message
+		return err
+	}
+
+	// Check if it's a cleanup signal
+	cleanupSignal, ok := message.(*signals.JoinCleanupSignal)
+	if !ok {
+		fmt.Printf("ItemID Join Worker: Received non-cleanup message type")
+		delivery.Nack(false, false) // Reject the message
+		return fmt.Errorf("expected JoinCleanupSignal, got %T", message)
+	}
+
+	fmt.Printf("ItemID Join Worker: Received cleanup signal for client %s\n", cleanupSignal.ClientID)
+
+	// Perform cleanup
+	w.cleanupClientItems(cleanupSignal.ClientID)
+
+	delivery.Ack(false) // Acknowledge the message
+	return nil
 }
 
 // cleanupClientItems deletes all item dictionary data for a specific client

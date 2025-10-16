@@ -11,6 +11,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
@@ -41,9 +42,11 @@ type ClientState struct {
 
 // JoinByUserIdWorker handles joining top users data with user data from CSV files
 type JoinByUserIdWorker struct {
-	consumer *workerqueue.QueueConsumer
-	producer *workerqueue.QueueMiddleware
-	config   *middleware.ConnectionConfig
+	consumer           *workerqueue.QueueConsumer
+	producer           *workerqueue.QueueMiddleware
+	completionProducer *workerqueue.QueueMiddleware
+	config             *middleware.ConnectionConfig
+	workerID           string
 
 	clientStates map[string]*ClientState
 	stateMutex   sync.RWMutex
@@ -96,12 +99,40 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 		return nil, fmt.Errorf("failed to declare query 4 results queue: %v", err)
 	}
 
+	// Create completion producer for garbage collector
+	completionProducer := workerqueue.NewMessageMiddlewareQueue(
+		"join-completion-queue",
+		config,
+	)
+	if completionProducer == nil {
+		consumer.Close()
+		producer.Close()
+		return nil, fmt.Errorf("failed to create completion producer")
+	}
+
+	// Declare completion queue
+	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
+		consumer.Close()
+		producer.Close()
+		completionProducer.Close()
+		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
+	}
+
+	// Generate worker ID
+	instanceID := os.Getenv("WORKER_INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = "1"
+	}
+	workerID := fmt.Sprintf("userid-reader-%s", instanceID)
+
 	return &JoinByUserIdWorker{
-		consumer:     consumer,
-		producer:     producer,
-		config:       config,
-		clientStates: make(map[string]*ClientState),
-		stopChan:     make(chan struct{}),
+		consumer:           consumer,
+		producer:           producer,
+		completionProducer: completionProducer,
+		config:             config,
+		workerID:           workerID,
+		clientStates:       make(map[string]*ClientState),
+		stopChan:           make(chan struct{}),
 	}, nil
 }
 
@@ -135,6 +166,9 @@ func (jw *JoinByUserIdWorker) Close() {
 	}
 	if jw.producer != nil {
 		jw.producer.Close()
+	}
+	if jw.completionProducer != nil {
+		jw.completionProducer.Close()
 	}
 
 	fmt.Println("Join by User ID Worker: Shutdown complete")
@@ -260,8 +294,8 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 
 		// Cleanup if done or max attempts reached
 		if len(notFound) == 0 {
-			fmt.Printf("Join by User ID Worker: All users joined for client %s, cleaning up\n", clientID)
-			jw.cleanupClientFiles(clientID)
+			fmt.Printf("Join by User ID Worker: All users joined for client %s\n", clientID)
+			jw.sendCompletionNotification(clientID)
 			delete(jw.clientStates, clientID)
 		} else if state.attemptCount >= MaxJoinAttempts {
 			fmt.Printf("Join by User ID Worker: Max attempts reached for client %s, %d users not found (INNER JOIN - dropping)\n",
@@ -270,7 +304,7 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 			if state.chunkCounter > 1 {
 				jw.sendEmptyEOS(clientID, state)
 			}
-			jw.cleanupClientFiles(clientID)
+			jw.sendCompletionNotification(clientID)
 			delete(jw.clientStates, clientID)
 		}
 	}
@@ -458,27 +492,19 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 	return nil, fmt.Errorf("user %s not found in partition %d", normalizedUserID, partition)
 }
 
-// cleanupClientFiles deletes all partition files for a specific client
-func (jw *JoinByUserIdWorker) cleanupClientFiles(clientID string) {
-	// Delete all partition files for this client from the shared data directory
-	pattern := filepath.Join("/shared-data", fmt.Sprintf("%s-users-partition-*.csv", clientID))
-	fmt.Printf("Join by User ID Worker: Looking for files with pattern: %s\n", pattern)
+// sendCompletionNotification sends a completion signal to the garbage collector
+func (jw *JoinByUserIdWorker) sendCompletionNotification(clientID string) {
+	completionSignal := signals.NewJoinCompletionSignal(clientID, "users", jw.workerID)
 
-	files, err := filepath.Glob(pattern)
+	messageData, err := signals.SerializeJoinCompletionSignal(completionSignal)
 	if err != nil {
-		fmt.Printf("Join by User ID Worker: Error finding files for client %s: %v\n", clientID, err)
+		fmt.Printf("Join by User ID Worker: Failed to serialize completion signal: %v\n", err)
 		return
 	}
 
-	fmt.Printf("Join by User ID Worker: Found %d files for client %s: %v\n", len(files), clientID, files)
-
-	for _, file := range files {
-		if err := os.Remove(file); err != nil {
-			fmt.Printf("Join by User ID Worker: Error deleting file %s: %v\n", file, err)
-		} else {
-			fmt.Printf("Join by User ID Worker: Deleted file %s for client %s\n", file, clientID)
-		}
+	if err := jw.completionProducer.Send(messageData); err != 0 {
+		fmt.Printf("Join by User ID Worker: Failed to send completion signal: %v\n", err)
+	} else {
+		fmt.Printf("Join by User ID Worker: Sent completion signal for client %s\n", clientID)
 	}
-
-	fmt.Printf("Join by User ID Worker: Cleaned up %d files for client %s\n", len(files), clientID)
 }

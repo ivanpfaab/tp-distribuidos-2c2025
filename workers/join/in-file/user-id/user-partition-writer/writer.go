@@ -7,19 +7,26 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 // UserPartitionWriter writes users to partition files
 type UserPartitionWriter struct {
 	consumer          *workerqueue.QueueConsumer
+	cleanupConsumer   *exchange.ExchangeConsumer
 	config            *middleware.ConnectionConfig
 	writerConfig      *Config
-	partitionsWritten map[int]int // Track writes per partition
+	partitionsWritten map[int]int     // Track writes per partition
+	stoppedClients    map[string]bool // Track clients that should stop writing
+	clientMutex       sync.RWMutex
 }
 
 // NewUserPartitionWriter creates a new writer instance
@@ -37,11 +44,24 @@ func NewUserPartitionWriter(connConfig *middleware.ConnectionConfig, writerConfi
 		return nil, fmt.Errorf("failed to create shared data directory: %w", err)
 	}
 
+	// Create cleanup consumer for userid cleanup signals
+	cleanupConsumer := exchange.NewExchangeConsumer(
+		"userid-cleanup-exchange",
+		[]string{fmt.Sprintf("userid-cleanup-writer-%d", writerConfig.WriterID)}, // Writer-specific routing key
+		connConfig,
+	)
+	if cleanupConsumer == nil {
+		consumer.Close()
+		return nil, fmt.Errorf("failed to create cleanup consumer")
+	}
+
 	return &UserPartitionWriter{
 		consumer:          consumer,
+		cleanupConsumer:   cleanupConsumer,
 		config:            connConfig,
 		writerConfig:      writerConfig,
 		partitionsWritten: make(map[int]int),
+		stoppedClients:    make(map[string]bool),
 	}, nil
 }
 
@@ -50,6 +70,12 @@ func (upw *UserPartitionWriter) Start() middleware.MessageMiddlewareError {
 	queueName := GetWriterQueueName(upw.writerConfig.WriterID)
 	fmt.Printf("User Partition Writer %d: Starting to listen on queue %s...\n",
 		upw.writerConfig.WriterID, queueName)
+
+	// Start cleanup consumer
+	if err := upw.cleanupConsumer.StartConsuming(upw.createCleanupCallback()); err != 0 {
+		fmt.Printf("User Partition Writer %d: Failed to start cleanup consumer: %v\n", upw.writerConfig.WriterID, err)
+	}
+
 	return upw.consumer.StartConsuming(upw.createCallback())
 }
 
@@ -57,6 +83,9 @@ func (upw *UserPartitionWriter) Start() middleware.MessageMiddlewareError {
 func (upw *UserPartitionWriter) Close() {
 	if upw.consumer != nil {
 		upw.consumer.Close()
+	}
+	if upw.cleanupConsumer != nil {
+		upw.cleanupConsumer.Close()
 	}
 
 	// Print statistics
@@ -85,6 +114,76 @@ func (upw *UserPartitionWriter) createCallback() func(middleware.ConsumeChannel,
 	}
 }
 
+// createCleanupCallback creates the cleanup message processing callback
+func (upw *UserPartitionWriter) createCleanupCallback() func(middleware.ConsumeChannel, chan error) {
+	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		for delivery := range *consumeChannel {
+			err := upw.processCleanupMessage(delivery)
+			if err != nil {
+				done <- fmt.Errorf("failed to process cleanup message: %v", err)
+				return
+			}
+		}
+	}
+}
+
+// processCleanupMessage processes a cleanup signal
+func (upw *UserPartitionWriter) processCleanupMessage(delivery amqp.Delivery) error {
+	// Deserialize the message using the deserializer
+	message, err := deserializer.Deserialize(delivery.Body)
+	if err != nil {
+		fmt.Printf("User Partition Writer %d: Failed to deserialize message: %v\n", upw.writerConfig.WriterID, err)
+		delivery.Nack(false, false) // Reject the message
+		return err
+	}
+
+	// Check if it's a cleanup signal
+	cleanupSignal, ok := message.(*signals.JoinCleanupSignal)
+	if !ok {
+		fmt.Printf("User Partition Writer %d: Received non-cleanup message type\n", upw.writerConfig.WriterID)
+		delivery.Nack(false, false) // Reject the message
+		return fmt.Errorf("expected JoinCleanupSignal, got %T", message)
+	}
+
+	fmt.Printf("User Partition Writer %d: Received cleanup signal for client %s\n", upw.writerConfig.WriterID, cleanupSignal.ClientID)
+
+	// Mark client as stopped and cleanup files
+	upw.clientMutex.Lock()
+	upw.stoppedClients[cleanupSignal.ClientID] = true
+	upw.clientMutex.Unlock()
+
+	// Cleanup files for this client
+	upw.cleanupClientFiles(cleanupSignal.ClientID)
+
+	delivery.Ack(false) // Acknowledge the message
+	return nil
+}
+
+// cleanupClientFiles deletes all partition files for a specific client
+func (upw *UserPartitionWriter) cleanupClientFiles(clientID string) {
+	// Delete all partition files for this client from the shared data directory
+	pattern := filepath.Join(SharedDataDir, fmt.Sprintf("%s-users-partition-*.csv", clientID))
+	fmt.Printf("User Partition Writer %d: Looking for files with pattern: %s\n", upw.writerConfig.WriterID, pattern)
+
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		fmt.Printf("User Partition Writer %d: Error finding files for client %s: %v\n", upw.writerConfig.WriterID, clientID, err)
+		return
+	}
+
+	fmt.Printf("User Partition Writer %d: Found %d files for client %s: %v\n", upw.writerConfig.WriterID, len(files), clientID, files)
+
+	for _, file := range files {
+		if err := os.Remove(file); err != nil {
+			fmt.Printf("User Partition Writer %d: Error deleting file %s: %v\n", upw.writerConfig.WriterID, file, err)
+		} else {
+			fmt.Printf("User Partition Writer %d: Deleted file %s for client %s\n", upw.writerConfig.WriterID, file, clientID)
+		}
+	}
+
+	fmt.Printf("User Partition Writer %d: Cleaned up %d files for client %s\n", upw.writerConfig.WriterID, len(files), clientID)
+}
+
 // processMessage processes a single user chunk
 func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	// Deserialize the chunk message
@@ -93,6 +192,16 @@ func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middlewar
 		fmt.Printf("User Partition Writer %d: Failed to deserialize chunk: %v\n",
 			upw.writerConfig.WriterID, err)
 		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Check if client is stopped (should drop this chunk)
+	upw.clientMutex.RLock()
+	isStopped := upw.stoppedClients[chunkMsg.ClientID]
+	upw.clientMutex.RUnlock()
+
+	if isStopped {
+		fmt.Printf("User Partition Writer %d: Dropping chunk for stopped client %s\n", upw.writerConfig.WriterID, chunkMsg.ClientID)
+		return 0 // Successfully dropped
 	}
 
 	// Check for EOS marker
