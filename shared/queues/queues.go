@@ -15,15 +15,15 @@ const (
 	// Join Worker Queues
 	// ============================================================================
 	// Join Data Handler
-	FixedJoinDataExchange     = "fixed-join-data-exchange"
-	FixedJoinDataRoutingKey   = "fixed-join-data"
-	JoinItemIdDictionaryQueue = "join-itemid-dictionary"
+	FixedJoinDataExchange      = "fixed-join-data-exchange"
+	FixedJoinDataRoutingKey    = "fixed-join-data"
+	JoinItemIdDictionaryQueue  = "join-itemid-dictionary"
 	JoinStoreIdDictionaryQueue = "join-storeid-dictionary"
-	JoinUserIdDictionaryQueue = "join-userid-dictionary"
+	JoinUserIdDictionaryQueue  = "join-userid-dictionary"
 
 	// In-Memory Join Workers - Input Queues
-	ItemIdDictionaryQueue = "join-itemid-dictionary"
-	ItemIdChunkQueue      = "top-item-classification-chunk"
+	ItemIdDictionaryQueue  = "join-itemid-dictionary"
+	ItemIdChunkQueue       = "top-item-classification-chunk"
 	StoreIdDictionaryQueue = "join-storeid-dictionary"
 	StoreIdChunkQueue      = "itemid-join-chunks"
 
@@ -50,7 +50,11 @@ const (
 	Query2ReduceQueueS2_2024  = "query2-reduce-s2-2024"
 	Query2ReduceQueueS1_2025  = "query2-reduce-s1-2025"
 	Query2ReduceQueueS2_2025  = "query2-reduce-s2-2025"
-	Query2GroupByResultsQueue = "top-items-queue" 
+	Query2GroupByResultsQueue = "top-items-queue"
+
+	// Group By Orchestrator Queues and Exchanges
+	Query2OrchestratorChunksQueue = "query2-orchestrator-chunks"
+	Query2MapTerminationExchange  = "query2-map-termination"
 
 	// Query 3 (transactions - group by year, semester, store_id)
 	Query3MapQueue            = "query3-map-queue"
@@ -64,7 +68,7 @@ const (
 	// Query 4 (transactions - group by user_id, store_id)
 	Query4MapQueue            = "query4-map-queue"
 	Query4ReduceQueue         = "query4-reduce-queue"
-	Query4GroupByResultsQueue       = "top-users-queue"   
+	Query4GroupByResultsQueue = "top-users-queue"
 
 	// ============================================================================
 	// Query Gateway Queues

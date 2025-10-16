@@ -10,6 +10,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -103,6 +104,7 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		groupedData: make(map[string]*GroupedResult),
 		chunkCount:  0,
 		clientID:    "", // Will be set when first chunk is processed
+		// TODO: the client ID is not reducer-worker specific, fix this behavior
 	}
 }
 
@@ -341,6 +343,7 @@ func (rw *ReduceWorker) Start() {
 		log.Printf("Reduce worker for semester %s started consuming messages", rw.semester.String())
 		chunkCount := 0
 		for delivery := range *consumeChannel {
+
 			log.Printf("Received message for semester %s - Message size: %d bytes", rw.semester.String(), len(delivery.Body))
 			log.Printf("Message body preview: %s", string(delivery.Body[:min(100, len(delivery.Body))]))
 			// Deserialize the chunk message
@@ -351,31 +354,45 @@ func (rw *ReduceWorker) Start() {
 				continue
 			}
 
-			// Check if it's a Chunk message
-			chunk, ok := message.(*chunk.Chunk)
-			if !ok {
-				log.Printf("Received non-chunk message: %T", message)
-				delivery.Ack(false)
-				continue
-			}
+			// Check if it's a Chunk message or GroupByCompletionSignal
+			switch msg := message.(type) {
+			case *chunk.Chunk:
+				// Process the chunk
+				err = rw.ProcessChunk(msg)
+				if err != nil {
+					log.Printf("Failed to process chunk: %v", err)
+					delivery.Ack(false)
+					continue
+				}
 
-			// Process the chunk immediately
-			err = rw.ProcessChunk(chunk)
-			if err != nil {
-				log.Printf("Failed to process chunk: %v", err)
-				delivery.Ack(false)
-				continue
-			}
+				chunkCount++ // what is this for?
 
-			chunkCount++
+				// If this is the last chunk, finalize results
+				if msg.IsLastChunk { // TODO: remove this check since we terminate on signal
+					log.Printf("Received last chunk for semester %s, finalizing results...", rw.semester.String())
+					err = rw.FinalizeResults()
+					if err != nil {
+						log.Printf("Failed to finalize results: %v", err)
+					}
+				}
+			case *signals.GroupByCompletionSignal:
+				// Handle completion signal
+				log.Printf("Received GroupByCompletionSignal for semester %s from map worker %s: %s",
+					rw.semester.String(), msg.MapWorkerID, msg.Message)
 
-			// If this is the last chunk, finalize results
-			if chunk.IsLastChunk {
-				log.Printf("Received last chunk for semester %s, finalizing results...", rw.semester.String())
+				// Finalize results and stop processing
 				err = rw.FinalizeResults()
 				if err != nil {
-					log.Printf("Failed to finalize results: %v", err)
+					log.Printf("Failed to finalize results on completion signal: %v", err)
 				}
+
+				log.Printf("Reduce worker for semester %s completed processing", rw.semester.String())
+				delivery.Ack(false)
+				return // Exit the message processing loop
+			default:
+				log.Printf("Received unknown message type: %T", message)
+				delivery.Ack(false)
+				continue
 			}
 
 			// Acknowledge the message

@@ -10,6 +10,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -35,19 +36,21 @@ type TransactionItem struct {
 
 // GroupedResult represents the grouped data by year, semester, item_id
 type GroupedResult struct {
-	Year        int
-	Semester    int
-	ItemID      string
+	Year          int
+	Semester      int
+	ItemID        string
 	TotalQuantity int
 	TotalSubtotal float64
-	Count       int
+	Count         int
 }
 
 // MapWorker processes chunks and groups by year, semester, item_id
 type MapWorker struct {
-	consumer     *workerqueue.QueueConsumer
-	producers    map[string]*workerqueue.QueueMiddleware
-	config       *middleware.ConnectionConfig
+	consumer         *workerqueue.QueueConsumer
+	producers        map[string]*workerqueue.QueueMiddleware
+	orchestratorComm *OrchestratorCommunicator
+	config           *middleware.ConnectionConfig
+	shouldTerminate  bool
 }
 
 // NewMapWorker creates a new map worker instance
@@ -79,7 +82,7 @@ func NewMapWorker() *MapWorker {
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producers for each semester
-	producers := make(map[string]*workerqueue.QueueMiddleware)
+	producers := make(map[string]*workerqueue.QueueMiddleware) // TODO: use an exchange instead
 	semesters := GetAllSemesters()
 
 	for _, semester := range semesters {
@@ -89,19 +92,24 @@ func NewMapWorker() *MapWorker {
 		if producer == nil {
 			log.Fatalf("Failed to create producer for queue: %s", queueName)
 		}
-		
+
 		// Declare the queue before using it
 		if err := producer.DeclareQueue(false, false, false, false); err != 0 {
 			log.Fatalf("Failed to declare queue %s: %v", queueName, err)
 		}
-		
+
 		producers[queueName] = producer
 	}
 
+	// Create orchestrator communicator
+	orchestratorComm := NewOrchestratorCommunicator("map-worker-1", config)
+
 	return &MapWorker{
-		consumer:  consumer,
-		producers: producers,
-		config:    config,
+		consumer:         consumer,
+		producers:        producers,
+		orchestratorComm: orchestratorComm,
+		config:           config,
+		shouldTerminate:  false,
 	}
 }
 
@@ -129,9 +137,16 @@ func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 		return fmt.Errorf("failed to send to reduce queues: %v", err)
 	}
 
-	log.Printf("Successfully processed chunk %d, sent to %d reduce queues", 
+	// Notify orchestrator about chunk processing
+	err = mw.orchestratorComm.NotifyChunkProcessed(chunk)
+	if err != nil {
+		log.Printf("Failed to notify orchestrator about chunk %d: %v", chunk.ChunkNumber, err)
+		// Don't return error here as the main processing was successful
+	}
+
+	log.Printf("Successfully processed chunk %d, sent to %d reduce queues",
 		chunk.ChunkNumber, len(groupedData))
-	
+
 	return nil
 }
 
@@ -149,7 +164,7 @@ func (mw *MapWorker) parseCSVData(csvData string) ([]TransactionItem, error) {
 
 	// Skip header row
 	transactions := make([]TransactionItem, 0, len(records)-1)
-	
+
 	for _, record := range records[1:] {
 		if len(record) < 6 {
 			continue // Skip malformed records
@@ -203,7 +218,7 @@ func (mw *MapWorker) groupTransactions(transactions []TransactionItem) map[Semes
 	for _, transaction := range transactions {
 		// Calculate semester from date
 		semester := GetSemesterFromDate(transaction.CreatedAt)
-		
+
 		// Skip invalid semesters (outside our range)
 		if !IsValidSemester(semester) {
 			continue
@@ -218,12 +233,12 @@ func (mw *MapWorker) groupTransactions(transactions []TransactionItem) map[Semes
 		itemID := transaction.ItemID
 		if groupedData[semester][itemID] == nil {
 			groupedData[semester][itemID] = &GroupedResult{
-				Year:         semester.Year,
-				Semester:     semester.Semester,
-				ItemID:       itemID,
+				Year:          semester.Year,
+				Semester:      semester.Semester,
+				ItemID:        itemID,
 				TotalQuantity: 0,
 				TotalSubtotal: 0,
-				Count:        0,
+				Count:         0,
 			}
 		}
 
@@ -247,7 +262,7 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 
 		// Convert grouped data to CSV
 		csvData := mw.convertToCSV(itemGroups)
-		
+
 		// Create new chunk for reduce queue
 		reduceChunk := chunk.NewChunk(
 			originalChunk.ClientID,
@@ -270,7 +285,7 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 
 		log.Printf("Sending to queue %s: %d bytes, %d item groups", queueName, len(serializedData), len(itemGroups))
 		log.Printf("Serialized data preview: %s", string(serializedData[:min(100, len(serializedData))]))
-		
+
 		sendErr := producer.Send(serializedData)
 		if sendErr != 0 {
 			return fmt.Errorf("failed to send to queue %s: error code %v", queueName, sendErr)
@@ -285,10 +300,10 @@ func (mw *MapWorker) sendToReduceQueues(originalChunk *chunk.Chunk, groupedData 
 // convertToCSV converts grouped data to CSV format
 func (mw *MapWorker) convertToCSV(itemGroups map[string]*GroupedResult) string {
 	var csvBuilder strings.Builder
-	
+
 	// Write header
 	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
-	
+
 	// Write data rows
 	for _, result := range itemGroups {
 		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
@@ -300,16 +315,68 @@ func (mw *MapWorker) convertToCSV(itemGroups map[string]*GroupedResult) string {
 			result.Count,
 		))
 	}
-	
+
 	return csvBuilder.String()
+}
+
+// sendCompletionSignalToReduceWorkers sends a GroupByCompletionSignal to all reduce workers
+func (mw *MapWorker) sendCompletionSignalToReduceWorkers() {
+	semesters := GetAllSemesters()
+
+	for _, semester := range semesters {
+		queueName := GetQueueNameForSemester(semester)
+		producer, exists := mw.producers[queueName]
+		if !exists {
+			log.Printf("No producer found for queue: %s", queueName)
+			continue
+		}
+
+		// Create completion signal
+		completionSignal := signals.NewGroupByCompletionSignal(
+			2,              // Query Type 2
+			"",             // Client ID (empty for now, could be passed from orchestrator) // TODO: pass the client ID
+			"map-worker-1", // Map Worker ID // TODO: pass the map worker ID
+			"All data processing completed",
+		)
+
+		// Serialize completion signal
+		signalData, err := signals.SerializeGroupByCompletionSignal(completionSignal)
+		if err != nil {
+			log.Printf("Failed to serialize completion signal for queue %s: %v", queueName, err)
+			continue
+		}
+
+		// Send to reduce queue
+		log.Printf("Sending completion signal to reduce queue: %s", queueName)
+		sendErr := producer.Send(signalData)
+		if sendErr != 0 {
+			log.Printf("Failed to send completion signal to queue %s: error code %v", queueName, sendErr)
+		} else {
+			log.Printf("Successfully sent completion signal to queue: %s", queueName)
+		}
+	}
 }
 
 // Start starts the map worker
 func (mw *MapWorker) Start() {
 	log.Println("Starting Map Worker for Query 2...")
 
+	// Start listening for termination signals
+	go mw.orchestratorComm.StartTerminationListener(func() {
+		log.Println("Map worker received termination signal, sending completion signal to reduce workers...")
+		mw.sendCompletionSignalToReduceWorkers()
+		mw.shouldTerminate = true
+	})
+
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
+			// Check if we should terminate
+			if mw.shouldTerminate {
+				log.Println("Map worker terminating due to termination signal") // TODO: we should continue consuming for other clients
+				delivery.Ack(false)
+				break
+			}
+
 			// Deserialize the chunk message
 			message, err := deserializer.Deserialize(delivery.Body)
 			if err != nil {
@@ -350,7 +417,7 @@ func (mw *MapWorker) Start() {
 	if err := mw.consumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming: %v", err)
 	}
-	
+
 	// Keep the main thread alive to prevent the program from exiting
 	// The consumer runs in a goroutine, so we need to block here
 	select {}
@@ -361,11 +428,15 @@ func (mw *MapWorker) Close() {
 	if mw.consumer != nil {
 		mw.consumer.Close()
 	}
-	
+
 	for _, producer := range mw.producers {
 		if producer != nil {
 			producer.Close()
 		}
+	}
+
+	if mw.orchestratorComm != nil {
+		mw.orchestratorComm.Close()
 	}
 }
 

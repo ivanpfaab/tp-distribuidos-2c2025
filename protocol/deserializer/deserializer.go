@@ -6,6 +6,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/common"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 )
 
 // MessageHeader represents the common header structure for all message types
@@ -30,6 +31,8 @@ func Deserialize(data []byte) (interface{}, error) {
 		return batch.DeserializeBatch(data)
 	case common.ChunkMessageType:
 		return chunk.DeserializeChunk(data)
+	case common.GroupByCompletionSignalType:
+		return signals.DeserializeGroupByCompletionSignal(data)
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msgType)
 	}

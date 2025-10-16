@@ -180,6 +180,22 @@ services:
       WORKER_INSTANCE_ID: "2"
     profiles: ["orchestration"]
 
+  # Query 2 Group By Orchestrator
+  query2-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+    container_name: query2-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
   # Query 2 MapReduce Workers
   query2-map-worker:
     build:
@@ -189,6 +205,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -204,6 +222,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
@@ -222,6 +242,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
@@ -240,6 +262,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
@@ -258,6 +282,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
@@ -276,6 +302,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
@@ -640,6 +668,8 @@ services:
       storeid-join-worker-1:
         condition: service_started
       storeid-join-worker-2:
+        condition: service_started
+      query2-orchestrator:
         condition: service_started
       query2-map-worker:
         condition: service_started
