@@ -9,7 +9,6 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
@@ -23,7 +22,7 @@ type UserRecord struct {
 
 // UserPartitionSplitter splits user data across multiple writers
 type UserPartitionSplitter struct {
-	consumer       *exchange.ExchangeConsumer
+	consumer       *workerqueue.QueueConsumer
 	writerQueues   []*workerqueue.QueueMiddleware
 	config         *middleware.ConnectionConfig
 	splitterConfig *Config
@@ -32,15 +31,29 @@ type UserPartitionSplitter struct {
 
 // NewUserPartitionSplitter creates a new splitter instance
 func NewUserPartitionSplitter(connConfig *middleware.ConnectionConfig, splitterConfig *Config) (*UserPartitionSplitter, error) {
-	// Create consumer for user data from join-data-handler
-	consumer := exchange.NewExchangeConsumer(
-		"fixed-join-data-exchange",
-		[]string{"fixed-join-data"},
+	// Create consumer for user data from join-data-handler (consume from user ID dictionary queue)
+	consumer := workerqueue.NewQueueConsumer(
+		JoinUserIdDictionaryQueue,
 		connConfig,
 	)
 	if consumer == nil {
 		return nil, fmt.Errorf("failed to create consumer")
 	}
+
+	// Declare the input queue before consuming
+	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(JoinUserIdDictionaryQueue, connConfig)
+	if queueDeclarer == nil {
+		consumer.Close()
+		return nil, fmt.Errorf("failed to create queue declarer")
+	}
+
+	// Declare the queue
+	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+		consumer.Close()
+		queueDeclarer.Close()
+		return nil, fmt.Errorf("failed to declare fixed join data queue: %v", err)
+	}
+	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producer queues for each writer
 	writerQueues := make([]*workerqueue.QueueMiddleware, splitterConfig.NumWriters)

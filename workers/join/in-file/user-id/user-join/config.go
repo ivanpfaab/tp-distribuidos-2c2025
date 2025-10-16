@@ -21,10 +21,6 @@ const (
 	// Partition configuration
 	NumPartitions = 100 // Number of partition files for mod partitioning
 
-	// Buffer configuration
-	MaxBufferSize = 200 // Maximum transactions to buffer before sending retry chunk
-	MaxRetries    = 15  // Maximum retry attempts before dropping transactions (increased for scaled workers)
-
 	// Default configuration
 	DefaultRabbitMQHost = "localhost"
 	DefaultRabbitMQPort = "5672"

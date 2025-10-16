@@ -88,6 +88,8 @@ echo -e "StoreID Join Workers:   ${YELLOW}${STOREID_JOIN_WORKER_COUNT}${NC}"
 echo -e "User Partition Writers: ${YELLOW}${USER_PARTITION_WRITERS}${NC}"
 echo -e "User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC}"
 echo -e "Clients:                ${YELLOW}${CLIENT_COUNT}${NC}"
+echo ""
+echo -e "${BLUE}Note: Query 2 Top Items Worker and Query 4 Top Users Worker will be included${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
@@ -226,6 +228,8 @@ generate_itemid_join_workers() {
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
     container_name: ${container_name}
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
@@ -264,6 +268,8 @@ generate_storeid_join_workers() {
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
     container_name: ${container_name}
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
@@ -293,6 +299,279 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
     depends_on:
       rabbitmq:
         condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query2-reduce-s2-2023:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s2-2023
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2023"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s1-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s1-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2024"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s2-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s2-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2024"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s1-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s1-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2025"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s2-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s2-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2025"]
+    profiles: ["orchestration"]
+
+  # Query 2 Top Items Classification (Top N per month)
+  query2-top-items-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_top_classification/Dockerfile
+    container_name: query2-top-items-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-reduce-s2-2023:
+        condition: service_started
+      query2-reduce-s1-2024:
+        condition: service_started
+      query2-reduce-s2-2024:
+        condition: service_started
+      query2-reduce-s1-2025:
+        condition: service_started
+      query2-reduce-s2-2025:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Query 3 MapReduce Workers
+  query3-map-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/map_worker/Dockerfile
+    container_name: query3-map-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2023:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2023
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2023"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s1-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s1-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2024"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2024"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s1-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s1-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2025"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2025"]
+    profiles: ["orchestration"]
+
+  # Query 4 MapReduce Workers
+  query4-map-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_mapreduce/map_worker/Dockerfile
+    container_name: query4-map-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query4-reduce-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_mapreduce/reduce_worker/Dockerfile
+    container_name: query4-reduce-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Query 4 Top Users Classification (Top N per store)
+  query4-top-users-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_top_classification/Dockerfile
+    container_name: query4-top-users-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-reduce-worker:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -809,6 +1088,8 @@ generate_server_dependencies() {
     echo "        condition: service_started"
     echo "      query2-reduce-s2-2025:"
     echo "        condition: service_started"
+    echo "      query2-top-items-worker:"
+    echo "        condition: service_started"
     echo "      query3-map-worker:"
     echo "        condition: service_started"
     echo "      query3-reduce-s2-2023:"
@@ -824,6 +1105,8 @@ generate_server_dependencies() {
     echo "      query4-map-worker:"
     echo "        condition: service_started"
     echo "      query4-reduce-worker:"
+    echo "        condition: service_started"
+    echo "      query4-top-users-worker:"
     echo "        condition: service_started"
     echo "      streaming-service:"
     echo "        condition: service_started"
@@ -922,6 +1205,10 @@ echo -e "  Clients:                ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"
 echo ""
 echo -e "  Total Filter Workers: ${YELLOW}$((YEAR_FILTER_COUNT + TIME_FILTER_COUNT + AMOUNT_FILTER_COUNT))${NC} instances"
 echo -e "  User Join Components: ${YELLOW}$((1 + USER_PARTITION_WRITERS + USER_JOIN_READERS))${NC} instances (1 splitter + ${USER_PARTITION_WRITERS} writers + ${USER_JOIN_READERS} readers)"
+echo ""
+echo -e "${BLUE}Additional services included:${NC}"
+echo -e "  - Query 2 Top Items Worker (1 instance)"
+echo -e "  - Query 4 Top Users Worker (1 instance)"
 echo ""
 echo -e "${GREEN}You can now run: ${YELLOW}make docker-compose-up${NC}"
 echo ""

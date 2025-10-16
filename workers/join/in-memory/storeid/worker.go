@@ -33,9 +33,9 @@ type StoreIdJoinWorker struct {
 	outputProducer     *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
 
-	// Dictionary state
-	dictionaryReady bool
-	stores          map[string]*Store // store_id -> Store
+	// Dictionary state - now client-aware
+	dictionaryReady map[string]bool              // client_id -> ready status
+	stores          map[string]map[string]*Store // client_id -> store_id -> Store
 	mutex           sync.RWMutex
 }
 
@@ -112,8 +112,8 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 		chunkConsumer:      chunkConsumer,
 		outputProducer:     outputProducer,
 		config:             config,
-		dictionaryReady:    false,
-		stores:             make(map[string]*Store),
+		dictionaryReady:    make(map[string]bool),
+		stores:             make(map[string]map[string]*Store),
 	}, nil
 }
 
@@ -121,19 +121,13 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("StoreID Join Worker: Starting to listen for messages...")
 
-	// Start consuming from dictionary queue
-	go func() {
-		if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
-			fmt.Printf("Failed to start dictionary consumer: %v\n", err)
-		}
-	}()
+	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
+		fmt.Printf("Failed to start dictionary consumer: %v\n", err)
+	}
 
-	// Start consuming from chunk queue
-	go func() {
-		if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
-			fmt.Printf("Failed to start chunk consumer: %v\n", err)
-		}
-	}()
+	if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
+		fmt.Printf("Failed to start chunk consumer: %v\n", err)
+	}
 
 	return 0
 }
@@ -193,7 +187,7 @@ func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) mid
 		chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
 
 	// Parse the stores data from the chunk
-	if err := w.parseStoresData(string(chunkMsg.ChunkData)); err != nil {
+	if err := w.parseStoresData(string(chunkMsg.ChunkData), chunkMsg.ClientID); err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to parse stores data: %v\n", err)
 		delivery.Nack(false, false) // Reject the message
 		return middleware.MessageMiddlewareMessageError
@@ -201,8 +195,8 @@ func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) mid
 
 	// Check if this is the last chunk for the dictionary
 	if chunkMsg.IsLastChunk {
-		w.dictionaryReady = true
-		fmt.Printf("StoreID Join Worker: Received last chunk for FileID: %s - Dictionary is now ready\n", chunkMsg.FileID)
+		w.dictionaryReady[chunkMsg.ClientID] = true
+		fmt.Printf("StoreID Join Worker: Received last chunk for FileID: %s - Dictionary is now ready for client %s\n", chunkMsg.FileID, chunkMsg.ClientID)
 	}
 
 	delivery.Ack(false) // Acknowledge the dictionary message
@@ -221,11 +215,11 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Check if dictionary is ready
-	dictionaryReady := w.dictionaryReady
+	// Check if dictionary is ready for this specific client
+	dictionaryReady := w.dictionaryReady[chunkMsg.ClientID]
 
 	if !dictionaryReady {
-		fmt.Printf("StoreID Join Worker: Dictionary not ready, NACKing chunk for retry\n")
+		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
 		delivery.Nack(false, true) // Reject and requeue
 		return 0
 	}
@@ -285,7 +279,7 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 		}
 
 		// Perform the join with grouped data
-		joinedData := w.performGroupedTransactionStoreJoin(groupedData)
+		joinedData := w.performGroupedTransactionStoreJoin(groupedData, chunkMsg.ClientID)
 
 		// Create new chunk with joined data
 		joinedChunk := &chunk.Chunk{
@@ -310,7 +304,7 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 	}
 
 	// Perform the join
-	joinedData := w.performTransactionStoreJoin(transactionData)
+	joinedData := w.performTransactionStoreJoin(transactionData, chunkMsg.ClientID)
 
 	// Create new chunk with joined data
 	joinedChunk := &chunk.Chunk{
@@ -328,8 +322,8 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 	return joinedChunk, nil
 }
 
-// parseStoresData parses stores CSV data
-func (w *StoreIdJoinWorker) parseStoresData(csvData string) error {
+// parseStoresData parses stores CSV data and stores it client-specifically
+func (w *StoreIdJoinWorker) parseStoresData(csvData string, clientID string) error {
 	reader := csv.NewReader(strings.NewReader(csvData))
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -339,9 +333,17 @@ func (w *StoreIdJoinWorker) parseStoresData(csvData string) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
+	// Initialize client-specific dictionary if needed
+	if w.stores[clientID] == nil {
+		w.stores[clientID] = make(map[string]*Store)
+	}
+
 	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "store_id") {
+			continue
+		}
 		if len(record) >= 8 {
 			store := &Store{
 				StoreID:    record[0],
@@ -353,11 +355,11 @@ func (w *StoreIdJoinWorker) parseStoresData(csvData string) error {
 				Latitude:   record[6],
 				Longitude:  record[7],
 			}
-			w.stores[store.StoreID] = store
+			w.stores[clientID][store.StoreID] = store
 		}
 	}
 
-	fmt.Printf("StoreID Join Worker: Parsed %d stores\n", len(records)-1)
+	fmt.Printf("StoreID Join Worker: Parsed %d stores for client %s\n", len(records)-1, clientID)
 	return nil
 }
 
@@ -394,7 +396,7 @@ func (w *StoreIdJoinWorker) parseTransactionData(csvData string) ([]map[string]s
 }
 
 // performTransactionStoreJoin performs the join between transactions and stores
-func (w *StoreIdJoinWorker) performTransactionStoreJoin(transactions []map[string]string) string {
+func (w *StoreIdJoinWorker) performTransactionStoreJoin(transactions []map[string]string, clientID string) string {
 	var result strings.Builder
 
 	// Write header
@@ -403,9 +405,31 @@ func (w *StoreIdJoinWorker) performTransactionStoreJoin(transactions []map[strin
 	w.mutex.RLock()
 	defer w.mutex.RUnlock()
 
+	// Get client-specific stores dictionary
+	clientStores := w.stores[clientID]
+	fmt.Printf("StoreID Join Worker: Looking up stores for client %s, found %d stores\n", clientID, len(clientStores))
+	if clientStores == nil {
+		fmt.Printf("StoreID Join Worker: No stores dictionary found for client %s\n", clientID)
+		// No stores for this client, write original data with empty joined fields
+		for _, transaction := range transactions {
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,,,,,,,\n",
+				transaction["transaction_id"],
+				transaction["store_id"],
+				transaction["payment_method_id"],
+				transaction["voucher_id"],
+				transaction["user_id"],
+				transaction["original_amount"],
+				transaction["discount_applied"],
+				transaction["final_amount"],
+				transaction["created_at"],
+			))
+		}
+		return result.String()
+	}
+
 	for _, transaction := range transactions {
 		storeID := transaction["store_id"]
-		if store, exists := w.stores[storeID]; exists {
+		if store, exists := clientStores[storeID]; exists {
 			// Join successful - write all fields
 			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 				transaction["transaction_id"],
@@ -486,7 +510,7 @@ func (w *StoreIdJoinWorker) parseGroupedTransactionData(csvData string) ([]map[s
 }
 
 // performGroupedTransactionStoreJoin performs the join between grouped transactions and stores
-func (w *StoreIdJoinWorker) performGroupedTransactionStoreJoin(groupedTransactions []map[string]string) string {
+func (w *StoreIdJoinWorker) performGroupedTransactionStoreJoin(groupedTransactions []map[string]string, clientID string) string {
 	var result strings.Builder
 
 	// Write header for joined grouped data
@@ -495,9 +519,27 @@ func (w *StoreIdJoinWorker) performGroupedTransactionStoreJoin(groupedTransactio
 	w.mutex.RLock()
 	defer w.mutex.RUnlock()
 
+	// Get client-specific stores dictionary
+	clientStores := w.stores[clientID]
+	fmt.Printf("StoreID Join Worker: Looking up stores for client %s, found %d stores\n", clientID, len(clientStores))
+	if clientStores == nil {
+		fmt.Printf("StoreID Join Worker: No stores dictionary found for client %s\n", clientID)
+		// No stores for this client, write original data with empty joined fields
+		for _, transaction := range groupedTransactions {
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,,,,,,,\n",
+				transaction["year"],
+				transaction["semester"],
+				transaction["store_id"],
+				transaction["total_final_amount"],
+				transaction["count"],
+			))
+		}
+		return result.String()
+	}
+
 	for _, transaction := range groupedTransactions {
 		storeID := transaction["store_id"]
-		if store, exists := w.stores[storeID]; exists {
+		if store, exists := clientStores[storeID]; exists {
 			// Join successful - write all fields
 			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 				transaction["year"],

@@ -32,9 +32,9 @@ type ItemIdJoinWorker struct {
 	outputProducer     *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
 
-	// Dictionary state
+	// Dictionary state - now client-aware
 	dictionaryReady bool
-	menuItems       map[string]*MenuItem // item_id -> MenuItem
+	menuItems       map[string]map[string]*MenuItem // client_id -> item_id -> MenuItem
 	mutex           sync.RWMutex
 }
 
@@ -112,7 +112,7 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		outputProducer:     outputProducer,
 		config:             config,
 		dictionaryReady:    false,
-		menuItems:          make(map[string]*MenuItem),
+		menuItems:          make(map[string]map[string]*MenuItem),
 	}, nil
 }
 
@@ -121,18 +121,14 @@ func (w *ItemIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("ItemID Join Worker: Starting to listen for messages...")
 
 	// Start consuming from dictionary queue
-	go func() {
-		if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
-			fmt.Printf("Failed to start dictionary consumer: %v\n", err)
-		}
-	}()
+	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
+		fmt.Printf("Failed to start dictionary consumer: %v\n", err)
+	}
 
 	// Start consuming from chunk queue
-	go func() {
-		if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
-			fmt.Printf("Failed to start chunk consumer: %v\n", err)
-		}
-	}()
+	if err := w.chunkConsumer.StartConsuming(w.createChunkCallback()); err != 0 {
+		fmt.Printf("Failed to start chunk consumer: %v\n", err)
+	}
 
 	return 0
 }
@@ -192,7 +188,7 @@ func (w *ItemIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) midd
 		chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
 
 	// Parse the menu items data from the chunk
-	if err := w.parseMenuItemsData(string(chunkMsg.ChunkData)); err != nil {
+	if err := w.parseMenuItemsData(string(chunkMsg.ChunkData), chunkMsg.ClientID); err != nil {
 		fmt.Printf("ItemID Join Worker: Failed to parse menu items data: %v\n", err)
 		delivery.Nack(false, false) // Reject the message
 		return middleware.MessageMiddlewareMessageError
@@ -286,7 +282,7 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 		}
 
 		// Perform the join with grouped data
-		joinedData := w.performGroupedTransactionItemMenuJoin(groupedData)
+		joinedData := w.performGroupedTransactionItemMenuJoin(groupedData, chunkMsg.ClientID)
 
 		// Create new chunk with joined data
 		joinedChunk := &chunk.Chunk{
@@ -311,7 +307,7 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 	}
 
 	// Perform the join
-	joinedData := w.performTransactionItemMenuJoin(transactionItemsData)
+	joinedData := w.performTransactionItemMenuJoin(transactionItemsData, chunkMsg.ClientID)
 
 	// Create new chunk with joined data
 	joinedChunk := &chunk.Chunk{
@@ -329,8 +325,8 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 	return joinedChunk, nil
 }
 
-// parseMenuItemsData parses menu items CSV data
-func (w *ItemIdJoinWorker) parseMenuItemsData(csvData string) error {
+// parseMenuItemsData parses menu items CSV data and stores it client-specifically
+func (w *ItemIdJoinWorker) parseMenuItemsData(csvData string, clientID string) error {
 	reader := csv.NewReader(strings.NewReader(csvData))
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -340,9 +336,16 @@ func (w *ItemIdJoinWorker) parseMenuItemsData(csvData string) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	// Initialize client-specific dictionary if needed
+	if w.menuItems[clientID] == nil {
+		w.menuItems[clientID] = make(map[string]*MenuItem)
+	}
+
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "item_id") {
+			continue
+		}
 		if len(record) >= 7 {
 			menuItem := &MenuItem{
 				ItemID:        record[0],
@@ -353,11 +356,11 @@ func (w *ItemIdJoinWorker) parseMenuItemsData(csvData string) error {
 				AvailableFrom: record[5],
 				AvailableTo:   record[6],
 			}
-			w.menuItems[menuItem.ItemID] = menuItem
+			w.menuItems[clientID][menuItem.ItemID] = menuItem
 		}
 	}
 
-	fmt.Printf("ItemID Join Worker: Parsed %d menu items\n", len(records)-1)
+	fmt.Printf("ItemID Join Worker: Parsed %d menu items for client %s\n", len(records)-1, clientID)
 	return nil
 }
 
@@ -391,7 +394,7 @@ func (w *ItemIdJoinWorker) parseTransactionItemsData(csvData string) ([]map[stri
 }
 
 // performTransactionItemMenuJoin performs the join between transaction items and menu items
-func (w *ItemIdJoinWorker) performTransactionItemMenuJoin(transactionItems []map[string]string) string {
+func (w *ItemIdJoinWorker) performTransactionItemMenuJoin(transactionItems []map[string]string, clientID string) string {
 	var result strings.Builder
 
 	// Write header
@@ -400,9 +403,26 @@ func (w *ItemIdJoinWorker) performTransactionItemMenuJoin(transactionItems []map
 	w.mutex.RLock()
 	defer w.mutex.RUnlock()
 
+	// Get client-specific menu items dictionary
+	clientMenuItems := w.menuItems[clientID]
+	if clientMenuItems == nil {
+		// No menu items for this client, write original data with empty joined fields
+		for _, item := range transactionItems {
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,,,,\n",
+				item["transaction_id"],
+				item["item_id"],
+				item["quantity"],
+				item["unit_price"],
+				item["subtotal"],
+				item["created_at"],
+			))
+		}
+		return result.String()
+	}
+
 	for _, item := range transactionItems {
 		itemID := item["item_id"]
-		if menuItem, exists := w.menuItems[itemID]; exists {
+		if menuItem, exists := clientMenuItems[itemID]; exists {
 			// Join successful - write all fields
 			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 				item["transaction_id"],
@@ -429,7 +449,7 @@ func (w *ItemIdJoinWorker) performTransactionItemMenuJoin(transactionItems []map
 		}
 	}
 
-	fmt.Printf("ItemID Join Worker: Joined %d transaction items with menu items\n", len(transactionItems))
+	fmt.Printf("ItemID Join Worker: Joined %d transaction items with menu items for client %s\n", len(transactionItems), clientID)
 
 	return result.String()
 }
@@ -477,7 +497,7 @@ func (w *ItemIdJoinWorker) parseGroupedTransactionItemsData(csvData string) ([]m
 }
 
 // performGroupedTransactionItemMenuJoin performs the join between grouped transaction items and menu items
-func (w *ItemIdJoinWorker) performGroupedTransactionItemMenuJoin(groupedItems []map[string]string) string {
+func (w *ItemIdJoinWorker) performGroupedTransactionItemMenuJoin(groupedItems []map[string]string, clientID string) string {
 	var result strings.Builder
 
 	// Write header for joined grouped data
@@ -486,9 +506,26 @@ func (w *ItemIdJoinWorker) performGroupedTransactionItemMenuJoin(groupedItems []
 	w.mutex.RLock()
 	defer w.mutex.RUnlock()
 
+	// Get client-specific menu items dictionary
+	clientMenuItems := w.menuItems[clientID]
+	if clientMenuItems == nil {
+		// No menu items for this client, write original data with empty joined fields
+		for _, item := range groupedItems {
+			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,,,,\n",
+				item["year"],
+				item["month"],
+				item["item_id"],
+				item["quantity"],
+				item["subtotal"],
+				item["count"],
+			))
+		}
+		return result.String()
+	}
+
 	for _, item := range groupedItems {
 		itemID := item["item_id"]
-		if menuItem, exists := w.menuItems[itemID]; exists {
+		if menuItem, exists := clientMenuItems[itemID]; exists {
 			// Join successful - write all fields
 			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 				item["year"],

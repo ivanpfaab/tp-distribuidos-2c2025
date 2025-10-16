@@ -10,15 +10,13 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
-	// Join data handler exchange and routing key
-	FixedJoinDataExchange   = queues.FixedJoinDataExchange
-	FixedJoinDataRoutingKey = queues.FixedJoinDataRoutingKey
+	// Join data handler queue
+	FixedJoinDataQueue = queues.FixedJoinDataQueue
 )
 
 // DataHandler struct
@@ -29,8 +27,8 @@ type DataHandler struct {
 	// Queue producer for sending chunks directly to year-filter (QueryData)
 	yearFilterProducer *workerqueue.QueueMiddleware
 
-	// Exchange producer for sending chunks directly to join handler (Fixed data used for the joins)
-	joinDataHandlerProducer *exchange.ExchangeMiddleware
+	// Queue producer for sending chunks directly to join handler (Fixed data used for the joins)
+	joinDataHandlerProducer *workerqueue.QueueMiddleware
 
 	// Configuration
 	config *middleware.ConnectionConfig
@@ -68,17 +66,17 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 		return err
 	}
 
-	dh.joinDataHandlerProducer = exchange.NewMessageMiddlewareExchange(
-		FixedJoinDataExchange,
-		[]string{FixedJoinDataRoutingKey},
+	// Initialize queue producer for sending chunks directly to join data handler
+	dh.joinDataHandlerProducer = workerqueue.NewMessageMiddlewareQueue(
+		FixedJoinDataQueue,
 		dh.config,
 	)
 	if dh.joinDataHandlerProducer == nil {
 		return middleware.MessageMiddlewareDisconnectedError
 	}
 
-	// Declare the fixed join data exchange
-	if err := dh.joinDataHandlerProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
+	// Declare the fixed join data queue
+	if err := dh.joinDataHandlerProducer.DeclareQueue(false, false, false, false); err != 0 {
 		return err
 	}
 
@@ -276,8 +274,11 @@ func (dh *DataHandler) SendChunkToJoinDataHandler(chunkMsg *chunk.ChunkMessage) 
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send to join data handler exchange
-	return dh.joinDataHandlerProducer.Send(messageData, []string{FixedJoinDataRoutingKey})
+	fmt.Printf("Data Handler: Sending chunk to join data handler - ClientID: %s, FileID: %s, ChunkNumber: %d /n",
+		chunkMsg.Chunk.ClientID, chunkMsg.Chunk.FileID, chunkMsg.Chunk.ChunkNumber)
+
+	// Send to join data handler queue
+	return dh.joinDataHandlerProducer.Send(messageData)
 }
 
 // Close closes all connections

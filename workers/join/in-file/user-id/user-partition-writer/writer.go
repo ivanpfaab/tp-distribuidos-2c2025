@@ -105,7 +105,7 @@ func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middlewar
 		upw.writerConfig.WriterID, chunkMsg.ChunkNumber, chunkMsg.ChunkSize, chunkMsg.IsLastChunk)
 
 	// Write users to partitions
-	if err := upw.writeUsersToPartitions(chunkMsg.ChunkData); err != nil {
+	if err := upw.writeUsersToPartitions(chunkMsg.ChunkData, chunkMsg.ClientID); err != nil {
 		fmt.Printf("User Partition Writer %d: Failed to write users: %v\n",
 			upw.writerConfig.WriterID, err)
 		return middleware.MessageMiddlewareMessageError
@@ -115,7 +115,7 @@ func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middlewar
 }
 
 // writeUsersToPartitions writes users to their respective partition files
-func (upw *UserPartitionWriter) writeUsersToPartitions(csvData string) error {
+func (upw *UserPartitionWriter) writeUsersToPartitions(csvData string, clientID string) error {
 	reader := csv.NewReader(strings.NewReader(csvData))
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -158,7 +158,7 @@ func (upw *UserPartitionWriter) writeUsersToPartitions(csvData string) error {
 		}
 
 		// Write to partition file
-		if err := upw.appendUserToPartition(partition, record); err != nil {
+		if err := upw.appendUserToPartition(partition, record, clientID); err != nil {
 			fmt.Printf("User Partition Writer %d: Failed to write user %s to partition %d: %v\n",
 				upw.writerConfig.WriterID, userID, partition, err)
 			continue
@@ -180,8 +180,8 @@ func (upw *UserPartitionWriter) writeUsersToPartitions(csvData string) error {
 }
 
 // appendUserToPartition appends a user record to the appropriate partition file
-func (upw *UserPartitionWriter) appendUserToPartition(partition int, record []string) error {
-	filename := fmt.Sprintf("users-partition-%03d.csv", partition)
+func (upw *UserPartitionWriter) appendUserToPartition(partition int, record []string, clientID string) error {
+	filename := fmt.Sprintf("%s-users-partition-%03d.csv", clientID, partition)
 	filePath := filepath.Join(SharedDataDir, filename)
 
 	// Check if file exists to determine if we need to write header
