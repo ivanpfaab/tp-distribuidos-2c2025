@@ -247,8 +247,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query2-orchestrator:
-        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
@@ -267,8 +265,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query2-orchestrator:
-        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
@@ -287,8 +283,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query2-orchestrator:
-        condition: service_started
       query2-map-worker:
         condition: service_started
     environment:
