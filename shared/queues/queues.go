@@ -51,7 +51,6 @@ const (
 	Query2ReduceQueueS2_2024  = "query2-reduce-s2-2024"
 	Query2ReduceQueueS1_2025  = "query2-reduce-s1-2025"
 	Query2ReduceQueueS2_2025  = "query2-reduce-s2-2025"
-	Query2GroupByResultsQueue = "top-items-queue"
 
 	// Group By Orchestrator Queues and Exchanges
 	Query2OrchestratorChunksQueue = "query2-orchestrator-chunks"

@@ -106,7 +106,7 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Create producer for the final results queue
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query3GroupByResultsQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.StoreIdChunkQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")

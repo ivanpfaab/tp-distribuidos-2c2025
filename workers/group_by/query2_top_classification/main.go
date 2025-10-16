@@ -137,7 +137,7 @@ func (tw *TopItemsWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 		}
 
 		// If we received EOS from all 3 reduce workers, send final results
-		if clientState.eosCount >= 3 {
+		if clientState.eosCount >= 5 {
 			log.Printf("Top Items Worker: All reduce workers finished for client %s, sending top items...", clientID)
 			if err := tw.sendTopItems(clientID, clientState); err != 0 {
 				log.Printf("Top Items Worker: Failed to send top items: %v", err)
