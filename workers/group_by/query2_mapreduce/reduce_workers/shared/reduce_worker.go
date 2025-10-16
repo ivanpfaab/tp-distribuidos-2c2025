@@ -10,7 +10,9 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
@@ -23,35 +25,38 @@ func min(a, b int) int {
 	return b
 }
 
-// GroupedResult represents the grouped data by year, month, item_id
+// GroupedResult represents the grouped data by item_id (already grouped by semester)
 type GroupedResult struct {
-	Year          int
-	Month         int
 	ItemID        string
 	TotalQuantity int
 	TotalSubtotal float64
 	Count         int
 }
 
-// FinalResult represents the final aggregated result (aggregated by month)
+// FinalResult represents the final aggregated result
 type FinalResult struct {
 	Year          int
-	Month         int
+	Semester      int
 	ItemID        string
 	TotalQuantity int
 	TotalSubtotal float64
 	Count         int
+}
+
+// ClientData represents the data for a specific client
+type ClientData struct {
+	GroupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
+	ChunkCount  int                       // Track number of chunks received
+	IsCompleted bool                      // Whether this client's processing is completed
 }
 
 // ReduceWorker processes chunks for a specific semester
 type ReduceWorker struct {
-	semester    Semester
-	consumer    *workerqueue.QueueConsumer
-	producer    *workerqueue.QueueMiddleware
-	config      *middleware.ConnectionConfig
-	groupedData map[string]*GroupedResult // Key: year-month-item_id, Value: aggregated data
-	chunkCount  int                       // Track number of chunks received
-	clientID    string                    // Store the client ID from incoming chunks
+	semester   Semester
+	consumer   *exchange.ExchangeConsumer
+	producer   *workerqueue.QueueMiddleware
+	config     *middleware.ConnectionConfig
+	clientData map[string]*ClientData // Key: clientID, Value: client-specific data
 }
 
 // NewReduceWorker creates a new reduce worker for a specific semester
@@ -63,14 +68,33 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		Password: "password",
 	}
 
-	// Create consumer for the specific semester queue
+	// Create consumer for the specific semester queue via topic exchange
 	queueName := GetQueueNameForSemester(semester)
-	consumer := workerqueue.NewQueueConsumer(queueName, config)
-	if consumer == nil {
-		log.Fatalf("Failed to create consumer for queue: %s", queueName)
+	routingKey := queues.GetQuery2RoutingKey(semester.Year, semester.Semester)
+	if routingKey == "" {
+		log.Fatalf("No routing key found for semester %d-%d", semester.Year, semester.Semester)
 	}
 
-	// Declare the reduce queue before consuming
+	// Create exchange consumer for the specific routing key
+	consumer := exchange.NewExchangeConsumer(queues.Query2MapReduceExchange, []string{routingKey}, config)
+	if consumer == nil {
+		log.Fatalf("Failed to create exchange consumer for routing key: %s", routingKey)
+	}
+
+	// Declare the topic exchange
+	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(queues.Query2MapReduceExchange, []string{}, config)
+	if exchangeDeclarer == nil {
+		consumer.Close()
+		log.Fatalf("Failed to create exchange declarer for exchange: %s", queues.Query2MapReduceExchange)
+	}
+	if err := exchangeDeclarer.DeclareExchange("topic", false, false, false, false); err != 0 {
+		consumer.Close()
+		exchangeDeclarer.Close()
+		log.Fatalf("Failed to declare topic exchange %s: %v", queues.Query2MapReduceExchange, err)
+	}
+	exchangeDeclarer.Close() // Close the declarer as we don't need it anymore
+
+	// Declare the reduce queue for this routing key
 	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(queueName, config)
 	if queueDeclarer == nil {
 		consumer.Close()
@@ -83,8 +107,8 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	}
 	queueDeclarer.Close() // Close the declarer as we don't need it anymore
 
-	// Create producer for the top items queue (goes to top classification component)
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2TopItemsQueue, config)
+	// Create producer for the final results queue
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2GroupByResultsQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatalf("Failed to create producer for final results queue")
@@ -98,25 +122,29 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	}
 
 	return &ReduceWorker{
-		semester:    semester,
-		consumer:    consumer,
-		producer:    producer,
-		config:      config,
-		groupedData: make(map[string]*GroupedResult),
-		chunkCount:  0,
-		clientID:    "", // Will be set when first chunk is processed
+		semester:   semester,
+		consumer:   consumer,
+		producer:   producer,
+		config:     config,
+		clientData: make(map[string]*ClientData),
 	}
 }
 
-// ProcessChunk processes a chunk immediately and aggregates data by item_id
+// ProcessChunk processes a chunk immediately and aggregates data by item_id for a specific client
 func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
-	log.Printf("Processing chunk %d for semester %s", chunk.ChunkNumber, rw.semester.String())
+	log.Printf("Processing chunk %d for semester %s, client %s", chunk.ChunkNumber, rw.semester.String(), chunk.ClientID)
 
-	// Store client ID from the first chunk (all chunks should have the same client ID)
-	if rw.clientID == "" {
-		rw.clientID = chunk.ClientID
-		log.Printf("Stored client ID: %s", rw.clientID)
+	// Initialize client data if not exists
+	if rw.clientData[chunk.ClientID] == nil {
+		rw.clientData[chunk.ClientID] = &ClientData{
+			GroupedData: make(map[string]*GroupedResult),
+			ChunkCount:  0,
+			IsCompleted: false,
+		}
+		log.Printf("Initialized data for client: %s", chunk.ClientID)
 	}
+
+	clientData := rw.clientData[chunk.ClientID]
 
 	// Parse CSV data from chunk
 	results, err := rw.parseCSVData(chunk.ChunkData)
@@ -125,16 +153,16 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	}
 
 	// Aggregate data by item_id immediately
-	rw.aggregateData(results)
+	rw.aggregateDataForClient(chunk.ClientID, results)
 
-	rw.chunkCount++
-	log.Printf("Processed chunk %d, now have %d unique items (total chunks: %d)",
-		chunk.ChunkNumber, len(rw.groupedData), rw.chunkCount)
+	clientData.ChunkCount++
+	log.Printf("Processed chunk %d for client %s, now have %d unique items (total chunks: %d)",
+		chunk.ChunkNumber, chunk.ClientID, len(clientData.GroupedData), clientData.ChunkCount)
 
 	return nil
 }
 
-// parseCSVData parses CSV data from chunk (now with year and month)
+// parseCSVData parses CSV data from chunk
 func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	reader := csv.NewReader(strings.NewReader(csvData))
 	records, err := reader.ReadAll()
@@ -146,22 +174,12 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 		return []GroupedResult{}, nil
 	}
 
-	results := make([]GroupedResult, 0, len(records))
+	// Skip header row
+	results := make([]GroupedResult, 0, len(records)-1)
 
-	for _, record := range records {
-
+	for _, record := range records[1:] {
 		if len(record) < 6 {
 			continue // Skip malformed records
-		}
-
-		year, err := strconv.Atoi(record[0])
-		if err != nil {
-			continue // Skip records with invalid year
-		}
-
-		month, err := strconv.Atoi(record[1])
-		if err != nil {
-			continue // Skip records with invalid month
 		}
 
 		quantity, err := strconv.Atoi(record[3])
@@ -180,8 +198,6 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 		}
 
 		result := GroupedResult{
-			Year:          year,
-			Month:         month,
 			ItemID:        record[2],
 			TotalQuantity: quantity,
 			TotalSubtotal: subtotal,
@@ -194,18 +210,17 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	return results, nil
 }
 
-// aggregateData aggregates data by year-month-item_id
-func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
-	for _, result := range results {
-		// Create composite key: year-month-itemID (e.g., "2024-03-ITM001")
-		compositeKey := fmt.Sprintf("%d-%02d-%s", result.Year, result.Month, result.ItemID)
+// aggregateDataForClient aggregates data by item_id for a specific client
+func (rw *ReduceWorker) aggregateDataForClient(clientID string, results []GroupedResult) {
+	clientData := rw.clientData[clientID]
 
-		// Get or create grouped result for this composite key
-		if rw.groupedData[compositeKey] == nil {
-			rw.groupedData[compositeKey] = &GroupedResult{
-				Year:          result.Year,
-				Month:         result.Month,
-				ItemID:        result.ItemID,
+	for _, result := range results {
+		itemID := result.ItemID
+
+		// Get or create grouped result for this item_id
+		if clientData.GroupedData[itemID] == nil {
+			clientData.GroupedData[itemID] = &GroupedResult{
+				ItemID:        itemID,
 				TotalQuantity: 0,
 				TotalSubtotal: 0,
 				Count:         0,
@@ -213,23 +228,36 @@ func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 		}
 
 		// Aggregate data
-		rw.groupedData[compositeKey].TotalQuantity += result.TotalQuantity
-		rw.groupedData[compositeKey].TotalSubtotal += result.TotalSubtotal
-		rw.groupedData[compositeKey].Count += result.Count
+		clientData.GroupedData[itemID].TotalQuantity += result.TotalQuantity
+		clientData.GroupedData[itemID].TotalSubtotal += result.TotalSubtotal
+		clientData.GroupedData[itemID].Count += result.Count
 	}
 }
 
-// FinalizeResults sends the final aggregated results
-func (rw *ReduceWorker) FinalizeResults() error {
-	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique items",
-		rw.semester.String(), rw.chunkCount, len(rw.groupedData))
+// FinalizeResultsForClient sends the final aggregated results for a specific client
+func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
+	clientData := rw.clientData[clientID]
 
-	// Convert to final results (now with year and month from the data)
-	finalResults := make([]FinalResult, 0, len(rw.groupedData))
-	for _, grouped := range rw.groupedData {
+	// Initialize client data if it doesn't exist (no chunks were processed for this client)
+	if clientData == nil {
+		clientData = &ClientData{
+			GroupedData: make(map[string]*GroupedResult),
+			ChunkCount:  0,
+			IsCompleted: false,
+		}
+		rw.clientData[clientID] = clientData
+		log.Printf("No data found for client %s, initializing empty results", clientID)
+	}
+
+	log.Printf("Finalizing results for client %s, semester %s with %d processed chunks and %d unique items",
+		clientID, rw.semester.String(), clientData.ChunkCount, len(clientData.GroupedData))
+
+	// Convert to final results
+	finalResults := make([]FinalResult, 0, len(clientData.GroupedData))
+	for _, grouped := range clientData.GroupedData {
 		finalResult := FinalResult{
-			Year:          grouped.Year,
-			Month:         grouped.Month,
+			Year:          rw.semester.Year,
+			Semester:      rw.semester.Semester,
 			ItemID:        grouped.ItemID,
 			TotalQuantity: grouped.TotalQuantity,
 			TotalSubtotal: grouped.TotalSubtotal,
@@ -239,34 +267,38 @@ func (rw *ReduceWorker) FinalizeResults() error {
 	}
 
 	// Log detailed final results
-	log.Printf("FINAL RESULTS for semester %s:", rw.semester.String())
+	log.Printf("FINAL RESULTS for client %s, semester %s:", clientID, rw.semester.String())
 	log.Printf("   Total unique items: %d", len(finalResults))
+
+	if len(finalResults) == 0 {
+		log.Printf("   No data processed for this client in this semester")
+	}
 
 	// Show top 10 items by total quantity for debugging
 	items := make([]FinalResult, len(finalResults))
 	copy(items, finalResults)
 
-	// Sort by total quantity (descending)
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[i].TotalQuantity < items[j].TotalQuantity {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
+	// // Sort by total quantity (descending)
+	// for i := 0; i < len(items)-1; i++ {
+	// 	for j := i + 1; j < len(items); j++ {
+	// 		if items[i].TotalQuantity < items[j].TotalQuantity {
+	// 			items[i], items[j] = items[j], items[i]
+	// 		}
+	// 	}
+	// }
 
-	// Show top 10 items
-	topCount := 10
-	if len(items) < topCount {
-		topCount = len(items)
-	}
+	// // Show top 10 items
+	// topCount := 10
+	// if len(items) < topCount {
+	// 	topCount = len(items)
+	// }
 
-	log.Printf("   Top %d items by quantity:", topCount)
-	for i := 0; i < topCount; i++ {
-		item := items[i]
-		log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d",
-			i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
-	}
+	// log.Printf("   Top %d items by quantity:", topCount)
+	// for i := 0; i < topCount; i++ {
+	// 	item := items[i]
+	// 	log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d",
+	// 		i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
+	// }
 
 	// Calculate totals
 	totalQuantity := 0
@@ -284,16 +316,24 @@ func (rw *ReduceWorker) FinalizeResults() error {
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
 
+	// Log the CSV data for debugging
+	if len(csvData) > 0 {
+		log.Printf("CSV data for client %s, semester %s (first 500 chars):\n%s",
+			clientID, rw.semester.String(), csvData[:min(500, len(csvData))])
+	} else {
+		log.Printf("Empty CSV data for client %s, semester %s", clientID, rw.semester.String())
+	}
+
 	// Create chunk for final results
 	// FileID format: S{semester}{last2digitsOfYear} - e.g., "S125" for S1-2025
 	fileID := fmt.Sprintf("S%d%02d", rw.semester.Semester, rw.semester.Year%100)
 	finalChunk := chunk.NewChunk(
-		rw.clientID, // Use the actual client ID from the original request
-		fileID,      // File ID (max 4 bytes)
-		2,           // Query Type
-		1,           // Chunk Number
-		true,        // Is Last Chunk
-		2,           // Step 2 for final results
+		clientID, // Use the specific client ID
+		fileID,   // File ID (max 4 bytes)
+		2,        // Query Type
+		1,        // Chunk Number
+		true,     // Is Last Chunk
+		2,        // Step 2 for final results
 		len(csvData),
 		2, // Table ID 2 for transaction_items
 		csvData,
@@ -311,35 +351,42 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
-	log.Printf("Successfully sent final results for semester %s: %d items (ClientID: %s)",
-		rw.semester.String(), len(finalResults), rw.clientID)
+	log.Printf("Successfully sent final results for client %s, semester %s: %d items",
+		clientID, rw.semester.String(), len(finalResults))
 
-	// Clear aggregated data to free memory
-	rw.clearAggregatedData()
+	// Mark client as completed
+	clientData.IsCompleted = true
+
+	// Clear aggregated data for this client to free memory
+	rw.clearClientData(clientID)
 
 	return nil
 }
 
-// clearAggregatedData clears the aggregated data to free memory
-func (rw *ReduceWorker) clearAggregatedData() {
-	log.Printf("Clearing aggregated data for semester %s (%d items)", rw.semester.String(), len(rw.groupedData))
-	rw.groupedData = make(map[string]*GroupedResult)
-	rw.chunkCount = 0
-	rw.clientID = "" // Reset client ID for next batch
+// clearClientData clears the aggregated data for a specific client to free memory
+func (rw *ReduceWorker) clearClientData(clientID string) {
+	clientData := rw.clientData[clientID]
+	if clientData != nil {
+		log.Printf("Clearing aggregated data for client %s, semester %s (%d items)",
+			clientID, rw.semester.String(), len(clientData.GroupedData))
+		clientData.GroupedData = make(map[string]*GroupedResult)
+		clientData.ChunkCount = 0
+	}
 }
 
 // convertToCSV converts final results to CSV format
+// Always returns valid CSV with at least headers, even for empty results
 func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 	var csvBuilder strings.Builder
 
-	// Write header (changed from semester to month)
-	csvBuilder.WriteString("year,month,item_id,total_quantity,total_subtotal,count\n")
+	// Write header (always present, even for empty results)
+	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n") // TODO: check if top component skips headers
 
 	// Write data rows
 	for _, result := range results {
 		csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
 			result.Year,
-			result.Month,
+			result.Semester,
 			result.ItemID,
 			result.TotalQuantity,
 			result.TotalSubtotal,
@@ -358,6 +405,7 @@ func (rw *ReduceWorker) Start() {
 		log.Printf("Reduce worker for semester %s started consuming messages", rw.semester.String())
 		chunkCount := 0
 		for delivery := range *consumeChannel {
+
 			log.Printf("Received message for semester %s - Message size: %d bytes", rw.semester.String(), len(delivery.Body))
 			log.Printf("Message body preview: %s", string(delivery.Body[:min(100, len(delivery.Body))]))
 			// Deserialize the chunk message
@@ -368,31 +416,36 @@ func (rw *ReduceWorker) Start() {
 				continue
 			}
 
-			// Check if it's a Chunk message
-			chunk, ok := message.(*chunk.Chunk)
-			if !ok {
-				log.Printf("Received non-chunk message: %T", message)
-				delivery.Ack(false)
-				continue
-			}
-
-			// Process the chunk immediately
-			err = rw.ProcessChunk(chunk)
-			if err != nil {
-				log.Printf("Failed to process chunk: %v", err)
-				delivery.Ack(false)
-				continue
-			}
-
-			chunkCount++
-
-			// If this is the last chunk, finalize results
-			if chunk.IsLastChunk {
-				log.Printf("Received last chunk for semester %s, finalizing results...", rw.semester.String())
-				err = rw.FinalizeResults()
+			// Check if it's a Chunk message or GroupByCompletionSignal
+			switch msg := message.(type) {
+			case *chunk.Chunk:
+				// Process the chunk
+				err = rw.ProcessChunk(msg)
 				if err != nil {
-					log.Printf("Failed to finalize results: %v", err)
+					log.Printf("Failed to process chunk: %v", err)
+					delivery.Ack(false)
+					continue
 				}
+
+				chunkCount++
+			case *signals.GroupByCompletionSignal:
+				// Handle completion signal for specific client
+				log.Printf("Received GroupByCompletionSignal for client %s, semester %s from map worker %s: %s",
+					msg.ClientID, rw.semester.String(), msg.MapWorkerID, msg.Message)
+
+				// Finalize results for this specific client
+				err = rw.FinalizeResultsForClient(msg.ClientID)
+				if err != nil {
+					log.Printf("Failed to finalize results for client %s on completion signal: %v", msg.ClientID, err)
+				}
+
+				log.Printf("Reduce worker for semester %s completed processing for client %s", rw.semester.String(), msg.ClientID)
+				delivery.Ack(false)
+				// Continue processing other clients
+			default:
+				log.Printf("Received unknown message type: %T", message)
+				delivery.Ack(false)
+				continue
 			}
 
 			// Acknowledge the message

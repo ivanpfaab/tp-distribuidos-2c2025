@@ -9,8 +9,10 @@ type Header struct {
 
 // MessageType constants
 const (
-	BatchMessageType = 1
-	ChunkMessageType = 2
+	BatchMessageType            = 1
+	ChunkMessageType            = 2
+	GroupByCompletionSignalType = 3
+	ChunkNotificationType       = 4
 )
 
 // Common header sizes
