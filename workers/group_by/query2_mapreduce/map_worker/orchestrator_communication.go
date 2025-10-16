@@ -22,7 +22,7 @@ type ChunkNotification struct {
 	MapWorkerID string
 }
 
-// TerminationSignal represents a signal to terminate processing
+// TerminationSignal represents a signal to terminate processing for a specific client
 type TerminationSignal struct {
 	QueryType int
 	ClientID  string
@@ -97,7 +97,7 @@ func (oc *OrchestratorCommunicator) NotifyChunkProcessed(chunk *chunk.Chunk) err
 }
 
 // StartTerminationListener starts listening for termination signals
-func (oc *OrchestratorCommunicator) StartTerminationListener(terminationCallback func()) {
+func (oc *OrchestratorCommunicator) StartTerminationListener(terminationCallback func(*TerminationSignal)) {
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		log.Printf("Map worker %s started listening for termination signals", oc.mapWorkerID)
 
@@ -112,11 +112,11 @@ func (oc *OrchestratorCommunicator) StartTerminationListener(terminationCallback
 				continue
 			}
 
-			log.Printf("Map worker %s received termination signal for Query %d: %s", // TODO: include the client ID
-				oc.mapWorkerID, signal.QueryType, signal.Message)
+			log.Printf("Map worker %s received termination signal for Query %d, Client %s: %s",
+				oc.mapWorkerID, signal.QueryType, signal.ClientID, signal.Message)
 
-			// Call the termination callback
-			terminationCallback()
+			// Call the termination callback with the signal
+			terminationCallback(&signal)
 
 			// Acknowledge the message
 			delivery.Ack(false)

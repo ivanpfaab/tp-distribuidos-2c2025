@@ -42,15 +42,20 @@ type FinalResult struct {
 	Count         int
 }
 
+// ClientData represents the data for a specific client
+type ClientData struct {
+	GroupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
+	ChunkCount  int                       // Track number of chunks received
+	IsCompleted bool                      // Whether this client's processing is completed
+}
+
 // ReduceWorker processes chunks for a specific semester
 type ReduceWorker struct {
-	semester    Semester
-	consumer    *workerqueue.QueueConsumer
-	producer    *workerqueue.QueueMiddleware
-	config      *middleware.ConnectionConfig
-	groupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
-	chunkCount  int                       // Track number of chunks received
-	clientID    string                    // Store the client ID from incoming chunks
+	semester   Semester
+	consumer   *workerqueue.QueueConsumer
+	producer   *workerqueue.QueueMiddleware
+	config     *middleware.ConnectionConfig
+	clientData map[string]*ClientData // Key: clientID, Value: client-specific data
 }
 
 // NewReduceWorker creates a new reduce worker for a specific semester
@@ -97,26 +102,29 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 	}
 
 	return &ReduceWorker{
-		semester:    semester,
-		consumer:    consumer,
-		producer:    producer,
-		config:      config,
-		groupedData: make(map[string]*GroupedResult),
-		chunkCount:  0,
-		clientID:    "", // Will be set when first chunk is processed
-		// TODO: the client ID is not reducer-worker specific, fix this behavior
+		semester:   semester,
+		consumer:   consumer,
+		producer:   producer,
+		config:     config,
+		clientData: make(map[string]*ClientData),
 	}
 }
 
-// ProcessChunk processes a chunk immediately and aggregates data by item_id
+// ProcessChunk processes a chunk immediately and aggregates data by item_id for a specific client
 func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
-	log.Printf("Processing chunk %d for semester %s", chunk.ChunkNumber, rw.semester.String())
+	log.Printf("Processing chunk %d for semester %s, client %s", chunk.ChunkNumber, rw.semester.String(), chunk.ClientID)
 
-	// Store client ID from the first chunk (all chunks should have the same client ID)
-	if rw.clientID == "" {
-		rw.clientID = chunk.ClientID
-		log.Printf("Stored client ID: %s", rw.clientID)
+	// Initialize client data if not exists
+	if rw.clientData[chunk.ClientID] == nil {
+		rw.clientData[chunk.ClientID] = &ClientData{
+			GroupedData: make(map[string]*GroupedResult),
+			ChunkCount:  0,
+			IsCompleted: false,
+		}
+		log.Printf("Initialized data for client: %s", chunk.ClientID)
 	}
+
+	clientData := rw.clientData[chunk.ClientID]
 
 	// Parse CSV data from chunk
 	results, err := rw.parseCSVData(chunk.ChunkData)
@@ -125,11 +133,11 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	}
 
 	// Aggregate data by item_id immediately
-	rw.aggregateData(results)
+	rw.aggregateDataForClient(chunk.ClientID, results)
 
-	rw.chunkCount++
-	log.Printf("Processed chunk %d, now have %d unique items (total chunks: %d)",
-		chunk.ChunkNumber, len(rw.groupedData), rw.chunkCount)
+	clientData.ChunkCount++
+	log.Printf("Processed chunk %d for client %s, now have %d unique items (total chunks: %d)",
+		chunk.ChunkNumber, chunk.ClientID, len(clientData.GroupedData), clientData.ChunkCount)
 
 	return nil
 }
@@ -182,14 +190,16 @@ func (rw *ReduceWorker) parseCSVData(csvData string) ([]GroupedResult, error) {
 	return results, nil
 }
 
-// aggregateData aggregates data by item_id
-func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
+// aggregateDataForClient aggregates data by item_id for a specific client
+func (rw *ReduceWorker) aggregateDataForClient(clientID string, results []GroupedResult) {
+	clientData := rw.clientData[clientID]
+
 	for _, result := range results {
 		itemID := result.ItemID
 
 		// Get or create grouped result for this item_id
-		if rw.groupedData[itemID] == nil {
-			rw.groupedData[itemID] = &GroupedResult{
+		if clientData.GroupedData[itemID] == nil {
+			clientData.GroupedData[itemID] = &GroupedResult{
 				ItemID:        itemID,
 				TotalQuantity: 0,
 				TotalSubtotal: 0,
@@ -198,20 +208,33 @@ func (rw *ReduceWorker) aggregateData(results []GroupedResult) {
 		}
 
 		// Aggregate data
-		rw.groupedData[itemID].TotalQuantity += result.TotalQuantity
-		rw.groupedData[itemID].TotalSubtotal += result.TotalSubtotal
-		rw.groupedData[itemID].Count += result.Count
+		clientData.GroupedData[itemID].TotalQuantity += result.TotalQuantity
+		clientData.GroupedData[itemID].TotalSubtotal += result.TotalSubtotal
+		clientData.GroupedData[itemID].Count += result.Count
 	}
 }
 
-// FinalizeResults sends the final aggregated results
-func (rw *ReduceWorker) FinalizeResults() error {
-	log.Printf("Finalizing results for semester %s with %d processed chunks and %d unique items",
-		rw.semester.String(), rw.chunkCount, len(rw.groupedData))
+// FinalizeResultsForClient sends the final aggregated results for a specific client
+func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
+	clientData := rw.clientData[clientID]
+
+	// Initialize client data if it doesn't exist (no chunks were processed for this client)
+	if clientData == nil {
+		clientData = &ClientData{
+			GroupedData: make(map[string]*GroupedResult),
+			ChunkCount:  0,
+			IsCompleted: false,
+		}
+		rw.clientData[clientID] = clientData
+		log.Printf("No data found for client %s, initializing empty results", clientID)
+	}
+
+	log.Printf("Finalizing results for client %s, semester %s with %d processed chunks and %d unique items",
+		clientID, rw.semester.String(), clientData.ChunkCount, len(clientData.GroupedData))
 
 	// Convert to final results
-	finalResults := make([]FinalResult, 0, len(rw.groupedData))
-	for _, grouped := range rw.groupedData {
+	finalResults := make([]FinalResult, 0, len(clientData.GroupedData))
+	for _, grouped := range clientData.GroupedData {
 		finalResult := FinalResult{
 			Year:          rw.semester.Year,
 			Semester:      rw.semester.Semester,
@@ -224,34 +247,38 @@ func (rw *ReduceWorker) FinalizeResults() error {
 	}
 
 	// Log detailed final results
-	log.Printf("FINAL RESULTS for semester %s:", rw.semester.String())
+	log.Printf("FINAL RESULTS for client %s, semester %s:", clientID, rw.semester.String())
 	log.Printf("   Total unique items: %d", len(finalResults))
+
+	if len(finalResults) == 0 {
+		log.Printf("   No data processed for this client in this semester")
+	}
 
 	// Show top 10 items by total quantity for debugging
 	items := make([]FinalResult, len(finalResults))
 	copy(items, finalResults)
 
-	// Sort by total quantity (descending)
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[i].TotalQuantity < items[j].TotalQuantity {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
+	// // Sort by total quantity (descending)
+	// for i := 0; i < len(items)-1; i++ {
+	// 	for j := i + 1; j < len(items); j++ {
+	// 		if items[i].TotalQuantity < items[j].TotalQuantity {
+	// 			items[i], items[j] = items[j], items[i]
+	// 		}
+	// 	}
+	// }
 
-	// Show top 10 items
-	topCount := 10
-	if len(items) < topCount {
-		topCount = len(items)
-	}
+	// // Show top 10 items
+	// topCount := 10
+	// if len(items) < topCount {
+	// 	topCount = len(items)
+	// }
 
-	log.Printf("   Top %d items by quantity:", topCount)
-	for i := 0; i < topCount; i++ {
-		item := items[i]
-		log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d",
-			i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
-	}
+	// log.Printf("   Top %d items by quantity:", topCount)
+	// for i := 0; i < topCount; i++ {
+	// 	item := items[i]
+	// 	log.Printf("      %d. ItemID: %s | Quantity: %d | Subtotal: %.2f | Count: %d",
+	// 		i+1, item.ItemID, item.TotalQuantity, item.TotalSubtotal, item.Count)
+	// }
 
 	// Calculate totals
 	totalQuantity := 0
@@ -269,16 +296,24 @@ func (rw *ReduceWorker) FinalizeResults() error {
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
 
+	// Log the CSV data for debugging
+	if len(csvData) > 0 {
+		log.Printf("CSV data for client %s, semester %s (first 500 chars):\n%s",
+			clientID, rw.semester.String(), csvData[:min(500, len(csvData))])
+	} else {
+		log.Printf("Empty CSV data for client %s, semester %s", clientID, rw.semester.String())
+	}
+
 	// Create chunk for final results
 	// FileID format: S{semester}{last2digitsOfYear} - e.g., "S125" for S1-2025
 	fileID := fmt.Sprintf("S%d%02d", rw.semester.Semester, rw.semester.Year%100)
 	finalChunk := chunk.NewChunk(
-		rw.clientID, // Use the actual client ID from the original request
-		fileID,      // File ID (max 4 bytes)
-		2,           // Query Type
-		1,           // Chunk Number
-		true,        // Is Last Chunk
-		2,           // Step 2 for final results
+		clientID, // Use the specific client ID
+		fileID,   // File ID (max 4 bytes)
+		2,        // Query Type
+		1,        // Chunk Number
+		true,     // Is Last Chunk
+		2,        // Step 2 for final results
 		len(csvData),
 		2, // Table ID 2 for transaction_items
 		csvData,
@@ -296,29 +331,36 @@ func (rw *ReduceWorker) FinalizeResults() error {
 		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
-	log.Printf("Successfully sent final results for semester %s: %d items (ClientID: %s)",
-		rw.semester.String(), len(finalResults), rw.clientID)
+	log.Printf("Successfully sent final results for client %s, semester %s: %d items",
+		clientID, rw.semester.String(), len(finalResults))
 
-	// Clear aggregated data to free memory
-	rw.clearAggregatedData()
+	// Mark client as completed
+	clientData.IsCompleted = true
+
+	// Clear aggregated data for this client to free memory
+	rw.clearClientData(clientID)
 
 	return nil
 }
 
-// clearAggregatedData clears the aggregated data to free memory
-func (rw *ReduceWorker) clearAggregatedData() {
-	log.Printf("Clearing aggregated data for semester %s (%d items)", rw.semester.String(), len(rw.groupedData))
-	rw.groupedData = make(map[string]*GroupedResult)
-	rw.chunkCount = 0
-	rw.clientID = "" // Reset client ID for next batch
+// clearClientData clears the aggregated data for a specific client to free memory
+func (rw *ReduceWorker) clearClientData(clientID string) {
+	clientData := rw.clientData[clientID]
+	if clientData != nil {
+		log.Printf("Clearing aggregated data for client %s, semester %s (%d items)",
+			clientID, rw.semester.String(), len(clientData.GroupedData))
+		clientData.GroupedData = make(map[string]*GroupedResult)
+		clientData.ChunkCount = 0
+	}
 }
 
 // convertToCSV converts final results to CSV format
+// Always returns valid CSV with at least headers, even for empty results
 func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 	var csvBuilder strings.Builder
 
-	// Write header
-	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n")
+	// Write header (always present, even for empty results)
+	csvBuilder.WriteString("year,semester,item_id,total_quantity,total_subtotal,count\n") // TODO: check if top component skips headers
 
 	// Write data rows
 	for _, result := range results {
@@ -365,30 +407,21 @@ func (rw *ReduceWorker) Start() {
 					continue
 				}
 
-				chunkCount++ // what is this for?
-
-				// If this is the last chunk, finalize results
-				if msg.IsLastChunk { // TODO: remove this check since we terminate on signal
-					log.Printf("Received last chunk for semester %s, finalizing results...", rw.semester.String())
-					err = rw.FinalizeResults()
-					if err != nil {
-						log.Printf("Failed to finalize results: %v", err)
-					}
-				}
+				chunkCount++
 			case *signals.GroupByCompletionSignal:
-				// Handle completion signal
-				log.Printf("Received GroupByCompletionSignal for semester %s from map worker %s: %s",
-					rw.semester.String(), msg.MapWorkerID, msg.Message)
+				// Handle completion signal for specific client
+				log.Printf("Received GroupByCompletionSignal for client %s, semester %s from map worker %s: %s",
+					msg.ClientID, rw.semester.String(), msg.MapWorkerID, msg.Message)
 
-				// Finalize results and stop processing
-				err = rw.FinalizeResults()
+				// Finalize results for this specific client
+				err = rw.FinalizeResultsForClient(msg.ClientID)
 				if err != nil {
-					log.Printf("Failed to finalize results on completion signal: %v", err)
+					log.Printf("Failed to finalize results for client %s on completion signal: %v", msg.ClientID, err)
 				}
 
-				log.Printf("Reduce worker for semester %s completed processing", rw.semester.String())
+				log.Printf("Reduce worker for semester %s completed processing for client %s", rw.semester.String(), msg.ClientID)
 				delivery.Ack(false)
-				return // Exit the message processing loop
+				// Continue processing other clients
 			default:
 				log.Printf("Received unknown message type: %T", message)
 				delivery.Ack(false)

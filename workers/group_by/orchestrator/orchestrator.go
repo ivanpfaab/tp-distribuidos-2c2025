@@ -11,7 +11,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
-// FileStatus represents the status of a file being processed
+// FileStatus represents the status of a file being processed for a specific client
 type FileStatus struct {
 	FileID            string
 	TableID           int
@@ -19,6 +19,14 @@ type FileStatus struct {
 	LastChunkNumber   int
 	IsCompleted       bool
 	LastChunkReceived bool
+}
+
+// ClientStatus represents the status of a client's data processing
+type ClientStatus struct {
+	ClientID       string
+	FileStatuses   map[string]*FileStatus // Key: "fileID_tableID"
+	CompletedFiles int
+	IsCompleted    bool
 }
 
 // ChunkNotification represents a notification from a map worker about chunk processing
@@ -41,9 +49,7 @@ type TerminationSignal struct {
 // GroupByOrchestrator manages the coordination of map-reduce operations
 type GroupByOrchestrator struct {
 	config              *OrchestratorConfig
-	fileStatuses        map[string]*FileStatus
-	completedFiles      int
-	expectedFileCounts  map[int]int
+	clientStatuses      map[string]*ClientStatus // Key: clientID
 	totalExpectedFiles  int
 	chunkConsumer       *workerqueue.QueueConsumer
 	terminationProducer *exchange.ExchangeMiddleware
@@ -53,26 +59,11 @@ type GroupByOrchestrator struct {
 // NewGroupByOrchestrator creates a new group by orchestrator
 func NewGroupByOrchestrator(queryType int) *GroupByOrchestrator {
 	config := NewOrchestratorConfig(queryType)
-	expectedFileCounts := GetExpectedFileCounts()
-
-	// Calculate total expected files for this query type
-	totalExpectedFiles := 0
-	for tableID, count := range expectedFileCounts {
-		if tableID == queryType || queryType == 2 { // Query 2 uses transaction_items (table 2)
-			totalExpectedFiles += count
-		}
-	}
-
-	// For Query 2, we only process transaction_items (table 2)
-	if queryType == 2 {
-		totalExpectedFiles = expectedFileCounts[2] // Only transaction_items
-	}
+	totalExpectedFiles := GetTotalExpectedFiles(queryType)
 
 	orchestrator := &GroupByOrchestrator{
 		config:             config,
-		fileStatuses:       make(map[string]*FileStatus),
-		completedFiles:     0,
-		expectedFileCounts: expectedFileCounts,
+		clientStatuses:     make(map[string]*ClientStatus),
 		totalExpectedFiles: totalExpectedFiles,
 	}
 
@@ -126,11 +117,22 @@ func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *ChunkNoti
 	gbo.mutex.Lock()
 	defer gbo.mutex.Unlock()
 
+	// Initialize client status if not exists
+	if gbo.clientStatuses[notification.ClientID] == nil {
+		gbo.clientStatuses[notification.ClientID] = &ClientStatus{
+			ClientID:       notification.ClientID,
+			FileStatuses:   make(map[string]*FileStatus),
+			CompletedFiles: 0,
+			IsCompleted:    false,
+		}
+	}
+
+	clientStatus := gbo.clientStatuses[notification.ClientID]
 	fileKey := fmt.Sprintf("%s_%d", notification.FileID, notification.TableID)
 
 	// Initialize file status if not exists
-	if gbo.fileStatuses[fileKey] == nil {
-		gbo.fileStatuses[fileKey] = &FileStatus{
+	if clientStatus.FileStatuses[fileKey] == nil {
+		clientStatus.FileStatuses[fileKey] = &FileStatus{
 			FileID:            notification.FileID,
 			TableID:           notification.TableID,
 			ChunksReceived:    0,
@@ -140,13 +142,13 @@ func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *ChunkNoti
 		}
 	}
 
-	fileStatus := gbo.fileStatuses[fileKey]
+	fileStatus := clientStatus.FileStatuses[fileKey]
 
 	// Increment chunks received
 	fileStatus.ChunksReceived++
 
-	log.Printf("File %s (Table %d): Received chunk %d/%d (Total chunks: %d)",
-		notification.FileID, notification.TableID,
+	log.Printf("Client %s - File %s (Table %d): Received chunk %d/%d (Total chunks: %d)",
+		notification.ClientID, notification.FileID, notification.TableID,
 		notification.ChunkNumber, fileStatus.LastChunkNumber,
 		fileStatus.ChunksReceived)
 
@@ -155,40 +157,43 @@ func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *ChunkNoti
 		fileStatus.LastChunkNumber = notification.ChunkNumber
 		fileStatus.LastChunkReceived = true
 
-		log.Printf("File %s (Table %d): Received LAST chunk %d",
-			notification.FileID, notification.TableID, notification.ChunkNumber)
+		log.Printf("Client %s - File %s (Table %d): Received LAST chunk %d",
+			notification.ClientID, notification.FileID, notification.TableID, notification.ChunkNumber)
 
 		// Check if file is completed
 		if fileStatus.ChunksReceived == notification.ChunkNumber {
-			gbo.completeFile(fileKey, fileStatus)
+			gbo.completeFileForClient(notification.ClientID, fileKey, fileStatus)
 		}
 	} else if fileStatus.LastChunkReceived {
 		// We already received the last chunk, check if this completes the file
 		if fileStatus.ChunksReceived == fileStatus.LastChunkNumber {
-			gbo.completeFile(fileKey, fileStatus)
+			gbo.completeFileForClient(notification.ClientID, fileKey, fileStatus)
 		}
 	}
 
-	// Check if all files are completed
-	if gbo.completedFiles >= gbo.totalExpectedFiles {
-		log.Printf("All %d files completed! Sending termination signals...", gbo.totalExpectedFiles)
+	// Check if all files are completed for this client
+	if clientStatus.CompletedFiles >= gbo.totalExpectedFiles {
+		log.Printf("Client %s: All %d files completed! Sending termination signals...",
+			notification.ClientID, gbo.totalExpectedFiles)
 		gbo.sendTerminationSignals(notification.ClientID)
+		clientStatus.IsCompleted = true
 	}
 
 	return nil
 }
 
-// completeFile marks a file as completed
-func (gbo *GroupByOrchestrator) completeFile(fileKey string, fileStatus *FileStatus) {
+// completeFileForClient marks a file as completed for a specific client
+func (gbo *GroupByOrchestrator) completeFileForClient(clientID, fileKey string, fileStatus *FileStatus) {
 	if fileStatus.IsCompleted {
 		return // Already completed
 	}
 
 	fileStatus.IsCompleted = true
-	gbo.completedFiles++
+	clientStatus := gbo.clientStatuses[clientID]
+	clientStatus.CompletedFiles++
 
-	log.Printf("✅ File %s (Table %d) COMPLETED! (%d/%d files completed)",
-		fileStatus.FileID, fileStatus.TableID, gbo.completedFiles, gbo.totalExpectedFiles)
+	log.Printf("✅ Client %s - File %s (Table %d) COMPLETED! (%d/%d files completed)",
+		clientID, fileStatus.FileID, fileStatus.TableID, clientStatus.CompletedFiles, gbo.totalExpectedFiles)
 }
 
 // sendTerminationSignals sends termination signals to all map and reduce workers
@@ -196,7 +201,7 @@ func (gbo *GroupByOrchestrator) sendTerminationSignals(clientID string) {
 	terminationSignal := TerminationSignal{
 		QueryType: gbo.config.QueryType,
 		ClientID:  clientID,
-		Message:   "All data processing completed",
+		Message:   fmt.Sprintf("All data processing completed for client %s", clientID),
 	}
 
 	// Serialize termination signal

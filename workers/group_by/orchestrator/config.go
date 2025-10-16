@@ -23,15 +23,16 @@ func NewOrchestratorConfig(queryType int) *OrchestratorConfig {
 	}
 }
 
-// GetExpectedFileCounts returns the expected number of files for each table // TODO: get this dinamically or from the client as parameters
-func GetExpectedFileCounts() map[int]int {
-	return map[int]int{
-		1: 1,  // menu_items
-		2: 2,  // transaction_items
-		3: 2,  // transactions
-		4: 20, // users
-		5: 1,  // payment_methods
-		6: 1,  // stores
-		7: 1,  // vouchers
+// GetTotalExpectedFiles returns the total expected number of files for a query type
+func GetTotalExpectedFiles(queryType int) int {
+	if queryType == 2 {
+		return 2 // transaction_items
 	}
+	if queryType == 3 {
+		return 2 // transactions
+	}
+	if queryType == 4 {
+		return 20 // users
+	}
+	return 0
 }

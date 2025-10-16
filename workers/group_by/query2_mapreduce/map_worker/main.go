@@ -50,7 +50,7 @@ type MapWorker struct {
 	producers        map[string]*workerqueue.QueueMiddleware
 	orchestratorComm *OrchestratorCommunicator
 	config           *middleware.ConnectionConfig
-	shouldTerminate  bool
+	completedClients map[string]bool // Track which clients have completed processing
 }
 
 // NewMapWorker creates a new map worker instance
@@ -109,7 +109,7 @@ func NewMapWorker() *MapWorker {
 		producers:        producers,
 		orchestratorComm: orchestratorComm,
 		config:           config,
-		shouldTerminate:  false,
+		completedClients: make(map[string]bool),
 	}
 }
 
@@ -319,8 +319,8 @@ func (mw *MapWorker) convertToCSV(itemGroups map[string]*GroupedResult) string {
 	return csvBuilder.String()
 }
 
-// sendCompletionSignalToReduceWorkers sends a GroupByCompletionSignal to all reduce workers
-func (mw *MapWorker) sendCompletionSignalToReduceWorkers() {
+// sendCompletionSignalToReduceWorkers sends a GroupByCompletionSignal to all reduce workers for a specific client
+func (mw *MapWorker) sendCompletionSignalToReduceWorkers(clientID string) {
 	semesters := GetAllSemesters()
 
 	for _, semester := range semesters {
@@ -334,9 +334,9 @@ func (mw *MapWorker) sendCompletionSignalToReduceWorkers() {
 		// Create completion signal
 		completionSignal := signals.NewGroupByCompletionSignal(
 			2,              // Query Type 2
-			"",             // Client ID (empty for now, could be passed from orchestrator) // TODO: pass the client ID
-			"map-worker-1", // Map Worker ID // TODO: pass the map worker ID
-			"All data processing completed",
+			clientID,       // Client ID
+			"map-worker-1", // Map Worker ID. TODO: pass the map worker ID
+			fmt.Sprintf("All data processing completed for client %s", clientID),
 		)
 
 		// Serialize completion signal
@@ -362,20 +362,14 @@ func (mw *MapWorker) Start() {
 	log.Println("Starting Map Worker for Query 2...")
 
 	// Start listening for termination signals
-	go mw.orchestratorComm.StartTerminationListener(func() {
-		log.Println("Map worker received termination signal, sending completion signal to reduce workers...")
-		mw.sendCompletionSignalToReduceWorkers()
-		mw.shouldTerminate = true
+	go mw.orchestratorComm.StartTerminationListener(func(signal *TerminationSignal) {
+		log.Printf("Map worker received termination signal for client %s: %s", signal.ClientID, signal.Message)
+		mw.sendCompletionSignalToReduceWorkers(signal.ClientID)
+		mw.completedClients[signal.ClientID] = true // TODO: remove this entry when the client is completed (cleanup)
 	})
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			// Check if we should terminate
-			if mw.shouldTerminate {
-				log.Println("Map worker terminating due to termination signal") // TODO: we should continue consuming for other clients
-				delivery.Ack(false)
-				break
-			}
 
 			// Deserialize the chunk message
 			message, err := deserializer.Deserialize(delivery.Body)
@@ -396,6 +390,13 @@ func (mw *MapWorker) Start() {
 			// Process only Query Type 2 chunks
 			if chunk.QueryType != 2 {
 				log.Printf("Received non-Query 2 chunk: QueryType=%d, skipping", chunk.QueryType)
+				delivery.Ack(false)
+				continue
+			}
+
+			// This should never happen, log error
+			if mw.completedClients[chunk.ClientID] {
+				log.Printf("Error: Client %s has already completed processing, skipping chunk", chunk.ClientID)
 				delivery.Ack(false)
 				continue
 			}
