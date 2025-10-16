@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	InitialWaitDuration = 2 * time.Second // Wait after IsLastChunk before first join attempt
+	InitialWaitDuration = 2 * time.Second
 	JoinTickerInterval  = 1 * time.Second // How often to check for ready clients
 	MaxJoinAttempts     = 10              // Maximum join retry attempts per client
 )
@@ -261,6 +261,7 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 		// Cleanup if done or max attempts reached
 		if len(notFound) == 0 {
 			fmt.Printf("Join by User ID Worker: All users joined for client %s, cleaning up\n", clientID)
+			jw.cleanupClientFiles(clientID)
 			delete(jw.clientStates, clientID)
 		} else if state.attemptCount >= MaxJoinAttempts {
 			fmt.Printf("Join by User ID Worker: Max attempts reached for client %s, %d users not found (INNER JOIN - dropping)\n",
@@ -269,6 +270,7 @@ func (jw *JoinByUserIdWorker) processReadyClients() {
 			if state.chunkCounter > 1 {
 				jw.sendEmptyEOS(clientID, state)
 			}
+			jw.cleanupClientFiles(clientID)
 			delete(jw.clientStates, clientID)
 		}
 	}
@@ -449,4 +451,29 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 	// User not found - return error to trigger buffering and retry
 	// After MaxRetries attempts, this will be dropped at the processMessage level
 	return nil, fmt.Errorf("user %s not found in partition %d", normalizedUserID, partition)
+}
+
+// cleanupClientFiles deletes all partition files for a specific client
+func (jw *JoinByUserIdWorker) cleanupClientFiles(clientID string) {
+	// Delete all partition files for this client from the shared data directory
+	pattern := filepath.Join("/shared-data", fmt.Sprintf("%s-users-partition-*.csv", clientID))
+	fmt.Printf("Join by User ID Worker: Looking for files with pattern: %s\n", pattern)
+
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		fmt.Printf("Join by User ID Worker: Error finding files for client %s: %v\n", clientID, err)
+		return
+	}
+
+	fmt.Printf("Join by User ID Worker: Found %d files for client %s: %v\n", len(files), clientID, files)
+
+	for _, file := range files {
+		if err := os.Remove(file); err != nil {
+			fmt.Printf("Join by User ID Worker: Error deleting file %s: %v\n", file, err)
+		} else {
+			fmt.Printf("Join by User ID Worker: Deleted file %s for client %s\n", file, clientID)
+		}
+	}
+
+	fmt.Printf("Join by User ID Worker: Cleaned up %d files for client %s\n", len(files), clientID)
 }

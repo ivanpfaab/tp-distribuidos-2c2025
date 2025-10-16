@@ -33,7 +33,7 @@ type ItemIdJoinWorker struct {
 	config             *middleware.ConnectionConfig
 
 	// Dictionary state - now client-aware
-	dictionaryReady bool
+	dictionaryReady map[string]bool                 // client_id -> ready status
 	menuItems       map[string]map[string]*MenuItem // client_id -> item_id -> MenuItem
 	mutex           sync.RWMutex
 }
@@ -96,7 +96,6 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
 	}
-	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Declare output queue
 	if err := outputProducer.DeclareQueue(false, false, false, false); err != 0 {
@@ -111,7 +110,7 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		chunkConsumer:      chunkConsumer,
 		outputProducer:     outputProducer,
 		config:             config,
-		dictionaryReady:    false,
+		dictionaryReady:    make(map[string]bool),
 		menuItems:          make(map[string]map[string]*MenuItem),
 	}, nil
 }
@@ -196,8 +195,8 @@ func (w *ItemIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) midd
 
 	// Check if this is the last chunk for the dictionary
 	if chunkMsg.IsLastChunk {
-		w.dictionaryReady = true
-		fmt.Printf("ItemID Join Worker: Received last chunk for FileID: %s - Dictionary is now ready\n", chunkMsg.FileID)
+		w.dictionaryReady[chunkMsg.ClientID] = true
+		fmt.Printf("ItemID Join Worker: Received last chunk for FileID: %s - Dictionary is now ready for client %s\n", chunkMsg.FileID, chunkMsg.ClientID)
 	}
 
 	delivery.Ack(false) // Acknowledge the dictionary message
@@ -208,21 +207,21 @@ func (w *ItemIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) midd
 func (w *ItemIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	fmt.Printf("ItemID Join Worker: Received chunk message\n")
 
-	// Check if dictionary is ready
-	dictionaryReady := w.dictionaryReady
-
-	if !dictionaryReady {
-		fmt.Printf("ItemID Join Worker: Dictionary not ready, NACKing chunk for retry\n")
-		delivery.Nack(false, true) // Reject and requeue
-		return 0
-	}
-
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 	if err != nil {
 		fmt.Printf("ItemID Join Worker: Failed to deserialize chunk: %v\n", err)
 		delivery.Nack(false, false) // Reject the message
 		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Check if dictionary is ready for this specific client
+	dictionaryReady := w.dictionaryReady[chunkMsg.ClientID]
+
+	if !dictionaryReady {
+		fmt.Printf("ItemID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
+		delivery.Nack(false, true) // Reject and requeue
+		return 0
 	}
 
 	// Process the chunk
@@ -262,6 +261,9 @@ func (w *ItemIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messag
 		fmt.Printf("ItemID Join Worker: Failed to send joined chunk: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
+
+	// SUCCESS: Data sent successfully - cleanup client's dictionary immediately
+	w.cleanupClientItems(chunkMsg.ClientID)
 
 	fmt.Printf("ItemID Join Worker: Successfully processed and sent joined chunk\n")
 	return 0
@@ -553,4 +555,16 @@ func (w *ItemIdJoinWorker) performGroupedTransactionItemMenuJoin(groupedItems []
 	}
 
 	return result.String()
+}
+
+// cleanupClientItems deletes all item dictionary data for a specific client
+func (w *ItemIdJoinWorker) cleanupClientItems(clientID string) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	// Delete client-specific item dictionary
+	delete(w.menuItems, clientID)
+	delete(w.dictionaryReady, clientID)
+
+	fmt.Printf("ItemID Join Worker: Cleaned up items for client %s\n", clientID)
 }

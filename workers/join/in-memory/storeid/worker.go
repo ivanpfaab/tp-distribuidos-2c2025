@@ -97,7 +97,6 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
 	}
-	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
 	// Declare output queue
 	if err := outputProducer.DeclareQueue(false, false, false, false); err != 0 {
@@ -259,6 +258,9 @@ func (w *StoreIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messa
 		fmt.Printf("StoreID Join Worker: Failed to send joined chunk: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
+
+	// SUCCESS: Data sent successfully - cleanup client's dictionary immediately
+	w.cleanupClientStores(chunkMsg.ClientID)
 
 	fmt.Printf("StoreID Join Worker: Successfully processed and sent joined chunk\n")
 	return 0
@@ -568,4 +570,16 @@ func (w *StoreIdJoinWorker) performGroupedTransactionStoreJoin(groupedTransactio
 	}
 
 	return result.String()
+}
+
+// cleanupClientStores deletes all store dictionary data for a specific client
+func (w *StoreIdJoinWorker) cleanupClientStores(clientID string) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	// Delete client-specific store dictionary
+	delete(w.stores, clientID)
+	delete(w.dictionaryReady, clientID)
+
+	fmt.Printf("StoreID Join Worker: Cleaned up stores for client %s\n", clientID)
 }
