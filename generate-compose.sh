@@ -228,6 +228,8 @@ generate_itemid_join_workers() {
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
     container_name: ${container_name}
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
@@ -266,6 +268,8 @@ generate_storeid_join_workers() {
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
     container_name: ${container_name}
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
