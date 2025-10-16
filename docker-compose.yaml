@@ -167,25 +167,7 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "1"
-    profiles: ["orchestration"]
-
-  # StoreID Join Worker 2 (scalable with dictionary broadcasting)
-  storeid-join-worker-2:
-    build:
-      context: .
-      dockerfile: ./workers/join/in-memory/storeid/Dockerfile
-    container_name: storeid-join-worker-2
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      join-data-handler-1:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      WORKER_INSTANCE_ID: "2"
+      STOREID_BATCH_SIZE: 5
     profiles: ["orchestration"]
 
   # Query 2 Group By Orchestrator
@@ -552,6 +534,25 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
+  join-garbage-collector:
+    build:
+      context: .
+      dockerfile: ./workers/join/garbage-collector/Dockerfile
+    container_name: join-garbage-collector
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      COMPLETION_QUEUE: "join-completion-queue"
+      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
+      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
+      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
+    profiles: ["orchestration"]
+
   # Join Data Handler 1
   join-data-handler-1:
     build:
@@ -567,7 +568,7 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       ITEMID_WORKER_COUNT: "2"
-      STOREID_WORKER_COUNT: "2"
+      STOREID_WORKER_COUNT: "1"
     profiles: ["orchestration"]
 
   # User Partition Splitter (distributes users to writers)
@@ -753,25 +754,6 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  join-garbage-collector:
-    build:
-      context: .
-      dockerfile: ./workers/join/garbage-collector/Dockerfile
-    container_name: join-garbage-collector
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      COMPLETION_QUEUE: "join-completion-queue"
-      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
-      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
-      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
-    profiles: ["orchestration"]
-
   # Core application (data flow services)
   server:
     build:
@@ -821,8 +803,6 @@ services:
         condition: service_started
       storeid-join-worker-1:
         condition: service_started
-      storeid-join-worker-2:
-        condition: service_started
       query2-orchestrator:
         condition: service_started
       query2-map-worker:
@@ -839,6 +819,8 @@ services:
         condition: service_started
       query2-top-items-worker:
         condition: service_started
+      query3-orchestrator:
+        condition: service_started
       query3-map-worker:
         condition: service_started
       query3-reduce-s2-2023:
@@ -850,6 +832,8 @@ services:
       query3-reduce-s1-2025:
         condition: service_started
       query3-reduce-s2-2025:
+        condition: service_started
+      query4-orchestrator:
         condition: service_started
       query4-map-worker:
         condition: service_started
@@ -874,7 +858,7 @@ services:
     build:
       context: .
       dockerfile: ./client/Dockerfile
-    container_name: client
+    container_name: client-1
     depends_on:
       server:
         condition: service_started
@@ -882,6 +866,22 @@ services:
       - ./data:/app/data
     environment:
       - CLIENT_ID=CLI1
+    command: ["./main", "/app/data", "server:8080"]
+    profiles: ["data-flow"]
+
+  # Client 2
+  client-2:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    container_name: client-2
+    depends_on:
+      server:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CLIENT_ID=CLI2
     command: ["./main", "/app/data", "server:8080"]
     profiles: ["data-flow"]
 

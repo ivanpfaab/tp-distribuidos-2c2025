@@ -224,39 +224,6 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 	log.Printf("FINAL RESULTS for Query 4, Client %s:", clientID)
 	log.Printf("   Total unique user-store combinations: %d", len(finalResults))
 
-	// Show top 10 user-store combinations by count for debugging
-	userStores := make([]GroupedResult, len(finalResults))
-	copy(userStores, finalResults)
-
-	// Sort by count (descending)
-	for i := 0; i < len(userStores)-1; i++ {
-		for j := i + 1; j < len(userStores); j++ {
-			if userStores[i].Count < userStores[j].Count {
-				userStores[i], userStores[j] = userStores[j], userStores[i]
-			}
-		}
-	}
-
-	// Show top 10 combinations
-	topCount := 10
-	if len(userStores) < topCount {
-		topCount = len(userStores)
-	}
-
-	log.Printf("   Top %d user-store combinations by count:", topCount)
-	for i := 0; i < topCount; i++ {
-		combo := userStores[i]
-		log.Printf("      %d. UserID: %s | StoreID: %s | Count: %d",
-			i+1, combo.UserID, combo.StoreID, combo.Count)
-	}
-
-	// Calculate total count
-	totalCount := 0
-	for _, result := range finalResults {
-		totalCount += result.Count
-	}
-
-	log.Printf("   Grand total: Transactions=%d", totalCount)
 
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
