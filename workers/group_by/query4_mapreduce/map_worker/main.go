@@ -9,7 +9,9 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
@@ -44,9 +46,12 @@ type GroupedResult struct {
 
 // MapWorker processes chunks and groups by user_id and store_id
 type MapWorker struct {
-	consumer *workerqueue.QueueConsumer
-	producer *workerqueue.QueueMiddleware
-	config   *middleware.ConnectionConfig
+	consumer         *workerqueue.QueueConsumer
+	exchangeProducer *exchange.ExchangeMiddleware
+	routingKey       string
+	orchestratorComm *OrchestratorCommunicator
+	config           *middleware.ConnectionConfig
+	completedClients map[string]bool // Track which clients have completed processing
 }
 
 // NewMapWorker creates a new map worker instance for Query 4
@@ -77,30 +82,56 @@ func NewMapWorker() *MapWorker {
 	}
 	inputQueueDeclarer.Close() // Close the declarer as we don't need it anymore
 
-	// Create producer for the reduce queue
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query4ReduceQueue, config)
-	if producer == nil {
+	// Create exchange producer for topic exchange
+	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.Query4MapReduceExchange, []string{}, config)
+	if exchangeProducer == nil {
 		consumer.Close()
-		log.Fatal("Failed to create producer for reduce-q4-userid queue")
+		log.Fatalf("Failed to create exchange producer for exchange: %s", queues.Query4MapReduceExchange)
 	}
 
-	// Declare the reduce queue before using it
-	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the topic exchange
+	if err := exchangeProducer.DeclareExchange("topic", false, false, false, false); err != 0 {
 		consumer.Close()
-		producer.Close()
-		log.Fatalf("Failed to declare reduce queue: %v", err)
+		exchangeProducer.Close()
+		log.Fatalf("Failed to declare topic exchange %s: %v", queues.Query4MapReduceExchange, err)
+	}
+
+	// Get routing key for Query 4
+	routingKey := queues.GetQuery4RoutingKey()
+	if routingKey == "" {
+		consumer.Close()
+		exchangeProducer.Close()
+		log.Fatalf("No routing key found for Query 4")
+	}
+	log.Printf("Using routing key: %s", routingKey)
+
+	// Create orchestrator communicator
+	orchestratorComm := NewOrchestratorCommunicator("query4-map-worker", config)
+	if orchestratorComm == nil {
+		consumer.Close()
+		exchangeProducer.Close()
+		log.Fatalf("Failed to create orchestrator communicator")
 	}
 
 	return &MapWorker{
-		consumer: consumer,
-		producer: producer,
-		config:   config,
+		consumer:         consumer,
+		exchangeProducer: exchangeProducer,
+		routingKey:       routingKey,
+		orchestratorComm: orchestratorComm,
+		config:           config,
+		completedClients: make(map[string]bool),
 	}
 }
 
 // ProcessChunk processes a single chunk and groups the data
 func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	log.Printf("Processing chunk %d from file %s", chunk.ChunkNumber, chunk.FileID)
+
+	// Notify orchestrator about chunk processing
+	if err := mw.orchestratorComm.NotifyChunkProcessed(chunk); err != nil {
+		log.Printf("Failed to notify orchestrator about chunk %d: %v", chunk.ChunkNumber, err)
+		// Continue processing even if notification fails
+	}
 
 	// Parse CSV data from chunk
 	transactions, err := mw.parseCSVData(chunk.ChunkData)
@@ -219,15 +250,16 @@ func (mw *MapWorker) sendToReduceQueue(originalChunk *chunk.Chunk, groupedData m
 		return fmt.Errorf("failed to serialize chunk: %v", err)
 	}
 
-	log.Printf("Sending to reduce queue: %d bytes, %d user-store groups", len(serializedData), len(groupedData))
+	log.Printf("Sending to routing key %s: %d bytes, %d user-store groups",
+		mw.routingKey, len(serializedData), len(groupedData))
 	log.Printf("Serialized data preview: %s", string(serializedData[:min(100, len(serializedData))]))
 
-	sendErr := mw.producer.Send(serializedData)
+	sendErr := mw.exchangeProducer.Send(serializedData, []string{mw.routingKey})
 	if sendErr != 0 {
-		return fmt.Errorf("failed to send to reduce queue: error code %v", sendErr)
+		return fmt.Errorf("failed to send to routing key %s: error code %v", mw.routingKey, sendErr)
 	}
 
-	log.Printf("Successfully sent %d user-store groups to reduce queue", len(groupedData))
+	log.Printf("Successfully sent %d user-store groups to reduce queue via routing key: %s", len(groupedData), mw.routingKey)
 
 	return nil
 }
@@ -261,6 +293,9 @@ func (mw *MapWorker) convertToCSV(groupedData map[string]*GroupedResult) string 
 func (mw *MapWorker) Start() {
 	log.Println("Starting Map Worker for Query 4...")
 
+	// Start termination signal listener
+	go mw.orchestratorComm.StartTerminationListener(mw.onTerminationSignal)
+
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			// Deserialize the chunk message
@@ -282,6 +317,13 @@ func (mw *MapWorker) Start() {
 			// Process only Query Type 4 chunks
 			if chunk.QueryType != 4 {
 				log.Printf("Received non-Query 4 chunk: QueryType=%d, skipping", chunk.QueryType)
+				delivery.Ack(false)
+				continue
+			}
+
+			// Skip chunks for completed clients
+			if mw.completedClients[chunk.ClientID] {
+				log.Printf("Error: Skipping chunk for completed client: %s", chunk.ClientID)
 				delivery.Ack(false)
 				continue
 			}
@@ -309,14 +351,59 @@ func (mw *MapWorker) Start() {
 	select {}
 }
 
+// onTerminationSignal handles termination signals from the orchestrator
+func (mw *MapWorker) onTerminationSignal(signal *TerminationSignal) {
+	log.Printf("Map worker received termination signal for Query %d, Client %s: %s",
+		signal.QueryType, signal.ClientID, signal.Message)
+
+	// Mark client as completed
+	mw.completedClients[signal.ClientID] = true
+
+	// Send completion signal to reduce workers
+	mw.sendCompletionSignalToReduceWorkers(signal.ClientID)
+}
+
+// sendCompletionSignalToReduceWorkers sends completion signal to reduce workers
+func (mw *MapWorker) sendCompletionSignalToReduceWorkers(clientID string) {
+	log.Printf("Sending completion signal to reduce workers for client: %s", clientID)
+
+	// Create completion signal
+	completionSignal := signals.NewGroupByCompletionSignal(
+		4, // Query Type 4
+		clientID,
+		"query4-map-worker",
+		"Query 4 processing completed",
+	)
+
+	// Serialize completion signal
+	signalData, err := signals.SerializeGroupByCompletionSignal(completionSignal)
+	if err != nil {
+		log.Printf("Failed to serialize completion signal: %v", err)
+		return
+	}
+
+	// Send to reduce workers via routing key
+	log.Printf("Sending completion signal to routing key: %s", mw.routingKey)
+	sendErr := mw.exchangeProducer.Send(signalData, []string{mw.routingKey})
+	if sendErr != 0 {
+		log.Printf("Failed to send completion signal to routing key %s: error code %v", mw.routingKey, sendErr)
+	} else {
+		log.Printf("Successfully sent completion signal to routing key: %s", mw.routingKey)
+	}
+}
+
 // Close closes the map worker
 func (mw *MapWorker) Close() {
 	if mw.consumer != nil {
 		mw.consumer.Close()
 	}
 
-	if mw.producer != nil {
-		mw.producer.Close()
+	if mw.exchangeProducer != nil {
+		mw.exchangeProducer.Close()
+	}
+
+	if mw.orchestratorComm != nil {
+		mw.orchestratorComm.Close()
 	}
 }
 

@@ -32,7 +32,7 @@ func GetTotalExpectedFiles(queryType int) int {
 		return 2 // transactions
 	}
 	if queryType == 4 {
-		return 20 // users
+		return 2 // transactions
 	}
 	return 0
 }

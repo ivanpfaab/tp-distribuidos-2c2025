@@ -52,6 +52,7 @@ type GroupByOrchestrator struct {
 
 // NewGroupByOrchestrator creates a new group by orchestrator
 func NewGroupByOrchestrator(queryType int) *GroupByOrchestrator {
+	log.Printf("NewGroupByOrchestrator: Query Type %d", queryType)
 	config := NewOrchestratorConfig(queryType)
 	totalExpectedFiles := GetTotalExpectedFiles(queryType)
 

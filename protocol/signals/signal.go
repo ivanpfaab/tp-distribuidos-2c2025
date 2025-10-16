@@ -12,7 +12,7 @@ const (
 	ChunkNotificationType       = 4
 	ClientIDSize                = 4
 	QueryTypeSize               = 1
-	MapWorkerIDSize             = 16
+	MapWorkerIDSize             = 32
 	FileIDSize                  = 4
 	TableIDSize                 = 1
 	ChunkNumberSize             = 4

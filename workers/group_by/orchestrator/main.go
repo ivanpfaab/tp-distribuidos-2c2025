@@ -4,14 +4,28 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 )
 
 func main() {
 	log.Println("Starting Group By Orchestrator...")
 
-	// Create orchestrator for Query 2
-	orchestrator := NewGroupByOrchestrator(2)
+	// Get query type from environment variable
+	queryTypeStr := os.Getenv("QUERY_TYPE")
+	if queryTypeStr == "" {
+		log.Fatal("QUERY_TYPE environment variable is required")
+	}
+
+	queryType, err := strconv.Atoi(queryTypeStr)
+	if err != nil {
+		log.Fatalf("Invalid QUERY_TYPE: %s", queryTypeStr)
+	}
+
+	log.Printf("Starting orchestrator for Query %d", queryType)
+
+	// Create orchestrator for the specified query type
+	orchestrator := NewGroupByOrchestrator(queryType)
 	defer orchestrator.Close()
 
 	// Start the orchestrator
@@ -21,10 +35,10 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Println("Group By Orchestrator is running. Press Ctrl+C to stop.")
+	log.Printf("Group By Orchestrator for Query %d is running. Press Ctrl+C to stop.", queryType)
 	<-sigChan
 
-	log.Println("Shutting down Group By Orchestrator...")
+	log.Printf("Shutting down Group By Orchestrator for Query %d...", queryType)
 
 	select {}
 }
