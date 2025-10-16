@@ -1,0 +1,889 @@
+services:
+  # Infrastructure
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-orchestrator
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Year Filter Worker 1
+  year-filter-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/filter/year-filter/Dockerfile
+    container_name: year-filter-worker-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Year Filter Worker 2
+  year-filter-worker-2:
+    build:
+      context: .
+      dockerfile: ./workers/filter/year-filter/Dockerfile
+    container_name: year-filter-worker-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Year Filter Worker 3
+  year-filter-worker-3:
+    build:
+      context: .
+      dockerfile: ./workers/filter/year-filter/Dockerfile
+    container_name: year-filter-worker-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Time Filter Worker 1
+  time-filter-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/filter/time-filter/Dockerfile
+    container_name: time-filter-worker-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Time Filter Worker 2
+  time-filter-worker-2:
+    build:
+      context: .
+      dockerfile: ./workers/filter/time-filter/Dockerfile
+    container_name: time-filter-worker-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Amount Filter Worker 1
+  amount-filter-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/filter/amount-filter/Dockerfile
+    container_name: amount-filter-worker-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # ItemID Join Worker 1 (scalable with dictionary broadcasting)
+  itemid-join-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/itemid/Dockerfile
+    container_name: itemid-join-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      join-data-handler-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WORKER_INSTANCE_ID: "1"
+    profiles: ["orchestration"]
+
+  # ItemID Join Worker 2 (scalable with dictionary broadcasting)
+  itemid-join-worker-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/itemid/Dockerfile
+    container_name: itemid-join-worker-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      join-data-handler-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WORKER_INSTANCE_ID: "2"
+    profiles: ["orchestration"]
+
+  # StoreID Join Worker 1 (scalable with dictionary broadcasting)
+  storeid-join-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/storeid/Dockerfile
+    container_name: storeid-join-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      join-data-handler-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WORKER_INSTANCE_ID: "1"
+    profiles: ["orchestration"]
+
+  # StoreID Join Worker 2 (scalable with dictionary broadcasting)
+  storeid-join-worker-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/storeid/Dockerfile
+    container_name: storeid-join-worker-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      join-data-handler-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WORKER_INSTANCE_ID: "2"
+    profiles: ["orchestration"]
+
+  # Query 2 Group By Orchestrator
+  query2-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+    container_name: query2-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+    profiles: ["orchestration"]
+
+  # Query 3 Group By Orchestrator
+  query3-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+    container_name: query3-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "3"
+    profiles: ["orchestration"]
+
+  # Query 4 Group By Orchestrator
+  query4-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+    container_name: query4-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+    profiles: ["orchestration"]
+
+  # Query 2 MapReduce Workers
+  query2-map-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/map_worker/Dockerfile
+    container_name: query2-map-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query2-reduce-s2-2023:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s2-2023
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2023"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s1-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s1-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2024"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s2-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s2-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-orchestrator:
+        condition: service_started
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2024"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s1-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s1-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2025"]
+    profiles: ["orchestration"]
+
+  query2-reduce-s2-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
+    container_name: query2-reduce-s2-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2025"]
+    profiles: ["orchestration"]
+
+  # Query 2 Top Items Classification (Top N per month)
+  query2-top-items-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query2_top_classification/Dockerfile
+    container_name: query2-top-items-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-reduce-s2-2023:
+        condition: service_started
+      query2-reduce-s1-2024:
+        condition: service_started
+      query2-reduce-s2-2024:
+        condition: service_started
+      query2-reduce-s1-2025:
+        condition: service_started
+      query2-reduce-s2-2025:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Query 3 MapReduce Workers
+  query3-map-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/map_worker/Dockerfile
+    container_name: query3-map-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2023:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2023
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2023"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s1-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s1-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2024"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2024:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2024
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2024"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s1-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s1-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s1-2025"]
+    profiles: ["orchestration"]
+
+  query3-reduce-s2-2025:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: query3-reduce-s2-2025
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    command: ["./reduce-worker-s2-2025"]
+    profiles: ["orchestration"]
+
+  # Query 4 MapReduce Workers
+  query4-map-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_mapreduce/map_worker/Dockerfile
+    container_name: query4-map-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  query4-reduce-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_mapreduce/reduce_worker/Dockerfile
+    container_name: query4-reduce-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-map-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Query 4 Top Users Classification (Top N per store)
+  query4-top-users-worker:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/query4_top_classification/Dockerfile
+    container_name: query4-top-users-worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-reduce-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Streaming service (NOT SCALABLE - outputs to stdout)
+  streaming-service:
+    build:
+      context: .
+      dockerfile: ./stream/Dockerfile
+    container_name: streaming-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Join Data Handler 1
+  join-data-handler-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/data-handler/Dockerfile
+    container_name: join-data-handler
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      ITEMID_WORKER_COUNT: "2"
+      STOREID_WORKER_COUNT: "2"
+    profiles: ["orchestration"]
+
+  # User Partition Splitter (distributes users to writers)
+  user-partition-splitter:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-splitter/Dockerfile
+    container_name: user-partition-splitter
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      NUM_WRITERS: 5
+    profiles: ["orchestration"]
+
+  # User Partition Writer 1
+  user-partition-writer-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 1
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 2
+  user-partition-writer-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 2
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 3
+  user-partition-writer-3:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 3
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 4
+  user-partition-writer-4:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-4
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 4
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Partition Writer 5
+  user-partition-writer-5:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: 5
+      NUM_WRITERS: 5
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Join Reader 1 (Query 4 - reads from partition files)
+  user-join-reader-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
+    container_name: user-join-reader
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-writer-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # User Join Reader 2 (Query 4 - reads from partition files)
+  user-join-reader-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
+    container_name: user-join-reader-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-writer-1:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - shared-data:/shared-data
+    profiles: ["orchestration"]
+
+  # Query Gateway 1
+  query-gateway-1:
+    build:
+      context: .
+      dockerfile: ./query-gateway/Dockerfile
+    container_name: query-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # Core application (data flow services)
+  server:
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile
+    container_name: server
+    ports:
+      - "8081:8080"  # TCP port for client connections
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      year-filter-worker-1:
+        condition: service_started
+      year-filter-worker-2:
+        condition: service_started
+      year-filter-worker-3:
+        condition: service_started
+      time-filter-worker-1:
+        condition: service_started
+      time-filter-worker-2:
+        condition: service_started
+      amount-filter-worker-1:
+        condition: service_started
+      query-gateway-1:
+        condition: service_started
+      join-data-handler-1:
+        condition: service_started
+      user-partition-splitter:
+        condition: service_started
+      user-partition-writer-1:
+        condition: service_started
+      user-partition-writer-2:
+        condition: service_started
+      user-partition-writer-3:
+        condition: service_started
+      user-partition-writer-4:
+        condition: service_started
+      user-partition-writer-5:
+        condition: service_started
+      user-join-reader-1:
+        condition: service_started
+      user-join-reader-2:
+        condition: service_started
+      itemid-join-worker-1:
+        condition: service_started
+      itemid-join-worker-2:
+        condition: service_started
+      storeid-join-worker-1:
+        condition: service_started
+      storeid-join-worker-2:
+        condition: service_started
+      query2-orchestrator:
+        condition: service_started
+      query2-map-worker:
+        condition: service_started
+      query2-reduce-s2-2023:
+        condition: service_started
+      query2-reduce-s1-2024:
+        condition: service_started
+      query2-reduce-s2-2024:
+        condition: service_started
+      query2-reduce-s1-2025:
+        condition: service_started
+      query2-reduce-s2-2025:
+        condition: service_started
+      query2-top-items-worker:
+        condition: service_started
+      query3-map-worker:
+        condition: service_started
+      query3-reduce-s2-2023:
+        condition: service_started
+      query3-reduce-s1-2024:
+        condition: service_started
+      query3-reduce-s2-2024:
+        condition: service_started
+      query3-reduce-s1-2025:
+        condition: service_started
+      query3-reduce-s2-2025:
+        condition: service_started
+      query4-map-worker:
+        condition: service_started
+      query4-reduce-worker:
+        condition: service_started
+      query4-top-users-worker:
+        condition: service_started
+      streaming-service:
+        condition: service_started
+    environment:
+      - SERVER_PORT=8080
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+    profiles: ["data-flow"]
+
+  # Client 1
+  client-1:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    container_name: client
+    depends_on:
+      server:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CLIENT_ID=CLI1
+    command: ["./main", "/app/data", "server:8080"]
+    profiles: ["data-flow"]
+
+  # Testing (optional, can be run with profile)
+  test-runner:
+    build:
+      context: .
+      dockerfile: ./tests/Dockerfile
+    container_name: test-runner
+    profiles: ["test"]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      server:
+        condition: service_started
+    environment:
+      RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
+      LOG_LEVEL: "info"
+      GOMAXPROCS: "1"
+    command: ["go", "test", "-v", "./..."]
+    stdin_open: true
+    tty: true
+
+volumes:
+  shared-data:
+    driver: local
