@@ -20,10 +20,17 @@ const (
 	DefaultRabbitMQPort = "5672"
 	DefaultRabbitMQUser = "admin"
 	DefaultRabbitMQPass = "password"
+	DefaultBatchSize    = 5 // Same as Query 3 reducers count
 )
 
+// StoreIdConfig holds configuration for the StoreID join worker
+type StoreIdConfig struct {
+	*middleware.ConnectionConfig
+	BatchSize int
+}
+
 // loadConfig loads configuration from environment variables
-func loadConfig() (*middleware.ConnectionConfig, error) {
+func loadConfig() (*StoreIdConfig, error) {
 	host := getEnv("RABBITMQ_HOST", DefaultRabbitMQHost)
 	port := getEnv("RABBITMQ_PORT", DefaultRabbitMQPort)
 	portInt, err := strconv.Atoi(port)
@@ -33,13 +40,23 @@ func loadConfig() (*middleware.ConnectionConfig, error) {
 	username := getEnv("RABBITMQ_USER", DefaultRabbitMQUser)
 	password := getEnv("RABBITMQ_PASS", DefaultRabbitMQPass)
 
-	fmt.Printf("StoreID Join Worker: Connecting to RabbitMQ at %s:%s with user %s\n", host, port, username)
+	// Load batch size from environment
+	batchSizeStr := getEnv("STOREID_BATCH_SIZE", fmt.Sprintf("%d", DefaultBatchSize))
+	batchSize, err := strconv.Atoi(batchSizeStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid batch size: %v", err)
+	}
 
-	return &middleware.ConnectionConfig{
-		Host:     host,
-		Port:     portInt,
-		Username: username,
-		Password: password,
+	fmt.Printf("StoreID Join Worker: Connecting to RabbitMQ at %s:%s with user %s, batch size: %d\n", host, port, username, batchSize)
+
+	return &StoreIdConfig{
+		ConnectionConfig: &middleware.ConnectionConfig{
+			Host:     host,
+			Port:     portInt,
+			Username: username,
+			Password: password,
+		},
+		BatchSize: batchSize,
 	}, nil
 }
 

@@ -1,0 +1,7 @@
+streaming-service        | CLI1 | Q2 | year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal
+streaming-service        | CLI1 | Q2 | 2025,1,5,312218,2809962.00,1,Flat White,coffee,9.0,False
+streaming-service        | CLI1 | Q2 | 2025,1,8,310451,3104510.00,2,Matcha Latte,non-coffee,10.0,False
+streaming-service        | CLI1 | Q2 | 2024,1,3,311336,2490688.00,1,Latte,coffee,8.0,False
+streaming-service        | CLI1 | Q2 | 2024,1,8,309810,3098100.00,2,Matcha Latte,non-coffee,10.0,False
+streaming-service        | CLI1 | Q2 | 2024,2,5,310550,2794950.00,1,Flat White,coffee,9.0,False
+streaming-service        | CLI1 | Q2 | 2024,2,8,309914,3099140.00,2,Matcha Latte,non-coffee,10.0,False

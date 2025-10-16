@@ -28,6 +28,13 @@ type Store struct {
 	Longitude  string
 }
 
+// ClientState holds the state for a specific client's batch processing
+type ClientState struct {
+	eosReceived map[string]bool // Track EOS from reduce workers (key: FileID)
+	eosCount    int
+	chunks      []*chunk.Chunk // Store chunks for batch processing
+}
+
 // StoreIdJoinWorker encapsulates the StoreID join worker state and dependencies
 type StoreIdJoinWorker struct {
 	dictionaryConsumer *exchange.ExchangeConsumer
@@ -35,17 +42,20 @@ type StoreIdJoinWorker struct {
 	cleanupConsumer    *exchange.ExchangeConsumer
 	outputProducer     *workerqueue.QueueMiddleware
 	completionProducer *workerqueue.QueueMiddleware
-	config             *middleware.ConnectionConfig
+	config             *StoreIdConfig
 	workerID           string
 
 	// Dictionary state - now client-aware
 	dictionaryReady map[string]bool              // client_id -> ready status
 	stores          map[string]map[string]*Store // client_id -> store_id -> Store
-	mutex           sync.RWMutex
+
+	// Client batching state - similar to Query 2 top classification
+	clientStates map[string]*ClientState // key: ClientID
+	mutex        sync.RWMutex
 }
 
 // NewStoreIdJoinWorker creates a new StoreIdJoinWorker instance
-func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWorker, error) {
+func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 	// Get worker instance ID from environment (defaults to "1" for single-worker setups)
 	instanceID := os.Getenv("WORKER_INSTANCE_ID")
 	if instanceID == "" {
@@ -60,7 +70,7 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 	dictionaryConsumer := exchange.NewExchangeConsumer(
 		StoreIdDictionaryExchange,
 		[]string{instanceRoutingKey},
-		config,
+		config.ConnectionConfig,
 	)
 	if dictionaryConsumer == nil {
 		return nil, fmt.Errorf("failed to create dictionary consumer")
@@ -69,7 +79,7 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 	// Create chunk consumer
 	chunkConsumer := workerqueue.NewQueueConsumer(
 		StoreIdChunkQueue,
-		config,
+		config.ConnectionConfig,
 	)
 	if chunkConsumer == nil {
 		dictionaryConsumer.Close()
@@ -79,7 +89,7 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 	// Create output producer
 	outputProducer := workerqueue.NewMessageMiddlewareQueue(
 		Query3ResultsQueue,
-		config,
+		config.ConnectionConfig,
 	)
 	if outputProducer == nil {
 		dictionaryConsumer.Close()
@@ -91,7 +101,7 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 	cleanupConsumer := exchange.NewExchangeConsumer(
 		"storeid-cleanup-exchange",
 		[]string{fmt.Sprintf("storeid-cleanup-instance-%s", instanceID)},
-		config,
+		config.ConnectionConfig,
 	)
 	if cleanupConsumer == nil {
 		dictionaryConsumer.Close()
@@ -103,7 +113,7 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 	// Create completion producer
 	completionProducer := workerqueue.NewMessageMiddlewareQueue(
 		"join-completion-queue",
-		config,
+		config.ConnectionConfig,
 	)
 	if completionProducer == nil {
 		dictionaryConsumer.Close()
@@ -114,7 +124,7 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 	}
 
 	// Declare input queue (StoreIdChunkQueue)
-	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(StoreIdChunkQueue, config)
+	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(StoreIdChunkQueue, config.ConnectionConfig)
 	if inputQueueDeclarer == nil {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
@@ -163,6 +173,7 @@ func NewStoreIdJoinWorker(config *middleware.ConnectionConfig) (*StoreIdJoinWork
 		workerID:           fmt.Sprintf("storeid-worker-%s", instanceID),
 		dictionaryReady:    make(map[string]bool),
 		stores:             make(map[string]map[string]*Store),
+		clientStates:       make(map[string]*ClientState),
 	}, nil
 }
 
@@ -262,7 +273,19 @@ func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) mid
 	return 0
 }
 
-// processChunkMessage processes chunk messages for joining
+// getOrCreateClientState gets or creates client state for batching
+func (w *StoreIdJoinWorker) getOrCreateClientState(clientID string) *ClientState {
+	if w.clientStates[clientID] == nil {
+		w.clientStates[clientID] = &ClientState{
+			eosReceived: make(map[string]bool),
+			eosCount:    0,
+			chunks:      make([]*chunk.Chunk, 0),
+		}
+	}
+	return w.clientStates[clientID]
+}
+
+// processChunkMessage processes chunk messages for joining with batching
 func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	fmt.Printf("StoreID Join Worker: Received chunk message\n")
 
@@ -274,23 +297,64 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Check if dictionary is ready for this specific client
-	dictionaryReady := w.dictionaryReady[chunkMsg.ClientID]
+	clientID := chunkMsg.ClientID
+	clientState := w.getOrCreateClientState(clientID)
 
+	// Check if dictionary is ready for this specific client
+	dictionaryReady := w.dictionaryReady[clientID]
 	if !dictionaryReady {
-		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
+		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", clientID)
 		delivery.Nack(false, true) // Reject and requeue
 		return 0
 	}
 
-	// Process the chunk
-	if err := w.processChunk(chunkMsg); err != 0 {
-		fmt.Printf("StoreID Join Worker: Failed to process chunk: %v\n", err)
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
+	// Add chunk to client's batch
+	w.mutex.Lock()
+	clientState.chunks = append(clientState.chunks, chunkMsg)
+	w.mutex.Unlock()
+
+	// Check if this is the last chunk (EOS marker)
+	if chunkMsg.IsLastChunk {
+		// Mark this reduce worker as finished
+		if !clientState.eosReceived[chunkMsg.FileID] {
+			clientState.eosReceived[chunkMsg.FileID] = true
+			clientState.eosCount++
+			fmt.Printf("StoreID Join Worker: Received EOS from reduce worker %s (Client: %s) - Count: %d/%d\n",
+				chunkMsg.FileID, clientID, clientState.eosCount, w.config.BatchSize)
+		}
+
+		// If we received EOS from all reduce workers, process the batch
+		if clientState.eosCount >= w.config.BatchSize {
+			fmt.Printf("StoreID Join Worker: All reduce workers finished for client %s, processing batch...\n", clientID)
+			if err := w.processBatch(clientID, clientState); err != 0 {
+				fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
+				delivery.Nack(false, false)
+				return err
+			}
+			// Clear client state
+			w.mutex.Lock()
+			delete(w.clientStates, clientID)
+			w.mutex.Unlock()
+		}
 	}
 
 	delivery.Ack(false) // Acknowledge the chunk message
+	return 0
+}
+
+// processBatch processes all chunks for a client in batch
+func (w *StoreIdJoinWorker) processBatch(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
+	fmt.Printf("StoreID Join Worker: Processing batch for client %s with %d chunks\n", clientID, len(clientState.chunks))
+
+	// Process each chunk in the batch
+	for _, chunkMsg := range clientState.chunks {
+		if err := w.processChunk(chunkMsg); err != 0 {
+			fmt.Printf("StoreID Join Worker: Failed to process chunk in batch: %v\n", err)
+			return err
+		}
+	}
+
+	fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
 	return 0
 }
 
@@ -658,7 +722,7 @@ func (w *StoreIdJoinWorker) createCleanupCallback() func(middleware.ConsumeChann
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			err := w.processCleanupMessage(delivery)
-			if err != nil {
+			if err != 0 {
 				done <- fmt.Errorf("failed to process cleanup message: %v", err)
 				return
 			}
@@ -667,13 +731,13 @@ func (w *StoreIdJoinWorker) createCleanupCallback() func(middleware.ConsumeChann
 }
 
 // processCleanupMessage processes a cleanup signal
-func (w *StoreIdJoinWorker) processCleanupMessage(delivery amqp.Delivery) error {
+func (w *StoreIdJoinWorker) processCleanupMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	// Deserialize the message using the deserializer
 	message, err := deserializer.Deserialize(delivery.Body)
 	if err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to deserialize message: %v\n", err)
 		delivery.Nack(false, false) // Reject the message
-		return err
+		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Check if it's a cleanup signal
@@ -681,7 +745,7 @@ func (w *StoreIdJoinWorker) processCleanupMessage(delivery amqp.Delivery) error 
 	if !ok {
 		fmt.Printf("StoreID Join Worker: Received non-cleanup message type")
 		delivery.Nack(false, false) // Reject the message
-		return fmt.Errorf("expected JoinCleanupSignal, got %T", message)
+		return middleware.MessageMiddlewareMessageError
 	}
 
 	fmt.Printf("StoreID Join Worker: Received cleanup signal for client %s\n", cleanupSignal.ClientID)
@@ -690,7 +754,7 @@ func (w *StoreIdJoinWorker) processCleanupMessage(delivery amqp.Delivery) error 
 	w.cleanupClientStores(cleanupSignal.ClientID)
 
 	delivery.Ack(false) // Acknowledge the message
-	return nil
+	return 0
 }
 
 // cleanupClientStores deletes all store dictionary data for a specific client

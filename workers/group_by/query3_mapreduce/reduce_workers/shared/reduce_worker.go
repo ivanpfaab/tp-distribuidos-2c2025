@@ -425,12 +425,9 @@ func (rw *ReduceWorker) Start() {
 				}
 
 				log.Printf("Reduce worker for semester %s completed processing for client %s", rw.semester.String(), msg.ClientID)
-				delivery.Ack(false)
 				// Continue processing other clients
 			default:
 				log.Printf("Received unknown message type: %T", message)
-				delivery.Ack(false)
-				continue
 			}
 
 			// Acknowledge the message
