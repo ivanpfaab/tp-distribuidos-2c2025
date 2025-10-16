@@ -552,25 +552,6 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  join-garbage-collector:
-    build:
-      context: .
-      dockerfile: ./workers/join/garbage-collector/Dockerfile
-    container_name: join-garbage-collector
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      COMPLETION_QUEUE: "join-completion-queue"
-      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
-      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
-      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
-    profiles: ["orchestration"]
-
   # Join Data Handler 1
   join-data-handler-1:
     build:
@@ -772,6 +753,25 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
+  join-garbage-collector:
+    build:
+      context: .
+      dockerfile: ./workers/join/garbage-collector/Dockerfile
+    container_name: join-garbage-collector
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      COMPLETION_QUEUE: "join-completion-queue"
+      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
+      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
+      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
+    profiles: ["orchestration"]
+
   # Core application (data flow services)
   server:
     build:
@@ -882,22 +882,6 @@ services:
       - ./data:/app/data
     environment:
       - CLIENT_ID=CLI1
-    command: ["./main", "/app/data", "server:8080"]
-    profiles: ["data-flow"]
-
-  # Client 2
-  client-2:
-    build:
-      context: .
-      dockerfile: ./client/Dockerfile
-    container_name: client-2
-    depends_on:
-      server:
-        condition: service_started
-    volumes:
-      - ./data:/app/data
-    environment:
-      - CLIENT_ID=CLI2
     command: ["./main", "/app/data", "server:8080"]
     profiles: ["data-flow"]
 
