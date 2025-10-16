@@ -260,7 +260,7 @@ func (w *StoreIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messa
 	}
 
 	// SUCCESS: Data sent successfully - cleanup client's dictionary immediately
-	w.cleanupClientStores(chunkMsg.ClientID)
+	//w.cleanupClientStores(chunkMsg.ClientID)
 
 	fmt.Printf("StoreID Join Worker: Successfully processed and sent joined chunk\n")
 	return 0
@@ -375,9 +375,11 @@ func (w *StoreIdJoinWorker) parseTransactionData(csvData string) ([]map[string]s
 
 	var transactions []map[string]string
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "transaction_id") {
+			continue
+		}
 		if len(record) >= 9 {
 			transaction := map[string]string{
 				"transaction_id":    record[0],
@@ -493,9 +495,11 @@ func (w *StoreIdJoinWorker) parseGroupedTransactionData(csvData string) ([]map[s
 
 	var groupedTransactions []map[string]string
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "year") {
+			continue
+		}
 		if len(record) >= 5 {
 			transaction := map[string]string{
 				"year":               record[0],

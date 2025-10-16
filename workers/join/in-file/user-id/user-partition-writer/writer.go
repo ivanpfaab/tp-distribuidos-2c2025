@@ -129,9 +129,11 @@ func (upw *UserPartitionWriter) writeUsersToPartitions(csvData string, clientID 
 	userCount := 0
 	skippedCount := 0
 
-	// Process each user record (skip header)
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "user_id") {
+			continue
+		}
 		if len(record) < 4 {
 			fmt.Printf("User Partition Writer %d: Skipping malformed record: %v\n",
 				upw.writerConfig.WriterID, record)

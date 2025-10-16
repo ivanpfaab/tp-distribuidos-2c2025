@@ -377,8 +377,11 @@ func (w *ItemIdJoinWorker) parseTransactionItemsData(csvData string) ([]map[stri
 	var transactionItems []map[string]string
 
 	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "transaction_id") {
+			continue
+		}
 		if len(record) >= 6 {
 			item := map[string]string{
 				"transaction_id": record[0],
@@ -479,9 +482,11 @@ func (w *ItemIdJoinWorker) parseGroupedTransactionItemsData(csvData string) ([]m
 
 	var groupedItems []map[string]string
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "year") {
+			continue
+		}
 		if len(record) >= 6 {
 			item := map[string]string{
 				"year":     record[0],

@@ -378,9 +378,11 @@ func (jw *JoinByUserIdWorker) parseTopUsersData(csvData string) ([]TopUserRecord
 
 	var topUsers []TopUserRecord
 
-	// Skip header row
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "user_id") {
+			continue
+		}
 		if len(record) >= 4 {
 			user := TopUserRecord{
 				UserID:        record[0],
@@ -436,8 +438,11 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 	}
 
 	// Search for the specific user ID (skip header)
-	for i := 1; i < len(records); i++ {
+	for i := 0; i < len(records); i++ {
 		record := records[i]
+		if strings.Contains(record[0], "user_id") {
+			continue
+		}
 		if len(record) >= 4 && record[0] == normalizedUserID {
 			return &UserData{
 				UserID:       record[0],
