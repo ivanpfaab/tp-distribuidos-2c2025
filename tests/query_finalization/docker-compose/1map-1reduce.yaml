@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: test-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  test-query3-orchestrator:
+    build:
+      context: ../../../
+      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+    container_name: test-query3-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - QUERY_TYPE=3
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+
+  test-query3-map-worker-1:
+    build:
+      context: ../../../
+      dockerfile: ./workers/group_by/query3_mapreduce/map_worker/Dockerfile
+    container_name: test-query3-map-worker-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      test-query3-orchestrator:
+        condition: service_started
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
+
+  test-query3-reduce-s1-2024:
+    build:
+      context: ../../../
+      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
+    container_name: test-query3-reduce-s1-2024
+    command: ["./reduce-worker-s1-2024"]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      test-query3-orchestrator:
+        condition: service_started
+      test-query3-map-worker-1:
+        condition: service_started
+    environment:
+      - SEMESTER=S1-2024
+      - QUERY3_EXPECTED_MAP_WORKERS=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password
