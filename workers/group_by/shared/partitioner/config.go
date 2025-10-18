@@ -9,30 +9,24 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
-func main() {
-	// Load configuration
-	config, err := loadConfig()
-	if err != nil {
-		fmt.Printf("Failed to load configuration: %v\n", err)
-		return
-	}
+const (
+	// Buffer configuration
+	MaxBufferSize = 200 // Maximum records to buffer per partition before flushing
 
-	// Create and initialize partitioner worker
-	partitioner, err := NewPartitionerWorker(config)
-	if err != nil {
-		fmt.Printf("Failed to create partitioner worker: %v\n", err)
-		return
-	}
-	defer partitioner.Close()
+	// Partition configuration
+	NumPartitions = 10 // Number of partitions for user_id modulo
 
-	// Start the partitioner
-	if err := partitioner.Start(); err != 0 {
-		fmt.Printf("Failed to start partitioner worker: %v\n", err)
-		return
-	}
+	// Default configuration
+	DefaultRabbitMQURL = "amqp://guest:guest@localhost:5672/"
+)
 
-	// Keep the partitioner running
-	select {}
+// PartitionerConfig holds configuration for the partitioner worker
+type PartitionerConfig struct {
+	QueryType        int
+	QueueName        string
+	ConnectionConfig *middleware.ConnectionConfig
+	NumPartitions    int
+	MaxBufferSize    int
 }
 
 // loadConfig loads configuration from environment variables
@@ -53,7 +47,7 @@ func loadConfig() (*PartitionerConfig, error) {
 
 	rabbitMQURL := os.Getenv("RABBITMQ_URL")
 	if rabbitMQURL == "" {
-		rabbitMQURL = "amqp://guest:guest@localhost:5672/"
+		rabbitMQURL = DefaultRabbitMQURL
 	}
 
 	// Get the appropriate queue name based on query type
@@ -67,6 +61,23 @@ func loadConfig() (*PartitionerConfig, error) {
 		queueName = queues.Query4MapQueue
 	}
 
+	// Load partition configuration
+	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
+	numPartitions := NumPartitions
+	if numPartitionsStr != "" {
+		if parsed, err := strconv.Atoi(numPartitionsStr); err == nil && parsed > 0 {
+			numPartitions = parsed
+		}
+	}
+
+	maxBufferSizeStr := os.Getenv("MAX_BUFFER_SIZE")
+	maxBufferSize := MaxBufferSize
+	if maxBufferSizeStr != "" {
+		if parsed, err := strconv.Atoi(maxBufferSizeStr); err == nil && parsed > 0 {
+			maxBufferSize = parsed
+		}
+	}
+
 	connectionConfig := &middleware.ConnectionConfig{
 		URL: rabbitMQURL,
 	}
@@ -75,5 +86,7 @@ func loadConfig() (*PartitionerConfig, error) {
 		QueryType:        queryType,
 		QueueName:        queueName,
 		ConnectionConfig: connectionConfig,
+		NumPartitions:    numPartitions,
+		MaxBufferSize:    maxBufferSize,
 	}, nil
 }

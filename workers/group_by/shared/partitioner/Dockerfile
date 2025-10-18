@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o partitioner ./workers/group_by/partitioner
+RUN CGO_ENABLED=0 GOOS=linux go build -o partitioner ./workers/group_by/shared/partitioner
 
 # Final stage
 FROM alpine:latest
@@ -27,6 +27,8 @@ COPY --from=builder /app/partitioner .
 # Set environment variables
 ENV QUERY_TYPE=2
 ENV RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+ENV NUM_PARTITIONS=10
+ENV MAX_BUFFER_SIZE=200
 
 # Run the application
 CMD ["./partitioner"]

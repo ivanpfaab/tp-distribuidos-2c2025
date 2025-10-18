@@ -25,8 +25,8 @@ func NewPartitionerWorker(config *PartitionerConfig) (*PartitionerWorker, error)
 		return nil, fmt.Errorf("failed to create queue consumer")
 	}
 
-	// Create processor
-	processor, err := NewPartitionerProcessor(config.QueryType)
+	// Create processor with partitioning configuration
+	processor, err := NewPartitionerProcessor(config.QueryType, config.NumPartitions, config.MaxBufferSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create processor: %v", err)
 	}
@@ -40,7 +40,8 @@ func NewPartitionerWorker(config *PartitionerConfig) (*PartitionerWorker, error)
 
 // Start begins processing messages from the queue
 func (w *PartitionerWorker) Start() middleware.MessageMiddlewareError {
-	testing_utils.LogInfo("Partitioner Worker", "Starting partitioner for query type %d", w.config.QueryType)
+	testing_utils.LogInfo("Partitioner Worker", "Starting partitioner for query type %d with %d partitions",
+		w.config.QueryType, w.config.NumPartitions)
 
 	// Start consuming messages
 	return w.consumer.StartConsuming(w.createCallback())
@@ -84,7 +85,7 @@ func (w *PartitionerWorker) processMessage(messageBody []byte) error {
 		return nil
 	}
 
-	// Process the chunk
+	// Process the chunk with partitioning
 	return w.processor.ProcessChunk(chunkMessage)
 }
 
