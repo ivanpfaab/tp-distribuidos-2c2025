@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -45,18 +46,21 @@ type FinalResult struct {
 
 // ClientData represents the data for a specific client
 type ClientData struct {
-	GroupedData map[string]*GroupedResult // Key: item_id, Value: aggregated data
-	ChunkCount  int                       // Track number of chunks received
-	IsCompleted bool                      // Whether this client's processing is completed
+	GroupedData        map[string]*GroupedResult // Key: item_id, Value: aggregated data
+	ChunkCount         int                       // Track number of chunks received
+	IsCompleted        bool                      // Whether this client's processing is completed
+	MapWorkerSignals   map[string]bool           // Track which map workers have sent completion signals
+	ExpectedMapWorkers int                       // Number of map workers expected for this query
 }
 
 // ReduceWorker processes chunks for a specific semester
 type ReduceWorker struct {
-	semester   Semester
-	consumer   *exchange.ExchangeConsumer
-	producer   *workerqueue.QueueMiddleware
-	config     *middleware.ConnectionConfig
-	clientData map[string]*ClientData // Key: clientID, Value: client-specific data
+	semester           Semester
+	consumer           *exchange.ExchangeConsumer
+	producer           *workerqueue.QueueMiddleware
+	config             *middleware.ConnectionConfig
+	clientData         map[string]*ClientData // Key: clientID, Value: client-specific data
+	expectedMapWorkers int                    // Number of map workers expected for this query
 }
 
 // NewReduceWorker creates a new reduce worker for a specific semester
@@ -121,12 +125,16 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		log.Fatalf("Failed to declare final results queue: %v", err)
 	}
 
+	// Get expected number of map workers for this query
+	expectedMapWorkers := getExpectedMapWorkersForQuery(2) // Query 2
+
 	return &ReduceWorker{
-		semester:   semester,
-		consumer:   consumer,
-		producer:   producer,
-		config:     config,
-		clientData: make(map[string]*ClientData),
+		semester:           semester,
+		consumer:           consumer,
+		producer:           producer,
+		config:             config,
+		clientData:         make(map[string]*ClientData),
+		expectedMapWorkers: expectedMapWorkers,
 	}
 }
 
@@ -137,11 +145,13 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	// Initialize client data if not exists
 	if rw.clientData[chunk.ClientID] == nil {
 		rw.clientData[chunk.ClientID] = &ClientData{
-			GroupedData: make(map[string]*GroupedResult),
-			ChunkCount:  0,
-			IsCompleted: false,
+			GroupedData:        make(map[string]*GroupedResult),
+			ChunkCount:         0,
+			IsCompleted:        false,
+			MapWorkerSignals:   make(map[string]bool),
+			ExpectedMapWorkers: rw.expectedMapWorkers,
 		}
-		log.Printf("Initialized data for client: %s", chunk.ClientID)
+		log.Printf("Initialized data for client: %s (expecting %d map workers)", chunk.ClientID, rw.expectedMapWorkers)
 	}
 
 	clientData := rw.clientData[chunk.ClientID]
@@ -429,18 +439,12 @@ func (rw *ReduceWorker) Start() {
 
 				chunkCount++
 			case *signals.GroupByCompletionSignal:
-				// Handle completion signal for specific client
+				// Handle completion signal from specific map worker
 				log.Printf("Received GroupByCompletionSignal for client %s, semester %s from map worker %s: %s",
 					msg.ClientID, rw.semester.String(), msg.MapWorkerID, msg.Message)
 
-				// Finalize results for this specific client
-				err = rw.FinalizeResultsForClient(msg.ClientID)
-				if err != nil {
-					log.Printf("Failed to finalize results for client %s on completion signal: %v", msg.ClientID, err)
-				}
-
-				log.Printf("Reduce worker for semester %s completed processing for client %s", rw.semester.String(), msg.ClientID)
-				// Continue processing other clients
+				// Track this map worker's completion signal
+				rw.trackMapWorkerCompletion(msg.ClientID, msg.MapWorkerID)
 			default:
 				log.Printf("Received unknown message type: %T", message)
 			}
@@ -464,6 +468,62 @@ func (rw *ReduceWorker) Start() {
 		log.Fatalf("Failed to start consuming: %v", err)
 	}
 	log.Printf("Successfully started consuming from queue: %s", queueName)
+}
+
+// trackMapWorkerCompletion tracks completion signal from a specific map worker
+func (rw *ReduceWorker) trackMapWorkerCompletion(clientID, mapWorkerID string) {
+	clientData := rw.clientData[clientID]
+	if clientData == nil {
+		log.Printf("Received completion signal for unknown client: %s", clientID)
+		return
+	}
+
+	// Mark this map worker as completed
+	clientData.MapWorkerSignals[mapWorkerID] = true
+
+	log.Printf("Map worker %s completed for client %s (%d/%d map workers completed)",
+		mapWorkerID, clientID, len(clientData.MapWorkerSignals), clientData.ExpectedMapWorkers)
+
+	// Check if all map workers have completed
+	if len(clientData.MapWorkerSignals) >= clientData.ExpectedMapWorkers {
+		log.Printf("All %d map workers completed for client %s, finalizing results...",
+			clientData.ExpectedMapWorkers, clientID)
+
+		// Finalize results for this client
+		err := rw.FinalizeResultsForClient(clientID)
+		if err != nil {
+			log.Printf("Failed to finalize results for client %s: %v", clientID, err)
+		}
+	} else {
+		log.Printf("Waiting for %d more map workers to complete for client %s",
+			clientData.ExpectedMapWorkers-len(clientData.MapWorkerSignals), clientID)
+	}
+}
+
+// getExpectedMapWorkersForQuery returns the expected number of map workers for a query
+func getExpectedMapWorkersForQuery(queryType int) int {
+	// Try to get from environment variable first
+	envVar := fmt.Sprintf("QUERY%d_EXPECTED_MAP_WORKERS", queryType)
+	if envValue := os.Getenv(envVar); envValue != "" {
+		if count, err := strconv.Atoi(envValue); err == nil && count > 0 {
+			log.Printf("Using expected map workers from environment: %s=%d", envVar, count)
+			return count
+		} else {
+			log.Printf("Invalid value for %s: %s, using default", envVar, envValue)
+		}
+	}
+
+	// Fallback to reasonable defaults
+	switch queryType {
+	case 2:
+		return 1 // Query 2 has 1 map worker
+	case 3:
+		return 1 // Query 3 has 1 map worker
+	case 4:
+		return 1 // Query 4 has 1 map worker
+	default:
+		return 1 // Default to 1 map worker
+	}
 }
 
 // Close closes the reduce worker

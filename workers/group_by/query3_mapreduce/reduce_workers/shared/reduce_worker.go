@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -43,18 +44,21 @@ type FinalResult struct {
 
 // ClientData represents the data for a specific client
 type ClientData struct {
-	GroupedData map[string]*GroupedResult // Key: store_id, Value: aggregated data
-	ChunkCount  int                       // Track number of chunks received
-	IsCompleted bool                      // Whether this client's processing is completed
+	GroupedData        map[string]*GroupedResult // Key: store_id, Value: aggregated data
+	ChunkCount         int                       // Track number of chunks received
+	IsCompleted        bool                      // Whether this client's processing is completed
+	MapWorkerSignals   map[string]bool           // Track which map workers have sent completion signals
+	ExpectedMapWorkers int                       // Number of map workers expected for this query
 }
 
 // ReduceWorker processes chunks for a specific semester
 type ReduceWorker struct {
-	semester   Semester
-	consumer   *exchange.ExchangeConsumer
-	producer   *workerqueue.QueueMiddleware
-	config     *middleware.ConnectionConfig
-	clientData map[string]*ClientData // Key: clientID, Value: client-specific data
+	semester           Semester
+	consumer           *exchange.ExchangeConsumer
+	producer           *workerqueue.QueueMiddleware
+	config             *middleware.ConnectionConfig
+	clientData         map[string]*ClientData // Key: clientID, Value: client-specific data
+	expectedMapWorkers int                    // Number of map workers expected for this query
 }
 
 // NewReduceWorker creates a new reduce worker for a specific semester
@@ -119,27 +123,33 @@ func NewReduceWorker(semester Semester) *ReduceWorker {
 		log.Fatalf("Failed to declare final results queue: %v", err)
 	}
 
+	// Get expected number of map workers for this query
+	expectedMapWorkers := getExpectedMapWorkersForQuery(3) // Query 3
+
 	return &ReduceWorker{
-		semester:   semester,
-		consumer:   consumer,
-		producer:   producer,
-		config:     config,
-		clientData: make(map[string]*ClientData),
+		semester:           semester,
+		consumer:           consumer,
+		producer:           producer,
+		config:             config,
+		clientData:         make(map[string]*ClientData),
+		expectedMapWorkers: expectedMapWorkers,
 	}
 }
 
 // ProcessChunk processes a chunk immediately and aggregates data by store_id for a specific client
 func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
-	log.Printf("Processing chunk %d for semester %s, client %s", chunk.ChunkNumber, rw.semester.String(), chunk.ClientID)
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3] Processing chunk %d for semester %s", rw.semester.String(), chunk.ClientID, chunk.ChunkNumber, rw.semester.String())
 
 	// Initialize client data if not exists
 	if rw.clientData[chunk.ClientID] == nil {
 		rw.clientData[chunk.ClientID] = &ClientData{
-			GroupedData: make(map[string]*GroupedResult),
-			ChunkCount:  0,
-			IsCompleted: false,
+			GroupedData:        make(map[string]*GroupedResult),
+			ChunkCount:         0,
+			IsCompleted:        false,
+			MapWorkerSignals:   make(map[string]bool),
+			ExpectedMapWorkers: rw.expectedMapWorkers,
 		}
-		log.Printf("Initialized data for client: %s", chunk.ClientID)
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3] Initialized data for client (expecting %d map workers)", rw.semester.String(), chunk.ClientID, rw.expectedMapWorkers)
 	}
 
 	clientData := rw.clientData[chunk.ClientID]
@@ -154,8 +164,8 @@ func (rw *ReduceWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	rw.aggregateDataForClient(chunk.ClientID, results)
 
 	clientData.ChunkCount++
-	log.Printf("Processed chunk %d for client %s, now have %d unique stores (total chunks: %d)",
-		chunk.ChunkNumber, chunk.ClientID, len(clientData.GroupedData), clientData.ChunkCount)
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3] Processed chunk %d, now have %d unique stores (total chunks: %d)",
+		rw.semester.String(), chunk.ClientID, chunk.ChunkNumber, len(clientData.GroupedData), clientData.ChunkCount)
 
 	return nil
 }
@@ -239,8 +249,8 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 		log.Printf("No data found for client %s, initializing empty results", clientID)
 	}
 
-	log.Printf("Finalizing results for client %s, semester %s with %d processed chunks and %d unique stores",
-		clientID, rw.semester.String(), clientData.ChunkCount, len(clientData.GroupedData))
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3] Finalizing results with %d processed chunks and %d unique stores",
+		rw.semester.String(), clientID, clientData.ChunkCount, len(clientData.GroupedData))
 
 	// Convert to final results
 	finalResults := make([]FinalResult, 0, len(clientData.GroupedData))
@@ -256,11 +266,11 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 	}
 
 	// Log detailed final results
-	log.Printf("FINAL RESULTS for client %s, semester %s:", clientID, rw.semester.String())
-	log.Printf("   Total unique stores: %d", len(finalResults))
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3] FINAL RESULTS:", rw.semester.String(), clientID)
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3]   Total unique stores: %d", rw.semester.String(), clientID, len(finalResults))
 
 	if len(finalResults) == 0 {
-		log.Printf("   No data processed for this client in this semester")
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3]   No data processed for this client in this semester", rw.semester.String(), clientID)
 	}
 
 	// Show top 10 stores by total final amount for debugging
@@ -282,11 +292,11 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 		topCount = len(stores)
 	}
 
-	log.Printf("   Top %d stores by total final amount:", topCount)
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3]   Top %d stores by total final amount:", rw.semester.String(), clientID, topCount)
 	for i := 0; i < topCount; i++ {
 		store := stores[i]
-		log.Printf("      %d. StoreID: %s | TotalFinalAmount: %.2f | Count: %d",
-			i+1, store.StoreID, store.TotalFinalAmount, store.Count)
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3]      %d. StoreID: %s | TotalFinalAmount: %.2f | Count: %d",
+			rw.semester.String(), clientID, i+1, store.StoreID, store.TotalFinalAmount, store.Count)
 	}
 
 	// Calculate totals
@@ -297,18 +307,18 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 		totalCount += result.Count
 	}
 
-	log.Printf("   Grand totals: TotalFinalAmount=%.2f, Transactions=%d",
-		totalFinalAmount, totalCount)
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3]   Grand totals: TotalFinalAmount=%.2f, Transactions=%d",
+		rw.semester.String(), clientID, totalFinalAmount, totalCount)
 
 	// Convert to CSV
 	csvData := rw.convertToCSV(finalResults)
 
 	// Log the CSV data for debugging
 	if len(csvData) > 0 {
-		log.Printf("CSV data for client %s, semester %s (first 500 chars):\n%s",
-			clientID, rw.semester.String(), csvData[:min(500, len(csvData))])
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3] CSV data (first 500 chars):\n%s",
+			rw.semester.String(), clientID, csvData[:min(500, len(csvData))])
 	} else {
-		log.Printf("Empty CSV data for client %s, semester %s", clientID, rw.semester.String())
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3] Empty CSV data", rw.semester.String(), clientID)
 	}
 
 	// Create chunk for final results
@@ -338,8 +348,8 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 		return fmt.Errorf("failed to send final results: error code %v", sendErr)
 	}
 
-	log.Printf("Successfully sent final results for client %s, semester %s: %d stores",
-		clientID, rw.semester.String(), len(finalResults))
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3] Successfully sent final results: %d stores",
+		rw.semester.String(), clientID, len(finalResults))
 
 	// Mark client as completed
 	clientData.IsCompleted = true
@@ -354,8 +364,8 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 func (rw *ReduceWorker) clearClientData(clientID string) {
 	clientData := rw.clientData[clientID]
 	if clientData != nil {
-		log.Printf("Clearing aggregated data for client %s, semester %s (%d stores)",
-			clientID, rw.semester.String(), len(clientData.GroupedData))
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3] Clearing aggregated data (%d stores)",
+			rw.semester.String(), clientID, len(clientData.GroupedData))
 		clientData.GroupedData = make(map[string]*GroupedResult)
 		clientData.ChunkCount = 0
 	}
@@ -385,18 +395,18 @@ func (rw *ReduceWorker) convertToCSV(results []FinalResult) string {
 
 // Start starts the reduce worker
 func (rw *ReduceWorker) Start() {
-	log.Printf("Starting Reduce Worker for semester %s...", rw.semester.String())
+	log.Printf("[query3-reduce-%s] [Q3] Starting Reduce Worker for semester %s (expecting %d map workers)...", rw.semester.String(), rw.semester.String(), rw.expectedMapWorkers)
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		log.Printf("Reduce worker for semester %s started consuming messages", rw.semester.String())
+		log.Printf("[query3-reduce-%s] [Q3] Started consuming messages", rw.semester.String())
 		chunkCount := 0
 		for delivery := range *consumeChannel {
-			log.Printf("Received message for semester %s - Message size: %d bytes", rw.semester.String(), len(delivery.Body))
-			log.Printf("Message body preview: %s", string(delivery.Body[:min(100, len(delivery.Body))]))
+			log.Printf("[query3-reduce-%s] [Q3] Received message - Size: %d bytes", rw.semester.String(), len(delivery.Body))
+			log.Printf("[query3-reduce-%s] [Q3] Message preview: %s", rw.semester.String(), string(delivery.Body[:min(100, len(delivery.Body))]))
 			// Deserialize the chunk message
 			message, err := deserializer.Deserialize(delivery.Body)
 			if err != nil {
-				log.Printf("Failed to deserialize chunk: %v", err)
+				log.Printf("[query3-reduce-%s] [Q3] Failed to deserialize chunk: %v", rw.semester.String(), err)
 				delivery.Ack(false)
 				continue
 			}
@@ -405,29 +415,23 @@ func (rw *ReduceWorker) Start() {
 			switch msg := message.(type) {
 			case *chunk.Chunk:
 				// Process the chunk
+				chunkCount++
+				log.Printf("[query3-reduce-%s] [CLI%s | Q3] Processing chunk %d", rw.semester.String(), msg.ClientID, chunkCount)
 				err = rw.ProcessChunk(msg)
 				if err != nil {
-					log.Printf("Failed to process chunk: %v", err)
+					log.Printf("[query3-reduce-%s] [CLI%s | Q3] Failed to process chunk: %v", rw.semester.String(), msg.ClientID, err)
 					delivery.Ack(false)
 					continue
 				}
-
-				chunkCount++
 			case *signals.GroupByCompletionSignal:
-				// Handle completion signal for specific client
-				log.Printf("Received GroupByCompletionSignal for client %s, semester %s from map worker %s: %s",
-					msg.ClientID, rw.semester.String(), msg.MapWorkerID, msg.Message)
+				// Handle completion signal from specific map worker
+				log.Printf("[query3-reduce-%s] [CLI%s | Q3] Received GroupByCompletionSignal from map worker %s: %s",
+					rw.semester.String(), msg.ClientID, msg.MapWorkerID, msg.Message)
 
-				// Finalize results for this specific client
-				err = rw.FinalizeResultsForClient(msg.ClientID)
-				if err != nil {
-					log.Printf("Failed to finalize results for client %s on completion signal: %v", msg.ClientID, err)
-				}
-
-				log.Printf("Reduce worker for semester %s completed processing for client %s", rw.semester.String(), msg.ClientID)
-				// Continue processing other clients
+				// Track this map worker's completion signal
+				rw.trackMapWorkerCompletion(msg.ClientID, msg.MapWorkerID)
 			default:
-				log.Printf("Received unknown message type: %T", message)
+				log.Printf("[query3-reduce-%s] [Q3] Received unknown message type: %T", rw.semester.String(), message)
 			}
 
 			// Acknowledge the message
@@ -452,6 +456,62 @@ func (rw *ReduceWorker) Start() {
 	}
 	log.Printf("Successfully started consuming from exchange: %s with routing key: %s",
 		queues.Query3MapReduceExchange, routingKey)
+}
+
+// trackMapWorkerCompletion tracks completion signal from a specific map worker
+func (rw *ReduceWorker) trackMapWorkerCompletion(clientID, mapWorkerID string) {
+	clientData := rw.clientData[clientID]
+	if clientData == nil {
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3] Received completion signal for unknown client", rw.semester.String(), clientID)
+		return
+	}
+
+	// Mark this map worker as completed
+	clientData.MapWorkerSignals[mapWorkerID] = true
+
+	log.Printf("[query3-reduce-%s] [CLI%s | Q3] Map worker %s completed (%d/%d map workers completed)",
+		rw.semester.String(), clientID, mapWorkerID, len(clientData.MapWorkerSignals), clientData.ExpectedMapWorkers)
+
+	// Check if all map workers have completed
+	if len(clientData.MapWorkerSignals) >= clientData.ExpectedMapWorkers {
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3] ✅ All %d map workers completed, finalizing results...",
+			rw.semester.String(), clientID, clientData.ExpectedMapWorkers)
+
+		// Finalize results for this client
+		err := rw.FinalizeResultsForClient(clientID)
+		if err != nil {
+			log.Printf("[query3-reduce-%s] [CLI%s | Q3] ❌ Failed to finalize results: %v", rw.semester.String(), clientID, err)
+		}
+	} else {
+		log.Printf("[query3-reduce-%s] [CLI%s | Q3] ⏳ Waiting for %d more map workers to complete",
+			rw.semester.String(), clientID, clientData.ExpectedMapWorkers-len(clientData.MapWorkerSignals))
+	}
+}
+
+// getExpectedMapWorkersForQuery returns the expected number of map workers for a query
+func getExpectedMapWorkersForQuery(queryType int) int {
+	// Try to get from environment variable first
+	envVar := fmt.Sprintf("QUERY%d_EXPECTED_MAP_WORKERS", queryType)
+	if envValue := os.Getenv(envVar); envValue != "" {
+		if count, err := strconv.Atoi(envValue); err == nil && count > 0 {
+			log.Printf("[Q%d] Using expected map workers from environment: %s=%d", queryType, envVar, count)
+			return count
+		} else {
+			log.Printf("[Q%d] Invalid value for %s: %s, using default", queryType, envVar, envValue)
+		}
+	}
+
+	// Fallback to reasonable defaults
+	switch queryType {
+	case 2:
+		return 1 // Query 2 has 1 map worker
+	case 3:
+		return 1 // Query 3 has 1 map worker
+	case 4:
+		return 1 // Query 4 has 1 map worker
+	default:
+		return 1 // Default to 1 map worker
+	}
 }
 
 // Close closes the reduce worker

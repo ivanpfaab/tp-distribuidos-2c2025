@@ -96,7 +96,7 @@ func NewMapWorker() *MapWorker {
 			log.Fatalf("No routing key found for semester %d-%d", semester.Year, semester.Semester)
 		}
 		routingKeys[queueName] = routingKey
-		log.Printf("Mapped queue %s to routing key: %s", queueName, routingKey)
+		log.Printf("[query3-map-worker] [Q3] Mapped queue %s to routing key: %s", queueName, routingKey)
 	}
 
 	routingKeysArray := make([]string, 0)
@@ -138,11 +138,11 @@ func NewMapWorker() *MapWorker {
 
 // ProcessChunk processes a single chunk and groups the data
 func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
-	log.Printf("Processing chunk %d from file %s", chunk.ChunkNumber, chunk.FileID)
+	log.Printf("[query3-map-worker] [CLI%s | Q3] Processing chunk %d from file %s", chunk.ClientID, chunk.ChunkNumber, chunk.FileID)
 
 	// Notify orchestrator about chunk processing
 	if err := mw.orchestratorComm.NotifyChunkProcessed(chunk); err != nil {
-		log.Printf("Failed to notify orchestrator about chunk %d: %v", chunk.ChunkNumber, err)
+		log.Printf("[query3-map-worker] [CLI%s | Q3] Failed to notify orchestrator about chunk %d: %v", chunk.ClientID, chunk.ChunkNumber, err)
 		// Continue processing even if notification fails
 	}
 
@@ -155,8 +155,8 @@ func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 	// Group transactions by year, semester, store_id (all transactions in chunk are from same semester)
 	groupedData, semester := mw.groupTransactions(transactions)
 
-	log.Printf("Grouped data for chunk %d: semester %s (%d stores)",
-		chunk.ChunkNumber, semester.String(), len(groupedData))
+	log.Printf("[query3-map-worker] [CLI%s | Q3] Grouped data for chunk %d: semester %s (%d stores)",
+		chunk.ClientID, chunk.ChunkNumber, semester.String(), len(groupedData))
 
 	// Send grouped data to appropriate reduce queue
 	err = mw.sendToReduceQueue(chunk, groupedData, semester)
@@ -164,8 +164,8 @@ func (mw *MapWorker) ProcessChunk(chunk *chunk.Chunk) error {
 		return fmt.Errorf("failed to send to reduce queue: %v", err)
 	}
 
-	log.Printf("Successfully processed chunk %d, sent to reduce queue for semester %s",
-		chunk.ChunkNumber, semester.String())
+	log.Printf("[query3-map-worker] [CLI%s | Q3] Successfully processed chunk %d, sent to reduce queue for semester %s",
+		chunk.ClientID, chunk.ChunkNumber, semester.String())
 
 	return nil
 }
@@ -245,7 +245,7 @@ func (mw *MapWorker) groupTransactions(transactions []Transaction) (map[string]*
 
 		// Skip invalid semesters (outside our range)
 		if !IsValidSemester(semester) {
-			log.Printf("Invalid semester %d-%d, skipping chunk", semester.Year, semester.Semester)
+			log.Printf("[query3-map-worker] [Q3] Invalid semester %d-%d, skipping chunk", semester.Year, semester.Semester)
 			return groupedData, semester
 		}
 	}
@@ -302,16 +302,16 @@ func (mw *MapWorker) sendToReduceQueue(originalChunk *chunk.Chunk, groupedData m
 		return fmt.Errorf("failed to serialize chunk for routing key %s: %v", routingKey, err)
 	}
 
-	log.Printf("Sending to routing key %s (queue %s): %d bytes, %d store groups",
-		routingKey, queueName, len(serializedData), len(groupedData))
-	log.Printf("Serialized data preview: %s", string(serializedData[:min(100, len(serializedData))]))
+	log.Printf("[query3-map-worker] [CLI%s | Q3] Sending to routing key %s (queue %s): %d bytes, %d store groups",
+		originalChunk.ClientID, routingKey, queueName, len(serializedData), len(groupedData))
+	log.Printf("[query3-map-worker] [CLI%s | Q3] Serialized data preview: %s", originalChunk.ClientID, string(serializedData[:min(100, len(serializedData))]))
 
 	sendErr := mw.exchangeProducer.Send(serializedData, []string{routingKey})
 	if sendErr != 0 {
 		return fmt.Errorf("failed to send to routing key %s: error code %v", routingKey, sendErr)
 	}
 
-	log.Printf("Successfully sent %d store groups to reduce queue via routing key: %s", len(groupedData), routingKey)
+	log.Printf("[query3-map-worker] [CLI%s | Q3] Successfully sent %d store groups to reduce queue via routing key: %s", originalChunk.ClientID, len(groupedData), routingKey)
 
 	return nil
 }
@@ -349,7 +349,7 @@ func (mw *MapWorker) Start() {
 			// Deserialize the chunk message
 			message, err := deserializer.Deserialize(delivery.Body)
 			if err != nil {
-				log.Printf("Failed to deserialize chunk: %v", err)
+				log.Printf("[query3-map-worker] [Q3] Failed to deserialize chunk: %v", err)
 				delivery.Ack(false)
 				continue
 			}
@@ -357,21 +357,21 @@ func (mw *MapWorker) Start() {
 			// Check if it's a Chunk message
 			chunk, ok := message.(*chunk.Chunk)
 			if !ok {
-				log.Printf("Received non-chunk message: %T", message)
+				log.Printf("[query3-map-worker] [Q3] Received non-chunk message: %T", message)
 				delivery.Ack(false)
 				continue
 			}
 
 			// Process only Query Type 3 chunks
 			if chunk.QueryType != 3 {
-				log.Printf("Received non-Query 3 chunk: QueryType=%d, skipping", chunk.QueryType)
+				log.Printf("[query3-map-worker] [CLI%s | Q3] Received non-Query 3 chunk: QueryType=%d, skipping", chunk.ClientID, chunk.QueryType)
 				delivery.Ack(false)
 				continue
 			}
 
 			// Skip chunks for completed clients
 			if mw.completedClients[chunk.ClientID] {
-				log.Printf("Error: Skipping chunk for completed client: %s", chunk.ClientID)
+				log.Printf("[query3-map-worker] [CLI%s | Q3] Error: Skipping chunk for completed client", chunk.ClientID)
 				delivery.Ack(false)
 				continue
 			}
@@ -379,7 +379,7 @@ func (mw *MapWorker) Start() {
 			// Process the chunk
 			err = mw.ProcessChunk(chunk)
 			if err != nil {
-				log.Printf("Failed to process chunk: %v", err)
+				log.Printf("[query3-map-worker] [CLI%s | Q3] Failed to process chunk: %v", chunk.ClientID, err)
 				delivery.Ack(false)
 				continue
 			}
@@ -401,8 +401,8 @@ func (mw *MapWorker) Start() {
 
 // onTerminationSignal handles termination signals from the orchestrator
 func (mw *MapWorker) onTerminationSignal(signal *TerminationSignal) {
-	log.Printf("Map worker received termination signal for Query %d, Client %s: %s",
-		signal.QueryType, signal.ClientID, signal.Message)
+	log.Printf("[query3-map-worker] [CLI%s | Q%d] Received termination signal: %s",
+		signal.ClientID, signal.QueryType, signal.Message)
 
 	// Mark client as completed
 	mw.completedClients[signal.ClientID] = true
@@ -413,7 +413,7 @@ func (mw *MapWorker) onTerminationSignal(signal *TerminationSignal) {
 
 // sendCompletionSignalToReduceWorkers sends completion signal to all reduce workers
 func (mw *MapWorker) sendCompletionSignalToReduceWorkers(clientID string) {
-	log.Printf("Sending completion signal to reduce workers for client: %s", clientID)
+	log.Printf("[query3-map-worker] [CLI%s | Q3] Sending completion signal to reduce workers", clientID)
 
 	// Create completion signal
 	completionSignal := signals.NewGroupByCompletionSignal(
@@ -426,7 +426,7 @@ func (mw *MapWorker) sendCompletionSignalToReduceWorkers(clientID string) {
 	// Serialize completion signal
 	signalData, err := signals.SerializeGroupByCompletionSignal(completionSignal)
 	if err != nil {
-		log.Printf("Failed to serialize completion signal: %v", err)
+		log.Printf("[query3-map-worker] [CLI%s | Q3] Failed to serialize completion signal: %v", clientID, err)
 		return
 	}
 
@@ -436,16 +436,16 @@ func (mw *MapWorker) sendCompletionSignalToReduceWorkers(clientID string) {
 		queueName := GetQueueNameForSemester(semester)
 		routingKey, exists := mw.routingKeys[queueName]
 		if !exists {
-			log.Printf("No routing key found for queue: %s", queueName)
+			log.Printf("[query3-map-worker] [CLI%s | Q3] No routing key found for queue: %s", clientID, queueName)
 			continue
 		}
 
-		log.Printf("Sending completion signal to routing key: %s", routingKey)
+		log.Printf("[query3-map-worker] [CLI%s | Q3] Sending completion signal to routing key: %s", clientID, routingKey)
 		sendErr := mw.exchangeProducer.Send(signalData, []string{routingKey})
 		if sendErr != 0 {
-			log.Printf("Failed to send completion signal to routing key %s: error code %v", routingKey, sendErr)
+			log.Printf("[query3-map-worker] [CLI%s | Q3] Failed to send completion signal to routing key %s: error code %v", clientID, routingKey, sendErr)
 		} else {
-			log.Printf("Successfully sent completion signal to routing key: %s", routingKey)
+			log.Printf("[query3-map-worker] [CLI%s | Q3] Successfully sent completion signal to routing key: %s", clientID, routingKey)
 		}
 	}
 }

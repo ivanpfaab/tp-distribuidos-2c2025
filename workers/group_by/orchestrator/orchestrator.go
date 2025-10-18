@@ -52,7 +52,7 @@ type GroupByOrchestrator struct {
 
 // NewGroupByOrchestrator creates a new group by orchestrator
 func NewGroupByOrchestrator(queryType int) *GroupByOrchestrator {
-	log.Printf("NewGroupByOrchestrator: Query Type %d", queryType)
+	log.Printf("[query%d-orchestrator] [Q%d] NewGroupByOrchestrator: Query Type %d", queryType, queryType, queryType)
 	config := NewOrchestratorConfig(queryType)
 	totalExpectedFiles := GetTotalExpectedFiles(queryType)
 
@@ -103,8 +103,8 @@ func (gbo *GroupByOrchestrator) initializeQueues() {
 		log.Fatalf("Failed to declare termination exchange: %v", err)
 	}
 
-	log.Printf("Orchestrator initialized for Query %d with %d expected files",
-		gbo.config.QueryType, gbo.totalExpectedFiles)
+	log.Printf("[query%d-orchestrator] [Q%d] Orchestrator initialized with %d expected files",
+		gbo.config.QueryType, gbo.config.QueryType, gbo.totalExpectedFiles)
 }
 
 // ProcessChunkNotification processes a chunk notification from a map worker
@@ -142,18 +142,17 @@ func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *signals.C
 	// Increment chunks received
 	fileStatus.ChunksReceived++
 
-	log.Printf("Client %s - File %s (Table %d): Received chunk %d/%d (Total chunks: %d)",
-		notification.ClientID, notification.FileID, notification.TableID,
-		notification.ChunkNumber, fileStatus.LastChunkNumber,
-		fileStatus.ChunksReceived)
+	log.Printf("[query%d-orchestrator] [CLI%s | Q%d] File %s (Table %d): Received chunk %d/%d (Total chunks: %d)",
+		gbo.config.QueryType, notification.ClientID, gbo.config.QueryType, notification.FileID, notification.TableID,
+		notification.ChunkNumber, fileStatus.LastChunkNumber, fileStatus.ChunksReceived)
 
 	// If this is the last chunk, update last chunk info
 	if notification.IsLastChunk {
 		fileStatus.LastChunkNumber = notification.ChunkNumber
 		fileStatus.LastChunkReceived = true
 
-		log.Printf("Client %s - File %s (Table %d): Received LAST chunk %d",
-			notification.ClientID, notification.FileID, notification.TableID, notification.ChunkNumber)
+		log.Printf("[query%d-orchestrator] [CLI%s | Q%d] File %s (Table %d): Received LAST chunk %d",
+			gbo.config.QueryType, notification.ClientID, gbo.config.QueryType, notification.FileID, notification.TableID, notification.ChunkNumber)
 
 		// Check if file is completed
 		if fileStatus.ChunksReceived == notification.ChunkNumber {
@@ -168,8 +167,8 @@ func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *signals.C
 
 	// Check if all files are completed for this client
 	if clientStatus.CompletedFiles >= gbo.totalExpectedFiles {
-		log.Printf("Client %s: All %d files completed! Sending termination signals...",
-			notification.ClientID, gbo.totalExpectedFiles)
+		log.Printf("[query%d-orchestrator] [CLI%s | Q%d] ✅ All %d files completed! Sending termination signals...",
+			gbo.config.QueryType, notification.ClientID, gbo.config.QueryType, gbo.totalExpectedFiles)
 		gbo.sendTerminationSignals(notification.ClientID)
 		clientStatus.IsCompleted = true
 	}
@@ -187,8 +186,8 @@ func (gbo *GroupByOrchestrator) completeFileForClient(clientID, fileKey string, 
 	clientStatus := gbo.clientStatuses[clientID]
 	clientStatus.CompletedFiles++
 
-	log.Printf("✅ Client %s - File %s (Table %d) COMPLETED! (%d/%d files completed)",
-		clientID, fileStatus.FileID, fileStatus.TableID, clientStatus.CompletedFiles, gbo.totalExpectedFiles)
+	log.Printf("[query%d-orchestrator] [CLI%s | Q%d] ✅ File %s (Table %d) COMPLETED! (%d/%d files completed)",
+		gbo.config.QueryType, clientID, gbo.config.QueryType, fileStatus.FileID, fileStatus.TableID, clientStatus.CompletedFiles, gbo.totalExpectedFiles)
 }
 
 // sendTerminationSignals sends termination signals to all map and reduce workers
@@ -207,42 +206,42 @@ func (gbo *GroupByOrchestrator) sendTerminationSignals(clientID string) {
 	}
 
 	// Send to map workers
-	log.Printf("Sending termination signal to map workers for Query %d", gbo.config.QueryType)
+	log.Printf("[query%d-orchestrator] [CLI%s | Q%d] Sending termination signal to map workers", gbo.config.QueryType, clientID, gbo.config.QueryType)
 	if err := gbo.terminationProducer.Send(signalData, []string{}); err != 0 {
-		log.Printf("Failed to send termination signal to map workers: %v", err)
+		log.Printf("[query%d-orchestrator] [CLI%s | Q%d] Failed to send termination signal to map workers: %v", gbo.config.QueryType, clientID, gbo.config.QueryType, err)
 	}
 
-	log.Printf("Termination signals sent successfully for Query %d", gbo.config.QueryType)
+	log.Printf("[query%d-orchestrator] [CLI%s | Q%d] ✅ Termination signals sent successfully", gbo.config.QueryType, clientID, gbo.config.QueryType)
 }
 
 // Start starts the orchestrator
 func (gbo *GroupByOrchestrator) Start() {
-	log.Printf("Starting Group By Orchestrator for Query %d...", gbo.config.QueryType)
+	log.Printf("[query%d-orchestrator] [Q%d] Starting Group By Orchestrator...", gbo.config.QueryType, gbo.config.QueryType)
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		log.Printf("Orchestrator started consuming chunk notifications")
+		log.Printf("[query%d-orchestrator] [Q%d] Started consuming chunk notifications", gbo.config.QueryType, gbo.config.QueryType)
 
 		for delivery := range *consumeChannel {
-			log.Printf("Received chunk notification: %d bytes", len(delivery.Body))
+			log.Printf("[query%d-orchestrator] [Q%d] Received chunk notification: %d bytes", gbo.config.QueryType, gbo.config.QueryType, len(delivery.Body))
 
 			// Deserialize chunk notification using protocol
 			message, err := deserializer.Deserialize(delivery.Body)
 			if err != nil {
-				log.Printf("Failed to deserialize chunk notification: %v", err)
+				log.Printf("[query%d-orchestrator] [Q%d] Failed to deserialize chunk notification: %v", gbo.config.QueryType, gbo.config.QueryType, err)
 				delivery.Ack(false)
 				continue
 			}
 
 			notification, ok := message.(*signals.ChunkNotification)
 			if !ok {
-				log.Printf("Received message is not a ChunkNotification: %T", message)
+				log.Printf("[query%d-orchestrator] [Q%d] Received message is not a ChunkNotification: %T", gbo.config.QueryType, gbo.config.QueryType, message)
 				delivery.Ack(false)
 				continue
 			}
 
 			// Process the notification
 			if err := gbo.ProcessChunkNotification(notification); err != nil {
-				log.Printf("Failed to process chunk notification: %v", err)
+				log.Printf("[query%d-orchestrator] [CLI%s | Q%d] Failed to process chunk notification: %v", gbo.config.QueryType, notification.ClientID, gbo.config.QueryType, err)
 				delivery.Ack(false)
 				continue
 			}
@@ -258,7 +257,7 @@ func (gbo *GroupByOrchestrator) Start() {
 		log.Fatalf("Failed to start consuming chunk notifications: %v", err)
 	}
 
-	log.Printf("Successfully started consuming from queue: %s", queueName)
+	log.Printf("[query%d-orchestrator] [Q%d] Successfully started consuming from queue: %s", gbo.config.QueryType, gbo.config.QueryType, queueName)
 }
 
 // Close closes the orchestrator

@@ -254,6 +254,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY2_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s2-2023"]
     profiles: ["orchestration"]
 
@@ -272,6 +273,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY2_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s1-2024"]
     profiles: ["orchestration"]
 
@@ -290,6 +292,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY2_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s2-2024"]
     profiles: ["orchestration"]
 
@@ -308,6 +311,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY2_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s1-2025"]
     profiles: ["orchestration"]
 
@@ -326,6 +330,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY2_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s2-2025"]
     profiles: ["orchestration"]
 
@@ -386,6 +391,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY3_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s2-2023"]
     profiles: ["orchestration"]
 
@@ -404,6 +410,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY3_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s1-2024"]
     profiles: ["orchestration"]
 
@@ -422,6 +429,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY3_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s2-2024"]
     profiles: ["orchestration"]
 
@@ -440,6 +448,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY3_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s1-2025"]
     profiles: ["orchestration"]
 
@@ -458,6 +467,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY3_EXPECTED_MAP_WORKERS: 1
     command: ["./reduce-worker-s2-2025"]
     profiles: ["orchestration"]
 
