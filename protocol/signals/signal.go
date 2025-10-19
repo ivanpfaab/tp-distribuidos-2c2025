@@ -137,36 +137,38 @@ func DeserializeGroupByCompletionSignal(data []byte) (*GroupByCompletionSignal, 
 // ChunkNotification represents a notification from a map worker to the orchestrator
 // about chunk processing completion
 type ChunkNotification struct {
-	Header      common.Header
-	ClientID    string
-	FileID      string
-	TableID     int
-	ChunkNumber int
-	IsLastChunk bool
-	MapWorkerID string
+	Header          common.Header
+	ClientID        string
+	FileID          string
+	TableID         int
+	ChunkNumber     int
+	IsLastChunk     bool
+	IsLastFromTable bool
+	MapWorkerID     string
 }
 
 // NewChunkNotification creates a new ChunkNotification
-func NewChunkNotification(clientID, fileID, mapWorkerID string, tableID, chunkNumber int, isLastChunk bool) *ChunkNotification {
+func NewChunkNotification(clientID, fileID, mapWorkerID string, tableID, chunkNumber int, isLastChunk, isLastFromTable bool) *ChunkNotification {
 	return &ChunkNotification{
 		Header: common.Header{
 			HeaderLength: 0,
 			TotalLength:  0,
 			MsgTypeID:    ChunkNotificationType,
 		},
-		ClientID:    clientID,
-		FileID:      fileID,
-		TableID:     tableID,
-		ChunkNumber: chunkNumber,
-		IsLastChunk: isLastChunk,
-		MapWorkerID: mapWorkerID,
+		ClientID:        clientID,
+		FileID:          fileID,
+		TableID:         tableID,
+		ChunkNumber:     chunkNumber,
+		IsLastChunk:     isLastChunk,
+		IsLastFromTable: isLastFromTable,
+		MapWorkerID:     mapWorkerID,
 	}
 }
 
 // SerializeChunkNotification serializes a ChunkNotification to bytes
 func SerializeChunkNotification(notification *ChunkNotification) ([]byte, error) {
 	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize +
-		ClientIDSize + FileIDSize + TableIDSize + ChunkNumberSize + 1 + MapWorkerIDSize // +1 for IsLastChunk bool
+		ClientIDSize + FileIDSize + TableIDSize + ChunkNumberSize + 1 + 1 + MapWorkerIDSize // +1 for IsLastChunk, +1 for IsLastFromTable
 	totalLength := headerLength
 
 	buf := make([]byte, totalLength)
@@ -212,6 +214,14 @@ func SerializeChunkNotification(notification *ChunkNotification) ([]byte, error)
 	}
 	offset += 1
 
+	// IsLastFromTable
+	if notification.IsLastFromTable {
+		buf[offset] = 1
+	} else {
+		buf[offset] = 0
+	}
+	offset += 1
+
 	// MapWorkerID
 	if len(notification.MapWorkerID) > MapWorkerIDSize {
 		return nil, fmt.Errorf("map_worker_id too long: %d bytes, max %d", len(notification.MapWorkerID), MapWorkerIDSize)
@@ -223,7 +233,7 @@ func SerializeChunkNotification(notification *ChunkNotification) ([]byte, error)
 
 // DeserializeChunkNotification deserializes bytes to a ChunkNotification
 func DeserializeChunkNotification(data []byte) (*ChunkNotification, error) {
-	if len(data) < common.HeaderLengthSize+common.TotalLengthSize+common.MsgTypeIDSize+ClientIDSize+FileIDSize+TableIDSize+ChunkNumberSize+1+MapWorkerIDSize {
+	if len(data) < common.HeaderLengthSize+common.TotalLengthSize+common.MsgTypeIDSize+ClientIDSize+FileIDSize+TableIDSize+ChunkNumberSize+1+1+MapWorkerIDSize {
 		return nil, fmt.Errorf("data too short for ChunkNotification")
 	}
 
@@ -263,6 +273,10 @@ func DeserializeChunkNotification(data []byte) (*ChunkNotification, error) {
 	isLastChunk := data[offset] == 1
 	offset += 1
 
+	// IsLastFromTable
+	isLastFromTable := data[offset] == 1
+	offset += 1
+
 	// MapWorkerID
 	mapWorkerID := string(data[offset : offset+MapWorkerIDSize])
 
@@ -272,12 +286,13 @@ func DeserializeChunkNotification(data []byte) (*ChunkNotification, error) {
 			TotalLength:  int32(totalLength),
 			MsgTypeID:    msgTypeID,
 		},
-		ClientID:    clientID,
-		FileID:      fileID,
-		TableID:     tableID,
-		ChunkNumber: chunkNumber,
-		IsLastChunk: isLastChunk,
-		MapWorkerID: mapWorkerID,
+		ClientID:        clientID,
+		FileID:          fileID,
+		TableID:         tableID,
+		ChunkNumber:     chunkNumber,
+		IsLastChunk:     isLastChunk,
+		IsLastFromTable: isLastFromTable,
+		MapWorkerID:     mapWorkerID,
 	}, nil
 }
 

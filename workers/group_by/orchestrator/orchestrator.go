@@ -25,10 +25,12 @@ type FileStatus struct {
 
 // ClientStatus represents the status of a client's data processing
 type ClientStatus struct {
-	ClientID       string
-	FileStatuses   map[string]*FileStatus // Key: "fileID_tableID"
-	CompletedFiles int
-	IsCompleted    bool
+	ClientID            string
+	FileStatuses        map[string]*FileStatus // Key: "fileID_tableID"
+	CompletedFiles      int
+	TotalExpectedFiles  int  // Dynamically inferred from IsLastFromTable
+	ExpectedFilesKnown  bool // Whether we've inferred the total expected files yet
+	IsCompleted         bool
 }
 
 // ChunkNotification is now defined in the protocol/signals package
@@ -44,7 +46,6 @@ type TerminationSignal struct {
 type GroupByOrchestrator struct {
 	config              *OrchestratorConfig
 	clientStatuses      map[string]*ClientStatus // Key: clientID
-	totalExpectedFiles  int
 	chunkConsumer       *workerqueue.QueueConsumer
 	terminationProducer *exchange.ExchangeMiddleware
 	mutex               sync.RWMutex
@@ -54,12 +55,10 @@ type GroupByOrchestrator struct {
 func NewGroupByOrchestrator(queryType int) *GroupByOrchestrator {
 	log.Printf("NewGroupByOrchestrator: Query Type %d", queryType)
 	config := NewOrchestratorConfig(queryType)
-	totalExpectedFiles := GetTotalExpectedFiles(queryType)
 
 	orchestrator := &GroupByOrchestrator{
-		config:             config,
-		clientStatuses:     make(map[string]*ClientStatus),
-		totalExpectedFiles: totalExpectedFiles,
+		config:         config,
+		clientStatuses: make(map[string]*ClientStatus),
 	}
 
 	orchestrator.initializeQueues()
@@ -103,8 +102,8 @@ func (gbo *GroupByOrchestrator) initializeQueues() {
 		log.Fatalf("Failed to declare termination exchange: %v", err)
 	}
 
-	log.Printf("Orchestrator initialized for Query %d with %d expected files",
-		gbo.config.QueryType, gbo.totalExpectedFiles)
+	log.Printf("Orchestrator initialized for Query %d (expected files will be inferred dynamically)",
+		gbo.config.QueryType)
 }
 
 // ProcessChunkNotification processes a chunk notification from a map worker
@@ -115,10 +114,12 @@ func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *signals.C
 	// Initialize client status if not exists
 	if gbo.clientStatuses[notification.ClientID] == nil {
 		gbo.clientStatuses[notification.ClientID] = &ClientStatus{
-			ClientID:       notification.ClientID,
-			FileStatuses:   make(map[string]*FileStatus),
-			CompletedFiles: 0,
-			IsCompleted:    false,
+			ClientID:           notification.ClientID,
+			FileStatuses:       make(map[string]*FileStatus),
+			CompletedFiles:     0,
+			TotalExpectedFiles: 0,
+			ExpectedFilesKnown: false,
+			IsCompleted:        false,
 		}
 	}
 
@@ -166,10 +167,29 @@ func (gbo *GroupByOrchestrator) ProcessChunkNotification(notification *signals.C
 		}
 	}
 
-	// Check if all files are completed for this client
-	if clientStatus.CompletedFiles >= gbo.totalExpectedFiles {
+	// Infer total expected files from IsLastFromTable if not already known
+	if notification.IsLastFromTable && !clientStatus.ExpectedFilesKnown {
+		// FileID has 4 characters, last 2 are the file number
+		if len(notification.FileID) >= 2 {
+			fileNumberStr := notification.FileID[len(notification.FileID)-2:]
+			// Parse the file number (e.g., "01" -> 1, "05" -> 5)
+			var fileNumber int
+			if _, err := fmt.Sscanf(fileNumberStr, "%d", &fileNumber); err == nil {
+				clientStatus.TotalExpectedFiles = fileNumber
+				clientStatus.ExpectedFilesKnown = true
+				log.Printf("Client %s: Inferred total expected files = %d from FileID %s",
+					notification.ClientID, fileNumber, notification.FileID)
+			} else {
+				log.Printf("Client %s: Failed to parse file number from FileID %s: %v",
+					notification.ClientID, notification.FileID, err)
+			}
+		}
+	}
+
+	// Check if all files are completed for this client (only if we know the expected count)
+	if clientStatus.ExpectedFilesKnown && clientStatus.CompletedFiles >= clientStatus.TotalExpectedFiles {
 		log.Printf("Client %s: All %d files completed! Sending termination signals...",
-			notification.ClientID, gbo.totalExpectedFiles)
+			notification.ClientID, clientStatus.TotalExpectedFiles)
 		gbo.sendTerminationSignals(notification.ClientID)
 		clientStatus.IsCompleted = true
 	}
@@ -187,8 +207,13 @@ func (gbo *GroupByOrchestrator) completeFileForClient(clientID, fileKey string, 
 	clientStatus := gbo.clientStatuses[clientID]
 	clientStatus.CompletedFiles++
 
-	log.Printf("✅ Client %s - File %s (Table %d) COMPLETED! (%d/%d files completed)",
-		clientID, fileStatus.FileID, fileStatus.TableID, clientStatus.CompletedFiles, gbo.totalExpectedFiles)
+	if clientStatus.ExpectedFilesKnown {
+		log.Printf("✅ Client %s - File %s (Table %d) COMPLETED! (%d/%d files completed)",
+			clientID, fileStatus.FileID, fileStatus.TableID, clientStatus.CompletedFiles, clientStatus.TotalExpectedFiles)
+	} else {
+		log.Printf("✅ Client %s - File %s (Table %d) COMPLETED! (%d files completed, total expected unknown yet)",
+			clientID, fileStatus.FileID, fileStatus.TableID, clientStatus.CompletedFiles)
+	}
 }
 
 // sendTerminationSignals sends termination signals to all map and reduce workers
