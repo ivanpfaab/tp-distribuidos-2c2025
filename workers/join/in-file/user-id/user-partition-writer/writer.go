@@ -97,11 +97,6 @@ func (upw *UserPartitionWriter) Start() middleware.MessageMiddlewareError {
 	fmt.Printf("User Partition Writer %d: Starting to listen on queue %s...\n",
 		upw.writerConfig.WriterID, queueName)
 
-	// Start cleanup consumer
-	if err := upw.cleanupConsumer.StartConsuming(upw.createCleanupCallback()); err != 0 {
-		fmt.Printf("User Partition Writer %d: Failed to start cleanup consumer: %v\n", upw.writerConfig.WriterID, err)
-	}
-
 	return upw.consumer.StartConsuming(upw.createCallback())
 }
 
@@ -146,18 +141,6 @@ func (upw *UserPartitionWriter) createCallback() func(middleware.ConsumeChannel,
 	}
 }
 
-// createCleanupCallback creates the cleanup message processing callback
-func (upw *UserPartitionWriter) createCleanupCallback() func(middleware.ConsumeChannel, chan error) {
-	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		for delivery := range *consumeChannel {
-			err := upw.processCleanupMessage(delivery)
-			if err != 0 {
-				done <- fmt.Errorf("failed to process cleanup message: %v", err)
-				return
-			}
-		}
-	}
-}
 
 // processQueueMessage processes messages from queue with type detection
 func (upw *UserPartitionWriter) processQueueMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
@@ -172,93 +155,10 @@ func (upw *UserPartitionWriter) processQueueMessage(delivery amqp.Delivery) midd
 	switch msgType {
 	case common.ChunkMessageType: // Type 2
 		return upw.processMessage(delivery)
-	case common.JoinCleanupSignalType: // Type 6
-		return upw.processCleanupMessage(delivery)
 	default:
 		fmt.Printf("User Partition Writer %d: Unknown message type: %d\n", upw.writerConfig.WriterID, msgType)
 		return middleware.MessageMiddlewareMessageError
 	}
-}
-
-// processCleanupMessage processes cleanup signals with double-cleanup logic
-func (upw *UserPartitionWriter) processCleanupMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the cleanup signal
-	cleanupSignal, err := signals.DeserializeJoinCleanupSignal(delivery.Body)
-	if err != nil {
-		fmt.Printf("User Partition Writer %d: Failed to deserialize cleanup signal: %v\n", upw.writerConfig.WriterID, err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	fmt.Printf("User Partition Writer %d: Processing cleanup for client: %s\n", upw.writerConfig.WriterID, cleanupSignal.ClientID)
-
-	// Process cleanup (idempotent operation)
-	upw.performCleanup(cleanupSignal.ClientID)
-
-	// Only requeue if this came from the exchange consumer (not from queue consumer)
-	// We can detect this by checking if the delivery has exchange routing info
-	if delivery.Exchange != "" {
-		// This came from exchange consumer - requeue for double-cleanup
-		serializedMsg, err := signals.SerializeJoinCleanupSignal(cleanupSignal)
-		if err != nil {
-			fmt.Printf("User Partition Writer %d: Failed to serialize cleanup signal for requeue: %v\n", upw.writerConfig.WriterID, err)
-			return middleware.MessageMiddlewareMessageError
-		}
-
-		// Send cleanup message to same queue
-		if err := upw.queueProducer.Send(serializedMsg); err != 0 {
-			fmt.Printf("User Partition Writer %d: Failed to requeue cleanup signal: %v\n", upw.writerConfig.WriterID, err)
-			return err
-		}
-
-		fmt.Printf("User Partition Writer %d: Requeued cleanup signal for client: %s\n", upw.writerConfig.WriterID, cleanupSignal.ClientID)
-	} else {
-		// This came from queue consumer - don't requeue to avoid infinite loop
-		fmt.Printf("User Partition Writer %d: Processed cleanup from queue for client: %s (no requeue)\n", upw.writerConfig.WriterID, cleanupSignal.ClientID)
-	}
-
-	return 0
-}
-
-// performCleanup performs cleanup operations (idempotent)
-func (upw *UserPartitionWriter) performCleanup(clientID string) {
-	fmt.Printf("User Partition Writer %d: Performing cleanup for client: %s\n", upw.writerConfig.WriterID, clientID)
-
-	// Clean up client-specific state
-	upw.clientMutex.Lock()
-	defer upw.clientMutex.Unlock()
-
-	// Mark client as stopped
-	upw.stoppedClients[clientID] = true
-
-	// Clean up partition files for this client
-	upw.cleanupClientFiles(clientID)
-
-	fmt.Printf("User Partition Writer %d: Completed cleanup for client: %s\n", upw.writerConfig.WriterID, clientID)
-}
-
-// cleanupClientFiles deletes all partition files for a specific client
-func (upw *UserPartitionWriter) cleanupClientFiles(clientID string) {
-	// Delete all partition files for this client from the shared data directory
-	pattern := filepath.Join(SharedDataDir, fmt.Sprintf("%s-users-partition-*.csv", clientID))
-	fmt.Printf("User Partition Writer %d: Looking for files with pattern: %s\n", upw.writerConfig.WriterID, pattern)
-
-	files, err := filepath.Glob(pattern)
-	if err != nil {
-		fmt.Printf("User Partition Writer %d: Error finding files for client %s: %v\n", upw.writerConfig.WriterID, clientID, err)
-		return
-	}
-
-	fmt.Printf("User Partition Writer %d: Found %d files for client %s: %v\n", upw.writerConfig.WriterID, len(files), clientID, files)
-
-	for _, file := range files {
-		if err := os.Remove(file); err != nil {
-			fmt.Printf("User Partition Writer %d: Error deleting file %s: %v\n", upw.writerConfig.WriterID, file, err)
-		} else {
-			fmt.Printf("User Partition Writer %d: Deleted file %s for client %s\n", upw.writerConfig.WriterID, file, clientID)
-		}
-	}
-
-	fmt.Printf("User Partition Writer %d: Cleaned up %d files for client %s\n", upw.writerConfig.WriterID, len(files), clientID)
 }
 
 // processMessage processes a single user chunk
@@ -397,12 +297,6 @@ func (upw *UserPartitionWriter) appendUserToPartition(partition int, record []st
 	if err := writer.Write(record); err != nil {
 		return fmt.Errorf("failed to write record: %w", err)
 	}
-
-	// Ensure data is written to disk before returning
-//	if err := file.Sync(); err != nil {
-//		return fmt.Errorf("failed to sync file to disk: %w", err)
-//	}
-
 	return nil
 }
 
