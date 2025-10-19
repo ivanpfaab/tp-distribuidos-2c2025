@@ -34,7 +34,7 @@ type ClientBufferWorker struct {
 	Chunks       []*chunk.Chunk  // Buffered chunks
 	TopUsers     []TopUserRecord // Parsed top users from chunks
 	ChunkCounter int             // Sequential chunk numbering for output
-	Ready        bool            // True when completion signal received
+	Ready        bool            // True when completion signal received (files are written)
 }
 
 // JoinByUserIdWorker handles joining top users data with user data from CSV files
@@ -267,13 +267,10 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 	fmt.Printf("Join by User ID Worker: Buffered chunk for client %s (chunks: %d, users: %d)\n",
 		chunkMsg.ClientID, len(clientBuffer.Chunks), len(clientBuffer.TopUsers))
 
-	// If this is the last chunk, mark as ready for processing
+	// Just log when last chunk is received - no processing yet
 	if chunkMsg.IsLastChunk {
-		clientBuffer.Ready = true
-		fmt.Printf("Join by User ID Worker: Client %s marked ready with %d buffered users\n",
+		fmt.Printf("Join by User ID Worker: Client %s last chunk received with %d buffered users\n",
 			chunkMsg.ClientID, len(clientBuffer.TopUsers))
-		// Try to process immediately if files are ready
-		jw.processClientIfReady(chunkMsg.ClientID)
 	}
 
 	delivery.Ack(false)
@@ -292,21 +289,22 @@ func (jw *JoinByUserIdWorker) processCompletionSignal(delivery amqp.Delivery) mi
 
 	fmt.Printf("Join by User ID Worker: Received completion signal for client %s\n", completionSignal.ClientID)
 
-	// Mark client as ready and try to process
+	// Mark as ready and process immediately
 	jw.bufferMutex.Lock()
 	if clientBuffer, exists := jw.clientBuffers[completionSignal.ClientID]; exists {
 		clientBuffer.Ready = true
-		fmt.Printf("Join by User ID Worker: Client %s marked ready for processing\n", completionSignal.ClientID)
-		// Process immediately
-		jw.processClientIfReady(completionSignal.ClientID)
+		fmt.Printf("Join by User ID Worker: Client %s ready for processing\n", completionSignal.ClientID)
 	}
 	jw.bufferMutex.Unlock()
+	
+	// Process outside the lock to avoid deadlock
+	jw.processClientIfReady(completionSignal.ClientID)
 
 	delivery.Ack(false)
 	return 0
 }
 
-// processClientIfReady processes a client if it's ready and files are available
+// processClientIfReady processes a client when completion signal is received
 func (jw *JoinByUserIdWorker) processClientIfReady(clientID string) {
 	jw.bufferMutex.Lock()
 	clientBuffer, exists := jw.clientBuffers[clientID]
@@ -316,7 +314,7 @@ func (jw *JoinByUserIdWorker) processClientIfReady(clientID string) {
 	}
 	jw.bufferMutex.Unlock()
 
-	// Files are ready (we got the signal), so join all users
+	// Completion signal received - files are ready, so join all users
 	if err := jw.sendJoinedChunk(clientID, clientBuffer, clientBuffer.TopUsers, true); err != 0 {
 		fmt.Printf("Join by User ID Worker: Failed to send joined chunk for client %s: %v\n", clientID, err)
 	} else {

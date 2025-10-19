@@ -228,7 +228,7 @@ func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk
 		FileID:          originalChunk.FileID,
 		QueryType:       originalChunk.QueryType,
 		ChunkNumber:     (originalChunk.ChunkNumber-1) * ups.splitterConfig.NumWriters + (writerID+1),
-		IsLastChunk:     originalChunk.IsLastFromTable && writerID == ups.splitterConfig.NumWriters-1,
+		IsLastChunk:     originalChunk.IsLastChunk && writerID == ups.splitterConfig.NumWriters-1,
 		IsLastFromTable: originalChunk.IsLastFromTable && writerID == ups.splitterConfig.NumWriters-1,
 		Step:            originalChunk.Step,
 		ChunkSize:       len(ups.buffers[writerID]),
@@ -255,16 +255,6 @@ func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk
 	// Clear buffer
 	ups.buffers[writerID] = ups.buffers[writerID][:0]
 
-	return 0
-}
-
-// flushAllBuffers flushes all writer buffers
-func (ups *UserPartitionSplitter) flushAllBuffers(originalChunk *chunk.Chunk) middleware.MessageMiddlewareError {
-	for writerID := 0; writerID < ups.splitterConfig.NumWriters; writerID++ {
-		if err := ups.flushBuffer(writerID, originalChunk); err != 0 {
-			return err
-		}
-	}
 	return 0
 }
 

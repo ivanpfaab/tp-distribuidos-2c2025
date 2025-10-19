@@ -399,9 +399,9 @@ func (upw *UserPartitionWriter) appendUserToPartition(partition int, record []st
 	}
 
 	// Ensure data is written to disk before returning
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("failed to sync file to disk: %w", err)
-	}
+//	if err := file.Sync(); err != nil {
+//		return fmt.Errorf("failed to sync file to disk: %w", err)
+//	}
 
 	return nil
 }
