@@ -5,6 +5,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -146,39 +147,74 @@ func (imo *InMemoryJoinOrchestrator) createCallback() func(middleware.ConsumeCha
 
 // processChunkNotification processes a chunk completion notification
 func (imo *InMemoryJoinOrchestrator) processChunkNotification(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+	// Deserialize the message using the deserializer
+	message, err := deserializer.Deserialize(delivery.Body)
 	if err != nil {
-		fmt.Printf("In-Memory Join Orchestrator: Failed to deserialize chunk message: %v\n", err)
+		fmt.Printf("In-Memory Join Orchestrator: Failed to deserialize message: %v\n", err)
 		delivery.Ack(false)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	fmt.Printf("In-Memory Join Orchestrator: Received chunk - ClientID: %s, QueryType: %d, IsLastChunk: %t\n",
-		chunkMsg.ClientID, chunkMsg.QueryType, chunkMsg.IsLastChunk)
+	// Handle different message types
+	switch msg := message.(type) {
+	case *signals.ChunkNotification:
+		// Handle chunk notification from join workers
+		fmt.Printf("In-Memory Join Orchestrator: Received chunk notification - ClientID: %s, FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
+			msg.ClientID, msg.FileID, msg.ChunkNumber, msg.IsLastChunk)
 
-	// Create chunk notification
-	notification := &signals.ChunkNotification{
-		ClientID:        chunkMsg.ClientID,
-		FileID:          chunkMsg.FileID,
-		TableID:         int(chunkMsg.TableID),
-		ChunkNumber:     int(chunkMsg.ChunkNumber),
-		IsLastChunk:     chunkMsg.IsLastChunk,
-		IsLastFromTable: chunkMsg.IsLastFromTable,
-		MapWorkerID:     imo.workerID,
-	}
+		// Process chunk notification using completion tracker
+		err = imo.completionTracker.ProcessChunkNotification(msg)
+		if err != nil {
+			fmt.Printf("In-Memory Join Orchestrator: Failed to process chunk notification: %v\n", err)
+			delivery.Ack(false)
+			return middleware.MessageMiddlewareMessageError
+		}
 
-	// Process chunk notification using completion tracker
-	err = imo.completionTracker.ProcessChunkNotification(notification)
-	if err != nil {
-		fmt.Printf("In-Memory Join Orchestrator: Failed to process chunk notification: %v\n", err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
+		// Check if client is completed
+		if imo.completionTracker.IsClientCompleted(msg.ClientID) {
+			// Infer query type from file ID patterns
+			queryType := imo.inferQueryTypeFromFileID(msg.FileID)
+			imo.onClientCompletion(msg.ClientID, queryType)
+		}
 
-	// Check if client is completed
-	if imo.completionTracker.IsClientCompleted(chunkMsg.ClientID) {
-		imo.onClientCompletion(chunkMsg.ClientID, int(chunkMsg.QueryType))
+	case *chunk.Chunk:
+		// Handle chunk message (fallback for direct chunk messages)
+		fmt.Printf("In-Memory Join Orchestrator: Received chunk - ClientID: %s, QueryType: %d, IsLastChunk: %t\n",
+			msg.ClientID, msg.QueryType, msg.IsLastChunk)
+
+		// Create chunk notification
+		notification := &signals.ChunkNotification{
+			ClientID:        msg.ClientID,
+			FileID:          msg.FileID,
+			TableID:         int(msg.TableID),
+			ChunkNumber:     int(msg.ChunkNumber),
+			IsLastChunk:     msg.IsLastChunk,
+			IsLastFromTable: msg.IsLastFromTable,
+			MapWorkerID:     imo.workerID,
+		}
+
+		// Process chunk notification using completion tracker
+		err = imo.completionTracker.ProcessChunkNotification(notification)
+		if err != nil {
+			fmt.Printf("In-Memory Join Orchestrator: Failed to process chunk notification: %v\n", err)
+			delivery.Ack(false)
+			return middleware.MessageMiddlewareMessageError
+		}
+
+		// Check if client is completed
+		if imo.completionTracker.IsClientCompleted(msg.ClientID) {
+			imo.onClientCompletion(msg.ClientID, int(msg.QueryType))
+		}
+
+	case *signals.JoinCompletionSignal:
+		// Handle completion signal from join workers
+		fmt.Printf("In-Memory Join Orchestrator: Received completion signal for client %s\n", msg.ClientID)
+
+		// For now, just acknowledge - the completion tracker should handle this
+		// In the future, we might want to track completion signals differently
+
+	default:
+		fmt.Printf("In-Memory Join Orchestrator: Received unknown message type: %T\n", message)
 	}
 
 	delivery.Ack(false)
@@ -239,4 +275,25 @@ func getResourceType(queryType int) string {
 	default:
 		return "unknown"
 	}
+}
+
+// inferQueryTypeFromFileID infers the query type from file ID patterns
+func (imo *InMemoryJoinOrchestrator) inferQueryTypeFromFileID(fileID string) int {
+	// File ID patterns:
+	// Query 2 (ItemID): Files start with "I" (e.g., "I001", "I002")
+	// Query 3 (StoreID): Files start with "S" (e.g., "S001", "S002")
+	// Query 4 (UserID): Files start with "U" (e.g., "U001", "U002")
+
+	if len(fileID) > 0 {
+		switch fileID[0] {
+		case 'I':
+			return 2 // ItemID join
+		case 'S':
+			return 3 // StoreID join
+		case 'U':
+			return 4 // UserID join
+		}
+	}
+
+	return 0 // Unknown
 }
