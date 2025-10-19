@@ -69,6 +69,14 @@ USER_PARTITION_WRITERS=$(prompt_worker_count "user-partition-writer" 5)
 USER_JOIN_READERS=$(prompt_worker_count "user-join-reader" 2)
 
 echo ""
+echo -e "${BLUE}Configure Group By Partitioners (distributes data by query type)${NC}"
+echo ""
+
+GROUP_BY_PARTITIONER_Q2_COUNT=$(prompt_worker_count "group-by-partitioner-q2" 1)
+GROUP_BY_PARTITIONER_Q3_COUNT=$(prompt_worker_count "group-by-partitioner-q3" 1)
+GROUP_BY_PARTITIONER_Q4_COUNT=$(prompt_worker_count "group-by-partitioner-q4" 1)
+
+echo ""
 echo -e "${BLUE}Configure Clients${NC}"
 echo ""
 
@@ -856,6 +864,10 @@ generate_user_join_readers $USER_JOIN_READERS
 echo -e "${BLUE}Generating query gateways...${NC}"
 generate_query_gateway $QUERY_GATEWAY_COUNT
 
+# Generate group-by partitioners
+echo -e "${BLUE}Generating group-by partitioners...${NC}"
+generate_group_by_partitioners $GROUP_BY_PARTITIONER_Q2_COUNT $GROUP_BY_PARTITIONER_Q3_COUNT $GROUP_BY_PARTITIONER_Q4_COUNT
+
 # Generate server service with dependencies on all filter workers
 generate_server_dependencies() {
     echo "  # Core application (data flow services)"
@@ -979,6 +991,106 @@ generate_server_dependencies() {
 }
 
 generate_server_dependencies >> docker-compose.yaml
+
+# Function to generate group-by partitioner services
+generate_group_by_partitioners() {
+    local q2_count=$1
+    local q3_count=$2
+    local q4_count=$3
+    
+    # Generate Query 2 partitioners
+    for i in $(seq 1 $q2_count); do
+        local container_name
+        if [ $i -eq 1 ]; then
+            container_name="group-by-partitioner-q2"
+        else
+            container_name="group-by-partitioner-q2-${i}"
+        fi
+        
+        cat >> docker-compose.yaml << EOF
+  # Group By Partitioner for Query 2 - Instance ${i}
+  group-by-partitioner-q2-${i}:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: ${container_name}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      QUERY_TYPE: "2"
+      NUM_PARTITIONS: "3"
+      MAX_BUFFER_SIZE: "1000"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["group-by"]
+EOF
+    done
+    
+    # Generate Query 3 partitioners
+    for i in $(seq 1 $q3_count); do
+        local container_name
+        if [ $i -eq 1 ]; then
+            container_name="group-by-partitioner-q3"
+        else
+            container_name="group-by-partitioner-q3-${i}"
+        fi
+        
+        cat >> docker-compose.yaml << EOF
+  # Group By Partitioner for Query 3 - Instance ${i}
+  group-by-partitioner-q3-${i}:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: ${container_name}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      QUERY_TYPE: "3"
+      NUM_PARTITIONS: "3"
+      MAX_BUFFER_SIZE: "1000"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["group-by"]
+EOF
+    done
+    
+    # Generate Query 4 partitioners
+    for i in $(seq 1 $q4_count); do
+        local container_name
+        if [ $i -eq 1 ]; then
+            container_name="group-by-partitioner-q4"
+        else
+            container_name="group-by-partitioner-q4-${i}"
+        fi
+        
+        cat >> docker-compose.yaml << EOF
+  # Group By Partitioner for Query 4 - Instance ${i}
+  group-by-partitioner-q4-${i}:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: ${container_name}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      QUERY_TYPE: "4"
+      NUM_PARTITIONS: "100"
+      MAX_BUFFER_SIZE: "1000"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["group-by"]
+EOF
+    done
+}
 
 # Function to generate client services
 generate_clients() {
