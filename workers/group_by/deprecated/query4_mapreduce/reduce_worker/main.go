@@ -235,6 +235,7 @@ func (rw *ReduceWorker) FinalizeResultsForClient(clientID string) error {
 		4,        // Query Type 4
 		1,        // Chunk Number
 		true,     // Is Last Chunk
+		true,     // Is Last File (final results)
 		2,        // Step 2 for final results
 		len(csvData),
 		1, // Table ID 1 for transactions

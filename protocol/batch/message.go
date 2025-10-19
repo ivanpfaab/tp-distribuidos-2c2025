@@ -8,12 +8,13 @@ import (
 )
 
 const (
-	MessageType     = 1
-	ClientIDSize    = 4
-	FileIDSize      = 4
-	IsEOFSize       = 1
-	BatchNumberSize = 4
-	BatchSizeSize   = 4
+	MessageType         = 1
+	ClientIDSize        = 4
+	FileIDSize          = 4
+	IsEOFSize           = 1
+	IsLastFromTableSize = 1
+	BatchNumberSize     = 4
+	BatchSizeSize       = 4
 )
 
 type BatchMessage struct {
@@ -34,7 +35,7 @@ func NewBatchMessage(batch *Batch) *BatchMessage {
 
 func SerializeBatchMessage(msg *BatchMessage) ([]byte, error) {
 	// Calculate header length
-	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + ClientIDSize + FileIDSize + IsEOFSize + BatchNumberSize + BatchSizeSize
+	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + ClientIDSize + FileIDSize + IsEOFSize + IsLastFromTableSize + BatchNumberSize + BatchSizeSize
 
 	// Calculate total length
 	totalLength := headerLength + len(msg.Batch.BatchData)
@@ -71,6 +72,13 @@ func SerializeBatchMessage(msg *BatchMessage) ([]byte, error) {
 		buf[offset] = 0 // false
 	}
 	offset += IsEOFSize
+
+	if msg.Batch.IsLastFromTable {
+		buf[offset] = 1 // true
+	} else {
+		buf[offset] = 0 // false
+	}
+	offset += IsLastFromTableSize
 
 	binary.BigEndian.PutUint32(buf[offset:], uint32(msg.Batch.BatchNumber))
 	offset += BatchNumberSize

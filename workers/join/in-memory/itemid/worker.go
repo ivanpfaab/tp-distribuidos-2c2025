@@ -244,8 +244,8 @@ func (w *ItemIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) midd
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	fmt.Printf("ItemID Join Worker: Received dictionary message for FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
-		chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
+	fmt.Printf("ItemID Join Worker: Received dictionary message for FileID: %s, ChunkNumber: %d, IsLastChunk: %t, IsLastFromTable: %t\n",
+		chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk, chunkMsg.IsLastFromTable)
 
 	// Parse the menu items data from the chunk
 	if err := w.parseMenuItemsData(string(chunkMsg.ChunkData), chunkMsg.ClientID); err != nil {
@@ -254,7 +254,7 @@ func (w *ItemIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) midd
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Check if this is the last chunk for the dictionary
+	// Check if this is the last chunk for the dictionary (it always is?)
 	if chunkMsg.IsLastChunk {
 		w.dictionaryReady[chunkMsg.ClientID] = true
 		fmt.Printf("ItemID Join Worker: Received last chunk for FileID: %s - Dictionary is now ready for client %s\n", chunkMsg.FileID, chunkMsg.ClientID)
@@ -349,15 +349,16 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 
 		// Create new chunk with joined data
 		joinedChunk := &chunk.Chunk{
-			ClientID:    chunkMsg.ClientID,
-			FileID:      chunkMsg.FileID,
-			QueryType:   chunkMsg.QueryType,
-			ChunkNumber: chunkMsg.ChunkNumber,
-			IsLastChunk: chunkMsg.IsLastChunk,
-			Step:        chunkMsg.Step,
-			ChunkSize:   len(joinedData),
-			TableID:     chunkMsg.TableID,
-			ChunkData:   joinedData,
+			ClientID:        chunkMsg.ClientID,
+			FileID:          chunkMsg.FileID,
+			QueryType:       chunkMsg.QueryType,
+			ChunkNumber:     chunkMsg.ChunkNumber,
+			IsLastChunk:     chunkMsg.IsLastChunk,
+			IsLastFromTable: chunkMsg.IsLastFromTable,
+			Step:            chunkMsg.Step,
+			ChunkSize:       len(joinedData),
+			TableID:         chunkMsg.TableID,
+			ChunkData:       joinedData,
 		}
 
 		return joinedChunk, nil
@@ -374,15 +375,16 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 
 	// Create new chunk with joined data
 	joinedChunk := &chunk.Chunk{
-		ClientID:    chunkMsg.ClientID,
-		FileID:      chunkMsg.FileID,
-		QueryType:   chunkMsg.QueryType,
-		ChunkNumber: chunkMsg.ChunkNumber,
-		IsLastChunk: chunkMsg.IsLastChunk,
-		Step:        chunkMsg.Step,
-		ChunkSize:   len(joinedData),
-		TableID:     chunkMsg.TableID,
-		ChunkData:   joinedData,
+		ClientID:        chunkMsg.ClientID,
+		FileID:          chunkMsg.FileID,
+		QueryType:       chunkMsg.QueryType,
+		ChunkNumber:     chunkMsg.ChunkNumber,
+		IsLastChunk:     chunkMsg.IsLastChunk,
+		IsLastFromTable: chunkMsg.IsLastFromTable,
+		Step:            chunkMsg.Step,
+		ChunkSize:       len(joinedData),
+		TableID:         chunkMsg.TableID,
+		ChunkData:       joinedData,
 	}
 
 	return joinedChunk, nil
