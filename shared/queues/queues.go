@@ -26,7 +26,7 @@ const (
 	ItemIdDictionaryQueue  = "join-itemid-dictionary"
 	ItemIdChunkQueue       = "top-item-classification-chunk"
 	StoreIdDictionaryQueue = "join-storeid-dictionary"
-	StoreIdChunkQueue      = "itemid-join-chunks"
+	StoreIdChunkQueue      = "storeid-join-chunks"
 
 	// In-File Join Worker (Query 4) - Input Queues
 	UserIdChunkQueue = "userid-join-chunks"
@@ -45,12 +45,12 @@ const (
 	// Group By MapReduce Queues
 	// ============================================================================
 	// Query 2 (transaction_items - group by year, month, item_id)
-	Query2MapQueue            = "query2-map-queue"
-	Query2ReduceQueueS2_2023  = "query2-reduce-s2-2023"
-	Query2ReduceQueueS1_2024  = "query2-reduce-s1-2024"
-	Query2ReduceQueueS2_2024  = "query2-reduce-s2-2024"
-	Query2ReduceQueueS1_2025  = "query2-reduce-s1-2025"
-	Query2ReduceQueueS2_2025  = "query2-reduce-s2-2025"
+	Query2MapQueue           = "query2-map-queue"
+	Query2ReduceQueueS2_2023 = "query2-reduce-s2-2023"
+	Query2ReduceQueueS1_2024 = "query2-reduce-s1-2024"
+	Query2ReduceQueueS2_2024 = "query2-reduce-s2-2024"
+	Query2ReduceQueueS1_2025 = "query2-reduce-s1-2025"
+	Query2ReduceQueueS2_2025 = "query2-reduce-s2-2025"
 
 	// Group By Orchestrator Queues and Exchanges
 	Query2OrchestratorChunksQueue = "query2-orchestrator-chunks"
@@ -77,8 +77,8 @@ const (
 	Query3RoutingKeyS2_2025 = "query3.semester.2.2025"
 
 	// Query 4 Map-Reduce Exchange and Routing Keys
-	Query4MapReduceExchange = "query4-map-reduce"
-	Query4RoutingKey        = "query4.all"
+	Query4MapReduceExchange   = "query4-map-reduce"
+	Query4RoutingKey          = "query4.all"
 	Query2TopItemsQueue       = "query2-top-items-queue"        // Input to top classification
 	Query2GroupByResultsQueue = "top-item-classification-chunk" // Output after top classification
 
@@ -89,7 +89,7 @@ const (
 	Query3ReduceQueueS2_2024  = "query3-reduce-s2-2024"
 	Query3ReduceQueueS1_2025  = "query3-reduce-s1-2025"
 	Query3ReduceQueueS2_2025  = "query3-reduce-s2-2025"
-	Query3GroupByResultsQueue = "itemid-join-chunks"
+	Query3GroupByResultsQueue = StoreIdChunkQueue
 
 	// Query 4 (transactions - group by user_id, store_id)
 	Query4MapQueue            = "query4-map-queue"

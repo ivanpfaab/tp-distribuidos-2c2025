@@ -1,4 +1,4 @@
-package main
+package partitioner
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 
 func main() {
 	// Load configuration
-	config, err := loadConfig()
+	config, err := LoadConfig()
 	if err != nil {
 		fmt.Printf("Failed to load configuration: %v\n", err)
 		return

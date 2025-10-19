@@ -1,4 +1,4 @@
-package main
+package partitioner
 
 import (
 	"fmt"
@@ -29,8 +29,8 @@ type PartitionerConfig struct {
 	MaxBufferSize    int
 }
 
-// loadConfig loads configuration from environment variables
-func loadConfig() (*PartitionerConfig, error) {
+// LoadConfig loads configuration from environment variables
+func LoadConfig() (*PartitionerConfig, error) {
 	queryTypeStr := os.Getenv("QUERY_TYPE")
 	if queryTypeStr == "" {
 		return nil, fmt.Errorf("QUERY_TYPE environment variable is required")

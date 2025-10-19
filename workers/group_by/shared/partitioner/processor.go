@@ -1,4 +1,4 @@
-package main
+package partitioner
 
 import (
 	"encoding/csv"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 )
 
 // Record represents a single data record
@@ -17,17 +18,17 @@ type Record struct {
 
 // PartitionerProcessor handles the processing logic for partitioning chunks
 type PartitionerProcessor struct {
-	queryType     int
-	schema        []string
-	partitions    [][]Record // One buffer per partition
-	numPartitions int
-	maxBufferSize int
+	QueryType     int
+	Schema        []string
+	Partitions    [][]Record // One buffer per partition
+	NumPartitions int
+	MaxBufferSize int
 }
 
 // NewPartitionerProcessor creates a new processor for the specified query type
 func NewPartitionerProcessor(queryType, numPartitions, maxBufferSize int) (*PartitionerProcessor, error) {
-	// Get the appropriate schema for the query type
-	schema := getSchemaForQueryType(queryType)
+	// Get the appropriate schema for the query type using the shared schema
+	schema := shared.GetSchemaForQueryType(queryType, shared.RawData)
 	if len(schema) == 0 {
 		return nil, fmt.Errorf("unsupported query type: %d", queryType)
 	}
@@ -39,20 +40,20 @@ func NewPartitionerProcessor(queryType, numPartitions, maxBufferSize int) (*Part
 	}
 
 	return &PartitionerProcessor{
-		queryType:     queryType,
-		schema:        schema,
-		partitions:    partitions,
-		numPartitions: numPartitions,
-		maxBufferSize: maxBufferSize,
+		QueryType:     queryType,
+		Schema:        schema,
+		Partitions:    partitions,
+		NumPartitions: numPartitions,
+		MaxBufferSize: maxBufferSize,
 	}, nil
 }
 
 // ProcessChunk processes a chunk and partitions its data
 func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
-	testing_utils.LogInfo("Partitioner Processor", "Processing chunk %d for query type %d", chunkMessage.ChunkNumber, p.queryType)
+	testing_utils.LogInfo("Partitioner Processor", "Processing chunk %d for query type %d", chunkMessage.ChunkNumber, p.QueryType)
 
 	// Parse the chunk data (assuming CSV format)
-	records, err := p.parseChunkData(chunkMessage.ChunkData)
+	records, err := p.ParseChunkData(chunkMessage.ChunkData)
 	if err != nil {
 		return fmt.Errorf("failed to parse chunk data: %v", err)
 	}
@@ -60,26 +61,26 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 	// Partition records based on user_id modulo
 	partitionStats := make(map[int]int)
 	for _, record := range records {
-		partition, err := p.getPartition(record)
+		partition, err := p.GetPartition(record)
 		if err != nil {
 			testing_utils.LogWarn("Partitioner Processor", "Failed to get partition for record: %v", err)
 			continue
 		}
 
 		// Add to partition buffer
-		p.partitions[partition] = append(p.partitions[partition], record)
+		p.Partitions[partition] = append(p.Partitions[partition], record)
 		partitionStats[partition]++
 
 		// Flush partition if buffer is full
-		if len(p.partitions[partition]) >= p.maxBufferSize {
-			if err := p.flushPartition(partition, chunkMessage, false); err != nil {
+		if len(p.Partitions[partition]) >= p.MaxBufferSize {
+			if err := p.FlushPartition(partition, chunkMessage, false); err != nil {
 				return fmt.Errorf("failed to flush partition %d: %v", partition, err)
 			}
 		}
 	}
 
 	testing_utils.LogInfo("Partitioner Processor", "Partitioned %d records across %d partitions: %v",
-		len(records), p.numPartitions, partitionStats)
+		len(records), p.NumPartitions, partitionStats)
 
 	// If this is the last chunk, flush all partitions
 	if chunkMessage.IsLastChunk {
@@ -91,7 +92,7 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 }
 
 // parseChunkData parses the chunk data into individual records
-func (p *PartitionerProcessor) parseChunkData(chunkData string) ([]Record, error) {
+func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error) {
 	if chunkData == "" {
 		return []Record{}, nil
 	}
@@ -99,19 +100,24 @@ func (p *PartitionerProcessor) parseChunkData(chunkData string) ([]Record, error
 	reader := csv.NewReader(strings.NewReader(chunkData))
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse CSV: %w", err)
+		return nil, fmt.Errorf("failed to parse CSV: %v", err)
 	}
 
 	if len(records) < 1 {
 		return []Record{}, nil
 	}
 
-	// Skip header row
+	// Validate header row against expected schema
+	if err := p.ValidateHeader(records[0]); err != nil {
+		return nil, fmt.Errorf("schema validation failed: %v", err)
+	}
+
+	// Skip header row and process data records
 	result := make([]Record, 0, len(records)-1)
 	for i := 1; i < len(records); i++ {
 		record := records[i]
-		if len(record) < len(p.schema) {
-			testing_utils.LogWarn("Partitioner Processor", "Skipping malformed record: %v", record)
+		if len(record) < len(p.Schema) {
+			testing_utils.LogWarn("Partitioner Processor", "Skipping malformed record (insufficient fields): %v", record)
 			continue
 		}
 
@@ -128,20 +134,41 @@ func (p *PartitionerProcessor) parseChunkData(chunkData string) ([]Record, error
 }
 
 // getPartition calculates the partition for a record based on user_id modulo
-func (p *PartitionerProcessor) getPartition(record Record) (int, error) {
+func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 	// Find user_id field index based on query type
-	userIDIndex := p.getUserIDFieldIndex()
+	userIDIndex := p.GetUserIDFieldIndex()
 	if userIDIndex >= len(record.Fields) {
 		return 0, fmt.Errorf("record does not have enough fields for user_id")
 	}
 
 	userID := record.Fields[userIDIndex]
-	return getUserPartition(userID, p.numPartitions)
+	return GetUserPartition(userID, p.NumPartitions)
+}
+
+// validateHeader validates that the CSV header matches the expected schema
+func (p *PartitionerProcessor) ValidateHeader(header []string) error {
+	if len(header) != len(p.Schema) {
+		testing_utils.LogError("Partitioner Processor", "Schema mismatch: expected %d fields, got %d. Expected: %v, Got: %v",
+			len(p.Schema), len(header), p.Schema, header)
+		return fmt.Errorf("schema field count mismatch: expected %d, got %d", len(p.Schema), len(header))
+	}
+
+	for i, expectedField := range p.Schema {
+		actualField := strings.TrimSpace(header[i])
+		if actualField != expectedField {
+			testing_utils.LogError("Partitioner Processor", "Schema field mismatch at position %d: expected '%s', got '%s'. Expected schema: %v, Got header: %v",
+				i, expectedField, actualField, p.Schema, header)
+			return fmt.Errorf("schema field mismatch at position %d: expected '%s', got '%s'", i, expectedField, actualField)
+		}
+	}
+
+	testing_utils.LogInfo("Partitioner Processor", "Schema validation passed for query type %d", p.QueryType)
+	return nil
 }
 
 // getUserIDFieldIndex returns the index of the user_id field based on query type
-func (p *PartitionerProcessor) getUserIDFieldIndex() int {
-	switch p.queryType {
+func (p *PartitionerProcessor) GetUserIDFieldIndex() int {
+	switch p.QueryType {
 	case 2:
 		// Query 2 doesn't have user_id, use item_id instead
 		return 1 // item_id is at index 1
@@ -154,17 +181,17 @@ func (p *PartitionerProcessor) getUserIDFieldIndex() int {
 }
 
 // flushPartition sends buffered records from a specific partition
-func (p *PartitionerProcessor) flushPartition(partition int, originalChunk *chunk.Chunk, isLastChunk bool) error {
-	if len(p.partitions[partition]) == 0 {
+func (p *PartitionerProcessor) FlushPartition(partition int, originalChunk *chunk.Chunk, isLastChunk bool) error {
+	if len(p.Partitions[partition]) == 0 {
 		// Empty partition, nothing to flush
 		return nil
 	}
 
 	testing_utils.LogInfo("Partitioner Processor", "Flushed %d records from partition %d (IsLastChunk=%t)",
-		len(p.partitions[partition]), partition, isLastChunk)
+		len(p.Partitions[partition]), partition, isLastChunk)
 
 	// Clear partition buffer
-	p.partitions[partition] = p.partitions[partition][:0]
+	p.Partitions[partition] = p.Partitions[partition][:0]
 
 	// TODO: Send partitioned data to the appropriate group by worker
 	// This will be implemented in the next step
@@ -174,8 +201,8 @@ func (p *PartitionerProcessor) flushPartition(partition int, originalChunk *chun
 
 // flushAllPartitions flushes all partition buffers
 func (p *PartitionerProcessor) flushAllPartitions(originalChunk *chunk.Chunk) error {
-	for partition := 0; partition < p.numPartitions; partition++ {
-		if err := p.flushPartition(partition, originalChunk, true); err != nil {
+	for partition := 0; partition < p.NumPartitions; partition++ {
+		if err := p.FlushPartition(partition, originalChunk, true); err != nil {
 			return fmt.Errorf("failed to flush partition %d: %v", partition, err)
 		}
 	}
@@ -183,15 +210,15 @@ func (p *PartitionerProcessor) flushAllPartitions(originalChunk *chunk.Chunk) er
 }
 
 // partitionToCSV converts a partition buffer to CSV format
-func (p *PartitionerProcessor) partitionToCSV(partition int) string {
+func (p *PartitionerProcessor) PartitionToCSV(partition int) string {
 	var result strings.Builder
 
 	// Write header
-	result.WriteString(strings.Join(p.schema, ","))
+	result.WriteString(strings.Join(p.Schema, ","))
 	result.WriteString("\n")
 
 	// Write records
-	for _, record := range p.partitions[partition] {
+	for _, record := range p.Partitions[partition] {
 		result.WriteString(strings.Join(record.Fields, ","))
 		result.WriteString("\n")
 	}
@@ -199,56 +226,15 @@ func (p *PartitionerProcessor) partitionToCSV(partition int) string {
 	return result.String()
 }
 
-// getSchemaForQueryType returns the schema for the specified query type
-func getSchemaForQueryType(queryType int) []string {
-	switch queryType {
-	case 2:
-		return []string{
-			"transaction_id",
-			"item_id",
-			"quantity",
-			"unit_price",
-			"subtotal",
-			"created_at",
-		}
-	case 3:
-		return []string{
-			"transaction_id",
-			"store_id",
-			"payment_method_id",
-			"voucher_id",
-			"user_id",
-			"original_amount",
-			"discount_applied",
-			"final_amount",
-			"created_at",
-		}
-	case 4:
-		return []string{
-			"transaction_id",
-			"store_id",
-			"payment_method_id",
-			"voucher_id",
-			"user_id",
-			"original_amount",
-			"discount_applied",
-			"final_amount",
-			"created_at",
-		}
-	default:
-		return []string{}
-	}
-}
-
-// getUserPartition calculates the partition for a given ID (user_id or item_id)
-func getUserPartition(id string, numPartitions int) (int, error) {
+// GetUserPartition calculates the partition for a given ID (user_id or item_id)
+func GetUserPartition(id string, NumPartitions int) (int, error) {
 	// Parse ID (handle both int and float formats)
 	idFloat, err := strconv.ParseFloat(id, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid ID %s: %w", id, err)
+		return 0, fmt.Errorf("invalid ID %s: %v", id, err)
 	}
 	idInt := int(idFloat)
 
 	// Simple modulo partitioning
-	return idInt % numPartitions, nil
+	return idInt % NumPartitions, nil
 }

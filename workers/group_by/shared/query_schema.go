@@ -1,4 +1,4 @@
-package main
+package shared
 
 // DataSchema represents the type of data being processed
 type DataSchema int
