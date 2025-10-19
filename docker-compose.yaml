@@ -528,25 +528,6 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  join-garbage-collector:
-    build:
-      context: .
-      dockerfile: ./workers/join/garbage-collector/Dockerfile
-    container_name: join-garbage-collector
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      COMPLETION_QUEUE: "join-completion-queue"
-      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
-      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
-      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
-    profiles: ["orchestration"]
-
   # Join Data Handler 1
   join-data-handler-1:
     build:
@@ -563,6 +544,38 @@ services:
       RABBITMQ_PASS: password
       ITEMID_WORKER_COUNT: "2"
       STOREID_WORKER_COUNT: "1"
+    profiles: ["orchestration"]
+
+  # In-Memory Join Orchestrator
+  in-memory-join-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/orchestrator/Dockerfile
+    container_name: in-memory-join-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # In-File Join Orchestrator
+  in-file-join-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/orchestrator/Dockerfile
+    container_name: in-file-join-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
   # User Partition Splitter (distributes users to writers)
@@ -836,8 +849,6 @@ services:
       query4-top-users-worker:
         condition: service_started
       streaming-service:
-        condition: service_started
-      join-garbage-collector:
         condition: service_started
     environment:
       - SERVER_PORT=8080

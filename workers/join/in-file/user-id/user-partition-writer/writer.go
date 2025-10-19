@@ -17,18 +17,20 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // UserPartitionWriter writes users to partition files
 type UserPartitionWriter struct {
-	consumer          *workerqueue.QueueConsumer
-	cleanupConsumer   *exchange.ExchangeConsumer
-	queueProducer     *workerqueue.QueueMiddleware // For self-requeuing cleanup messages
-	config            *middleware.ConnectionConfig
-	writerConfig      *Config
-	partitionsWritten map[int]int     // Track writes per partition
-	stoppedClients    map[string]bool // Track clients that should stop writing
-	clientMutex       sync.RWMutex
+	consumer           *workerqueue.QueueConsumer
+	cleanupConsumer    *exchange.ExchangeConsumer
+	queueProducer      *workerqueue.QueueMiddleware // For self-requeuing cleanup messages
+	completionProducer *workerqueue.QueueMiddleware // For notifying orchestrator
+	config             *middleware.ConnectionConfig
+	writerConfig       *Config
+	partitionsWritten  map[int]int     // Track writes per partition
+	stoppedClients     map[string]bool // Track clients that should stop writing
+	clientMutex        sync.RWMutex
 }
 
 // NewUserPartitionWriter creates a new writer instance
@@ -65,14 +67,27 @@ func NewUserPartitionWriter(connConfig *middleware.ConnectionConfig, writerConfi
 		return nil, fmt.Errorf("failed to create queue producer for queue %s", queueName)
 	}
 
+	// Create completion producer for notifying orchestrator
+	completionProducer := workerqueue.NewMessageMiddlewareQueue(
+		queues.UserPartitionCompletionQueue,
+		connConfig,
+	)
+	if completionProducer == nil {
+		consumer.Close()
+		cleanupConsumer.Close()
+		queueProducer.Close()
+		return nil, fmt.Errorf("failed to create completion producer")
+	}
+
 	return &UserPartitionWriter{
-		consumer:          consumer,
-		cleanupConsumer:   cleanupConsumer,
-		queueProducer:     queueProducer,
-		config:            connConfig,
-		writerConfig:      writerConfig,
-		partitionsWritten: make(map[int]int),
-		stoppedClients:    make(map[string]bool),
+		consumer:           consumer,
+		cleanupConsumer:    cleanupConsumer,
+		queueProducer:      queueProducer,
+		completionProducer: completionProducer,
+		config:             connConfig,
+		writerConfig:       writerConfig,
+		partitionsWritten:  make(map[int]int),
+		stoppedClients:     make(map[string]bool),
 	}, nil
 }
 
@@ -100,6 +115,9 @@ func (upw *UserPartitionWriter) Close() {
 	}
 	if upw.queueProducer != nil {
 		upw.queueProducer.Close()
+	}
+	if upw.completionProducer != nil {
+		upw.completionProducer.Close()
 	}
 
 	// Print statistics
@@ -279,6 +297,9 @@ func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middlewar
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	// Send chunk to orchestrator for completion tracking
+	upw.sendChunkToOrchestrator(chunkMsg)
+
 	return 0
 }
 
@@ -397,4 +418,30 @@ func getUserPartition(userID string) (int, error) {
 
 	// Simple modulo partitioning (must match splitter and reader logic exactly!)
 	return userIDInt % NumPartitions, nil
+}
+
+// sendChunkToOrchestrator sends chunk to orchestrator for completion tracking
+func (upw *UserPartitionWriter) sendChunkToOrchestrator(chunkMsg *chunk.Chunk) {
+	notification := signals.NewChunkNotification(
+		chunkMsg.ClientID,
+		chunkMsg.FileID,
+		fmt.Sprintf("user-partition-writer-%d", upw.writerConfig.WriterID),
+		int(chunkMsg.TableID),
+		int(chunkMsg.ChunkNumber),
+		chunkMsg.IsLastChunk,
+		chunkMsg.IsLastFromTable,
+	)
+
+	messageData, err := signals.SerializeChunkNotification(notification)
+	if err != nil {
+		fmt.Printf("User Partition Writer %d: Failed to serialize chunk notification for orchestrator: %v\n", upw.writerConfig.WriterID, err)
+		return
+	}
+
+	if err := upw.completionProducer.Send(messageData); err != 0 {
+		fmt.Printf("User Partition Writer %d: Failed to send chunk notification to orchestrator: %v\n", upw.writerConfig.WriterID, err)
+	} else {
+		fmt.Printf("User Partition Writer %d: Sent chunk notification to orchestrator for client %s (chunk %d)\n",
+			upw.writerConfig.WriterID, chunkMsg.ClientID, chunkMsg.ChunkNumber)
+	}
 }
