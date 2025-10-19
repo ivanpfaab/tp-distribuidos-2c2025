@@ -293,6 +293,7 @@ func (tw *TopUsersWorker) sendTopUsers(clientID string, clientState *ClientState
 		4,      // Query Type 4
 		1,      // Chunk Number
 		true,   // Is Last Chunk
+		true,   // Is Last File (final results)
 		3,      // Step 3 (after map and reduce)
 		len(csvData),
 		1, // Table ID 1

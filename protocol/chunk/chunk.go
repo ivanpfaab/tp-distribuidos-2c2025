@@ -7,32 +7,34 @@ import (
 )
 
 type Chunk struct {
-	ClientID    string
-	FileID      string
-	QueryType   byte
-	TableID     int
-	ChunkSize   int
-	ChunkNumber int
-	IsLastChunk bool
-	Step        int
-	Retries     int
-	ChunkType   string
-	ChunkData   string
+	ClientID        string
+	FileID          string
+	QueryType       byte
+	TableID         int
+	ChunkSize       int
+	ChunkNumber     int
+	IsLastChunk     bool
+	IsLastFromTable bool
+	Step            int
+	Retries         int
+	ChunkType       string
+	ChunkData       string
 }
 
-func NewChunk(clientID, fileID string, queryType byte, chunkNumber int, isLastChunk bool, step, chunkSize, tableID int, chunkData string) *Chunk {
+func NewChunk(clientID, fileID string, queryType byte, chunkNumber int, isLastChunk, isLastFromTable bool, step, chunkSize, tableID int, chunkData string) *Chunk {
 	return &Chunk{
-		ClientID:    clientID,
-		FileID:      fileID,
-		QueryType:   queryType,
-		ChunkNumber: chunkNumber,
-		IsLastChunk: isLastChunk,
-		Step:        step,
-		Retries:     0, // New chunks start with 0 retries
-		ChunkSize:   chunkSize,
-		TableID:     tableID,
-		ChunkType:   "DATA", // Default chunk type
-		ChunkData:   chunkData,
+		ClientID:        clientID,
+		FileID:          fileID,
+		QueryType:       queryType,
+		ChunkNumber:     chunkNumber,
+		IsLastChunk:     isLastChunk,
+		IsLastFromTable: isLastFromTable,
+		Step:            step,
+		Retries:         0, // New chunks start with 0 retries
+		ChunkSize:       chunkSize,
+		TableID:         tableID,
+		ChunkType:       "DATA", // Default chunk type
+		ChunkData:       chunkData,
 	}
 }
 
@@ -65,6 +67,9 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 	isLastChunk := data[offset] == 1
 	offset += IsLastChunkSize
 
+	isLastFromTable := data[offset] == 1
+	offset += IsLastFromTableSize
+
 	step := int(data[offset])
 	offset += StepSize
 
@@ -83,17 +88,18 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 	}
 
 	return &Chunk{
-		ClientID:    clientID,
-		FileID:      fileID,
-		QueryType:   queryType,
-		TableID:     tableID,
-		ChunkSize:   chunkSize,
-		ChunkNumber: chunkNumber,
-		IsLastChunk: isLastChunk,
-		Step:        step,
-		Retries:     retries,
-		ChunkType:   chunkType,
-		ChunkData:   chunkData,
+		ClientID:        clientID,
+		FileID:          fileID,
+		QueryType:       queryType,
+		TableID:         tableID,
+		ChunkSize:       chunkSize,
+		ChunkNumber:     chunkNumber,
+		IsLastChunk:     isLastChunk,
+		IsLastFromTable: isLastFromTable,
+		Step:            step,
+		Retries:         retries,
+		ChunkType:       chunkType,
+		ChunkData:       chunkData,
 	}, nil
 }
 

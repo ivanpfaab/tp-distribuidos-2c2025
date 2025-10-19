@@ -362,6 +362,7 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, state *ClientStat
 		state.chunkMetadata.QueryType,
 		state.chunkCounter,
 		isLast,
+		state.chunkMetadata.IsLastFromTable,
 		state.chunkMetadata.Step,
 		len(csvData),
 		state.chunkMetadata.TableID,
@@ -387,6 +388,7 @@ func (jw *JoinByUserIdWorker) sendEmptyEOS(clientID string, state *ClientState) 
 		state.chunkMetadata.QueryType,
 		state.chunkCounter,
 		true, // IsLastChunk
+		true,
 		state.chunkMetadata.Step,
 		0,
 		state.chunkMetadata.TableID,

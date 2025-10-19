@@ -84,6 +84,7 @@ func (oc *OrchestratorCommunicator) NotifyChunkProcessed(chunk *chunk.Chunk) err
 		chunk.TableID,
 		chunk.ChunkNumber,
 		chunk.IsLastChunk,
+		chunk.IsLastFromTable,
 	)
 
 	// Serialize notification using protocol
