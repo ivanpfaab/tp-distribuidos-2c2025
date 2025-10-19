@@ -233,6 +233,7 @@ func (mw *MapWorker) sendToReduceQueue(originalChunk *chunk.Chunk, groupedData m
 		originalChunk.QueryType,
 		originalChunk.ChunkNumber,
 		originalChunk.IsLastChunk,
+		originalChunk.IsLastFromTable,
 		originalChunk.Step, // Step 1 for reduce worker
 		len(csvData),
 		originalChunk.TableID, // Table ID 1 for transactions

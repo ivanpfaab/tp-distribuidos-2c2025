@@ -203,8 +203,8 @@ func testDataHandlerChunkProcessing(t *testing.T) {
 					continue
 				}
 
-				testing_utils.LogStep("Received chunk - ClientID: %s, ChunkNumber: %d, Step: %d, IsLastChunk: %t",
-					chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.Step, chunkMsg.IsLastChunk)
+				testing_utils.LogStep("Received chunk - ClientID: %s, ChunkNumber: %d, Step: %d, IsLastChunk: %t, IsLastFromTable: %t",
+					chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.Step, chunkMsg.IsLastChunk, chunkMsg.IsLastFromTable)
 
 				receivedChunks <- chunkMsg
 				chunkCount++

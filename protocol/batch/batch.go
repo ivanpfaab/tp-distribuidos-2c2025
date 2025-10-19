@@ -7,22 +7,24 @@ import (
 )
 
 type Batch struct {
-	ClientID    string
-	FileID      string
-	IsEOF       bool
-	BatchNumber int
-	BatchSize   int
-	BatchData   string
+	ClientID        string
+	FileID          string
+	IsEOF           bool
+	IsLastFromTable bool
+	BatchNumber     int
+	BatchSize       int
+	BatchData       string
 }
 
-func NewBatch(clientID, fileID string, isEOF bool, batchNumber, batchSize int, batchData string) *Batch {
+func NewBatch(clientID, fileID string, isEOF, isLastFromTable bool, batchNumber, batchSize int, batchData string) *Batch {
 	return &Batch{
-		ClientID:    clientID,
-		FileID:      fileID,
-		IsEOF:       isEOF,
-		BatchNumber: batchNumber,
-		BatchSize:   batchSize,
-		BatchData:   batchData,
+		ClientID:        clientID,
+		FileID:          fileID,
+		IsEOF:           isEOF,
+		IsLastFromTable: isLastFromTable,
+		BatchNumber:     batchNumber,
+		BatchSize:       batchSize,
+		BatchData:       batchData,
 	}
 }
 
@@ -43,6 +45,9 @@ func DeserializeBatch(data []byte) (*Batch, error) {
 	isEOF := data[offset] == 1
 	offset += 1
 
+	isLastFromTable := data[offset] == 1
+	offset += 1
+
 	batchNumber := int(binary.BigEndian.Uint32(data[offset:]))
 	offset += 4
 
@@ -56,11 +61,12 @@ func DeserializeBatch(data []byte) (*Batch, error) {
 	}
 
 	return &Batch{
-		ClientID:    clientID,
-		FileID:      fileID,
-		IsEOF:       isEOF,
-		BatchNumber: batchNumber,
-		BatchSize:   batchSize,
-		BatchData:   batchData,
+		ClientID:        clientID,
+		FileID:          fileID,
+		IsEOF:           isEOF,
+		IsLastFromTable: isLastFromTable,
+		BatchNumber:     batchNumber,
+		BatchSize:       batchSize,
+		BatchData:       batchData,
 	}, nil
 }

@@ -157,7 +157,7 @@ func (ups *UserPartitionSplitter) processMessage(delivery amqp.Delivery) middlew
 	}
 
 	// If this is the last chunk, flush all buffers
-	if chunkMsg.IsLastChunk {
+	if chunkMsg.IsLastChunk && chunkMsg.IsLastFromTable {
 		fmt.Printf("User Partition Splitter: Last chunk received, flushing all buffers\n")
 		if err := ups.flushAllBuffers(chunkMsg); err != 0 {
 			return err
@@ -241,15 +241,16 @@ func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk
 
 	// Create chunk for writer
 	writerChunk := &chunk.Chunk{
-		ClientID:    originalChunk.ClientID,
-		FileID:      originalChunk.FileID,
-		QueryType:   originalChunk.QueryType,
-		ChunkNumber: originalChunk.ChunkNumber,
-		IsLastChunk: isLastChunk,
-		Step:        originalChunk.Step,
-		ChunkSize:   len(ups.buffers[writerID]),
-		TableID:     originalChunk.TableID,
-		ChunkData:   csvData,
+		ClientID:        originalChunk.ClientID,
+		FileID:          originalChunk.FileID,
+		QueryType:       originalChunk.QueryType,
+		ChunkNumber:     originalChunk.ChunkNumber,
+		IsLastChunk:     isLastChunk,
+		IsLastFromTable: originalChunk.IsLastFromTable,
+		Step:            originalChunk.Step,
+		ChunkSize:       len(ups.buffers[writerID]),
+		TableID:         originalChunk.TableID,
+		ChunkData:       csvData,
 	}
 
 	// Serialize and send
@@ -287,15 +288,16 @@ func (ups *UserPartitionSplitter) flushAllBuffers(originalChunk *chunk.Chunk) mi
 // sendEOSToWriter sends an end-of-stream marker to a writer
 func (ups *UserPartitionSplitter) sendEOSToWriter(writerID int, originalChunk *chunk.Chunk) middleware.MessageMiddlewareError {
 	eosChunk := &chunk.Chunk{
-		ClientID:    originalChunk.ClientID,
-		FileID:      originalChunk.FileID,
-		QueryType:   originalChunk.QueryType,
-		ChunkNumber: -1, // EOS marker
-		IsLastChunk: true,
-		Step:        originalChunk.Step,
-		ChunkSize:   0,
-		TableID:     originalChunk.TableID,
-		ChunkData:   "",
+		ClientID:        originalChunk.ClientID,
+		FileID:          originalChunk.FileID,
+		QueryType:       originalChunk.QueryType,
+		ChunkNumber:     -1, // EOS marker
+		IsLastChunk:     true,
+		IsLastFromTable: true,
+		Step:            originalChunk.Step,
+		ChunkSize:       0,
+		TableID:         originalChunk.TableID,
+		ChunkData:       "",
 	}
 
 	chunkMessage := chunk.NewChunkMessage(eosChunk)

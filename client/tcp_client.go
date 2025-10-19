@@ -206,7 +206,7 @@ func generateFileID(filePath string, fileTypeGroups map[string]*FileTypeInfo) st
 }
 
 // sendBatches reads CSV records, groups them into batches, and sends them.
-func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (int, int, error) {
+func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string, isLastFromTable bool) (int, int, error) {
 	r.FieldsPerRecord = -1 // allow variable columns
 
 	var batch []string
@@ -233,12 +233,13 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 			payload := strings.Join(batch, "\n") + "\n"
 			// Create batch message
 			batchData := &batchpkg.Batch{
-				ClientID:    c.clientID, // Use client ID
-				FileID:      fileID,     // Use provided file ID
-				IsEOF:       false,      // Not the last batch yet
-				BatchNumber: batchNum,
-				BatchSize:   len(batch), // Number of rows in this batch
-				BatchData:   payload,
+				ClientID:        c.clientID, // Use client ID
+				FileID:          fileID,     // Use provided file ID
+				IsEOF:           false,      // Not the last batch yet
+				IsLastFromTable: false,      // Not the last batch of the file yet
+				BatchNumber:     batchNum,
+				BatchSize:       len(batch), // Number of rows in this batch
+				BatchData:       payload,
 			}
 
 			// Send message to server
@@ -258,12 +259,13 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		payload := strings.Join(batch, "\n") + "\n"
 		// Create batch message
 		batchData := &batchpkg.Batch{
-			ClientID:    c.clientID, // Use client ID
-			FileID:      fileID,     // Use provided file ID
-			IsEOF:       true,       // This is the last batch of the file
-			BatchNumber: batchNum,
-			BatchSize:   len(batch), // Number of rows in this batch
-			BatchData:   payload,
+			ClientID:        c.clientID,      // Use client ID
+			FileID:          fileID,          // Use provided file ID
+			IsEOF:           true,            // This is the last batch of the file
+			IsLastFromTable: isLastFromTable, // True if this is the last file in the folder
+			BatchNumber:     batchNum,
+			BatchSize:       len(batch), // Number of rows in this batch
+			BatchData:       payload,
 		}
 		err := c.SendBatchMessage(batchData)
 		if err != nil {
@@ -276,12 +278,13 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string) (in
 		batchNum++
 		payload := "" // Empty payload for EOF marker
 		batchData := &batchpkg.Batch{
-			ClientID:    c.clientID, // Use client ID
-			FileID:      fileID,     // Use provided file ID
-			IsEOF:       true,       // This is the EOF marker
-			BatchNumber: batchNum,
-			BatchSize:   0, // 0 rows in EOF marker
-			BatchData:   payload,
+			ClientID:        c.clientID,      // Use client ID
+			FileID:          fileID,          // Use provided file ID
+			IsEOF:           true,            // This is the EOF marker
+			IsLastFromTable: isLastFromTable, // True if this is the last file in the folder
+			BatchNumber:     batchNum,
+			BatchSize:       0, // 0 rows in EOF marker
+			BatchData:       payload,
 		}
 		err := c.SendBatchMessage(batchData)
 		if err != nil {
@@ -335,9 +338,31 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 	totalBatches := 0
 	totalFiles := 0
 
+	// Get sorted list of files
+	var csvFiles []string
+	for filePath := range fileMap {
+		csvFiles = append(csvFiles, filePath)
+	}
+	sort.Strings(csvFiles)
+
+	// Group files by type to determine last file in each type
+	fileTypeGroups := groupFilesByType(csvFiles)
+
 	// Process each CSV file
-	for filePath, fileID := range fileMap {
-		fmt.Printf("\nProcessing file: %s (FileID: %s)\n", filePath, fileID)
+	for _, filePath := range csvFiles {
+		fileID := fileMap[filePath]
+		fileType := determineFileType(filePath)
+
+		// Check if this is the last file of its type
+		var lastFileID string
+		typeInfo := fileTypeGroups[fileType]
+		if typeInfo != nil && len(typeInfo.Files) > 0 {
+			lastFilePath := typeInfo.Files[len(typeInfo.Files)-1]
+			lastFileID = fileMap[lastFilePath]
+		}
+		isLastFromTable := (fileID == lastFileID)
+
+		fmt.Printf("\nProcessing file: %s (FileID: %s, IsLastFromTable: %t)\n", filePath, fileID, isLastFromTable)
 
 		// Open the CSV file
 		f, err := os.Open(filePath)
@@ -348,7 +373,7 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 
 		// Read lines from file and send to server
 		r := csv.NewReader(f)
-		sentRecords, sentBatches, err := client.sendBatches(r, 10000, fileID)
+		sentRecords, sentBatches, err := client.sendBatches(r, 10000, fileID, isLastFromTable)
 		if err != nil {
 			log.Printf("Error sending batches for file %s: %v", filePath, err)
 			f.Close()
