@@ -246,7 +246,7 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 		if len(jw.clientBuffers) >= MaxClientsInBufferWorker {
 			fmt.Printf("Join by User ID Worker: Buffer full (%d clients), NACKing message for client %s\n",
 				len(jw.clientBuffers), chunkMsg.ClientID)
-			delivery.Nack(false, true) // NACK and requeue
+			delivery.Nack(false, false) // NACK and requeue
 			return middleware.MessageMiddlewareMessageError
 		}
 		// Create new client buffer
@@ -273,7 +273,7 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 		fmt.Printf("Join by User ID Worker: Client %s marked ready with %d buffered users\n",
 			chunkMsg.ClientID, len(clientBuffer.TopUsers))
 		// Try to process immediately if files are ready
-		go jw.processClientIfReady(chunkMsg.ClientID)
+		jw.processClientIfReady(chunkMsg.ClientID)
 	}
 
 	delivery.Ack(false)
@@ -298,7 +298,7 @@ func (jw *JoinByUserIdWorker) processCompletionSignal(delivery amqp.Delivery) mi
 		clientBuffer.Ready = true
 		fmt.Printf("Join by User ID Worker: Client %s marked ready for processing\n", completionSignal.ClientID)
 		// Process immediately
-		go jw.processClientIfReady(completionSignal.ClientID)
+		jw.processClientIfReady(completionSignal.ClientID)
 	}
 	jw.bufferMutex.Unlock()
 
@@ -338,10 +338,15 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, clientBuffer *Cli
 	var csvBuilder strings.Builder
 	csvBuilder.WriteString("user_id,store_id,purchase_count,rank,gender,birthdate,registered_at\n")
 
+	successfulJoins := 0
+	failedJoins := 0
+
 	for _, topUser := range foundUsers {
 		user, err := jw.lookupUserFromFile(topUser.UserID, clientID)
 		if err != nil || user == nil {
-			// Should not happen since we already found them
+			failedJoins++
+			fmt.Printf("Join by User ID Worker: Failed to lookup user %s for client %s: %v\n",
+				topUser.UserID, clientID, err)
 			continue
 		}
 
@@ -354,7 +359,11 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, clientBuffer *Cli
 			user.Birthdate,
 			user.RegisteredAt,
 		))
+		successfulJoins++
 	}
+
+	fmt.Printf("Join by User ID Worker: Client %s - Successful joins: %d, Failed joins: %d, Total users: %d\n",
+		clientID, successfulJoins, failedJoins, len(foundUsers))
 
 	csvData := csvBuilder.String()
 

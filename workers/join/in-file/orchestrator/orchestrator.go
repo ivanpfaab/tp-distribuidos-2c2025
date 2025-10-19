@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -76,6 +77,10 @@ func NewInFileJoinOrchestrator(config *middleware.ConnectionConfig) (*InFileJoin
 	completionTracker := shared.NewCompletionTracker(
 		"InFileJoinOrchestrator",
 		func(clientID string, clientStatus *shared.ClientStatus) {
+			// Add a small delay to ensure all files are fully written to disk
+			log.Printf("All files completed for client %s, waiting 200ms to ensure file sync...", clientID)
+			time.Sleep(200 * time.Millisecond)
+
 			// Send completion signal to all user join workers
 			if err := sendCompletionSignal(completionProducer, clientID); err != nil {
 				log.Printf("Failed to send completion signal for client %s: %v", clientID, err)

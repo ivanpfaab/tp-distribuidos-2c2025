@@ -281,12 +281,6 @@ func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middlewar
 		return 0 // Successfully dropped
 	}
 
-	// Check for EOS marker
-	if chunkMsg.ChunkNumber == -1 {
-		fmt.Printf("User Partition Writer %d: Received EOS marker\n", upw.writerConfig.WriterID)
-		return 0
-	}
-
 	fmt.Printf("User Partition Writer %d: Processing chunk - ChunkNumber: %d, Size: %d, IsLastChunk: %t\n",
 		upw.writerConfig.WriterID, chunkMsg.ChunkNumber, chunkMsg.ChunkSize, chunkMsg.IsLastChunk)
 
@@ -297,7 +291,7 @@ func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middlewar
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send chunk to orchestrator for completion tracking
+	// Send chunk to orchestrator for completion tracking ONLY after file is synced
 	upw.sendChunkToOrchestrator(chunkMsg)
 
 	return 0
@@ -402,6 +396,11 @@ func (upw *UserPartitionWriter) appendUserToPartition(partition int, record []st
 	// Write the user record
 	if err := writer.Write(record); err != nil {
 		return fmt.Errorf("failed to write record: %w", err)
+	}
+
+	// Ensure data is written to disk before returning
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file to disk: %w", err)
 	}
 
 	return nil
