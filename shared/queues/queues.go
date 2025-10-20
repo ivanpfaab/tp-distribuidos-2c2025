@@ -45,12 +45,12 @@ const (
 	// Group By MapReduce Queues
 	// ============================================================================
 	// Query 2 (transaction_items - group by year, month, item_id)
-	Query2MapQueue            = "query2-map-queue"
-	Query2ReduceQueueS2_2023  = "query2-reduce-s2-2023"
-	Query2ReduceQueueS1_2024  = "query2-reduce-s1-2024"
-	Query2ReduceQueueS2_2024  = "query2-reduce-s2-2024"
-	Query2ReduceQueueS1_2025  = "query2-reduce-s1-2025"
-	Query2ReduceQueueS2_2025  = "query2-reduce-s2-2025"
+	Query2MapQueue           = "query2-map-queue"
+	Query2ReduceQueueS2_2023 = "query2-reduce-s2-2023"
+	Query2ReduceQueueS1_2024 = "query2-reduce-s1-2024"
+	Query2ReduceQueueS2_2024 = "query2-reduce-s2-2024"
+	Query2ReduceQueueS1_2025 = "query2-reduce-s1-2025"
+	Query2ReduceQueueS2_2025 = "query2-reduce-s2-2025"
 
 	// Group By Orchestrator Queues and Exchanges
 	Query2OrchestratorChunksQueue = "query2-orchestrator-chunks"
@@ -77,8 +77,8 @@ const (
 	Query3RoutingKeyS2_2025 = "query3.semester.2.2025"
 
 	// Query 4 Map-Reduce Exchange and Routing Keys
-	Query4MapReduceExchange = "query4-map-reduce"
-	Query4RoutingKey        = "query4.all"
+	Query4MapReduceExchange   = "query4-map-reduce"
+	Query4RoutingKey          = "query4.all"
 	Query2TopItemsQueue       = "query2-top-items-queue"        // Input to top classification
 	Query2GroupByResultsQueue = "top-item-classification-chunk" // Output after top classification
 
@@ -112,6 +112,22 @@ const (
 	// Streaming Service Queues
 	// ============================================================================
 	StreamingServiceQueue = "streaming-service-queue"
+
+	// ============================================================================
+	// In-File Join Orchestrator Queues
+	// ============================================================================
+	UserPartitionCompletionQueue = "user-partition-completion-queue"
+	UserIdCompletionExchange     = "userid-completion-exchange"
+	UserIdCompletionRoutingKey   = "userid.completion"
+
+	// ============================================================================
+	// In-Memory Join Orchestrator Queues
+	// ============================================================================
+	InMemoryJoinCompletionQueue = "in-memory-join-completion-queue"
+	ItemIdCompletionExchange    = "itemid-completion-exchange"
+	ItemIdCompletionRoutingKey  = "itemid.completion"
+	StoreIdCompletionExchange   = "storeid-completion-exchange"
+	StoreIdCompletionRoutingKey = "storeid.completion"
 )
 
 // GetQuery2ReduceQueueName returns the reduce queue name for a specific semester in Query 2
