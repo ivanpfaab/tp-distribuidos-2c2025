@@ -122,7 +122,7 @@ func (st *StoreTopUsers) GetTopUsers() []*UserRecord {
 // ClientState holds the state for a specific client
 type ClientState struct {
 	topUsersByStore map[string]*StoreTopUsers // key: store_id
-	eosReceived     bool
+	LastChunkReceived bool         // Track last chunk received (key: ClientID)
 }
 
 // TopUsersWorker processes user-store aggregations and selects top users per store
@@ -162,7 +162,7 @@ func NewTopUsersWorker() *TopUsersWorker {
 	queueDeclarer.Close()
 
 	// Create producer for output queue (to User join)
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query4GroupByResultsQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.UserIdChunkQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatal("Failed to create producer")
@@ -172,7 +172,7 @@ func NewTopUsersWorker() *TopUsersWorker {
 	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
 		producer.Close()
-		log.Fatalf("Failed to declare output queue '%s': %v", queues.Query4GroupByResultsQueue, err)
+		log.Fatalf("Failed to declare output queue '%s': %v", queues.UserIdChunkQueue, err)
 	}
 
 	return &TopUsersWorker{
@@ -188,7 +188,7 @@ func (tw *TopUsersWorker) getOrCreateClientState(clientID string) *ClientState {
 	if tw.clientStates[clientID] == nil {
 		tw.clientStates[clientID] = &ClientState{
 			topUsersByStore: make(map[string]*StoreTopUsers),
-			eosReceived:     false,
+			LastChunkReceived: false,
 		}
 	}
 	return tw.clientStates[clientID]
@@ -216,8 +216,8 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 
 	// Check if this is the last chunk (EOS marker)
 	if chunkMsg.IsLastChunk {
-		clientState.eosReceived = true
-		log.Printf("Top Users Worker: Received EOS for client %s, sending top users...", clientID)
+		clientState.LastChunkReceived = true
+		log.Printf("Top Users Worker: Received last chunk for client %s, sending top users...", clientID)
 
 		if err := tw.sendTopUsers(clientID, clientState); err != 0 {
 			log.Printf("Top Users Worker: Failed to send top users: %v", err)
