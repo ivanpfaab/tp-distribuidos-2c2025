@@ -5,10 +5,12 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -32,6 +34,10 @@ type DataHandler struct {
 
 	// Configuration
 	config *middleware.ConnectionConfig
+
+	// File completion tracking
+	allFilesReceived  bool
+	processingStarted bool
 }
 
 // NewDataHandler creates a new Data Handler instance
@@ -123,18 +129,29 @@ func determineQueryType(fileID string) uint8 {
 
 // ProcessBatchMessage processes a batch message and creates chunks
 func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
-	// Deserialize the batch message
+	// Deserialize the message
 	message, err := deserializer.Deserialize(data)
 	if err != nil {
 		log.Printf("Data Handler: Failed to deserialize message: %v", err)
 		return fmt.Errorf("failed to deserialize message: %w", err)
 	}
 
+	// Check if it's an AllFilesSentSignal
+	if signal, ok := message.(*signals.AllFilesSentSignal); ok {
+		log.Printf("Data Handler: Received all files sent signal from client %s", signal.ClientID)
+		if !dh.allFilesReceived {
+			dh.allFilesReceived = true
+			log.Printf("Data Handler: Starting periodic processing messages for client %s", signal.ClientID)
+			go dh.startPeriodicProcessingMessages()
+		}
+		return nil
+	}
+
 	// Check if it's a Batch message
 	batchMsg, ok := message.(*batch.Batch)
 	if !ok {
-		log.Printf("Data Handler: Received non-batch message type: %T", message)
-		return fmt.Errorf("expected batch message, got %T", message)
+		log.Printf("Data Handler: Received unknown message type: %T", message)
+		return fmt.Errorf("expected batch or signal message, got %T", message)
 	}
 
 	log.Printf("Data Handler: Processing batch - ClientID: %s, FileID: %s, BatchNumber: %d",
@@ -230,6 +247,13 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	log.Printf("Data Handler: Completed processing batch - ClientID: %s, FileID: %s, BatchNumber: %d, IsLastChunk: %t, IsLastFromTable: %t",
 		batchMsg.ClientID, batchMsg.FileID, batchMsg.BatchNumber, batchMsg.IsEOF, batchMsg.IsLastFromTable)
 
+	// Check if all files have been received and start periodic messaging
+	if batchMsg.IsLastFromTable && !dh.allFilesReceived {
+		dh.allFilesReceived = true
+		log.Printf("Data Handler: All files received for client %s. Starting periodic processing messages.", batchMsg.ClientID)
+		go dh.startPeriodicProcessingMessages()
+	}
+
 	return nil
 }
 
@@ -282,6 +306,27 @@ func (dh *DataHandler) SendChunkToJoinDataHandler(chunkMsg *chunk.ChunkMessage) 
 
 	// Send to join data handler queue
 	return dh.joinDataHandlerProducer.Send(messageData)
+}
+
+// startPeriodicProcessingMessages sends "processing queries" message every 5 seconds
+func (dh *DataHandler) startPeriodicProcessingMessages() {
+	if dh.processingStarted {
+		return // Already started
+	}
+	dh.processingStarted = true
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		message := "processing queries\n"
+		_, err := dh.Conn.Write([]byte(message))
+		if err != nil {
+			log.Printf("Data Handler: Failed to send processing message: %v", err)
+			return
+		}
+		log.Printf("Data Handler: Sent 'processing queries' message to client")
+	}
 }
 
 // Close closes all connections
