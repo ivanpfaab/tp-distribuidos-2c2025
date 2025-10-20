@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the query gateway
-RUN CGO_ENABLED=0 GOOS=linux go build -o query-gateway ./query-gateway/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o query-gateway ./query-gateway/
 
 FROM alpine:latest
 
@@ -22,6 +22,9 @@ WORKDIR /root/
 
 # Copy the binary from builder stage
 COPY --from=builder /app/query-gateway .
+
+# Set execute permissions
+RUN chmod +x query-gateway
 
 # Run the query gateway
 CMD ["./query-gateway"]

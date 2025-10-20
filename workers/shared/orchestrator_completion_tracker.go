@@ -200,3 +200,14 @@ func (ct *CompletionTracker) IsClientCompleted(clientID string) bool {
 	}
 	return false
 }
+
+// ClearClientState removes all state for a specific client
+func (ct *CompletionTracker) ClearClientState(clientID string) {
+	ct.mutex.Lock()
+	defer ct.mutex.Unlock()
+
+	if _, exists := ct.clientStatuses[clientID]; exists {
+		delete(ct.clientStatuses, clientID)
+		log.Printf("[%s] Cleared state for client %s", ct.trackerName, clientID)
+	}
+}

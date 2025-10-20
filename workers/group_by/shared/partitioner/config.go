@@ -1,4 +1,4 @@
-package partitioner
+package main
 
 import (
 	"fmt"
@@ -26,6 +26,7 @@ type PartitionerConfig struct {
 	QueueName        string
 	ConnectionConfig *middleware.ConnectionConfig
 	NumPartitions    int
+	NumWorkers       int
 	MaxBufferSize    int
 }
 
@@ -45,20 +46,21 @@ func LoadConfig() (*PartitionerConfig, error) {
 		return nil, fmt.Errorf("QUERY_TYPE must be 2, 3, or 4")
 	}
 
-	rabbitMQURL := os.Getenv("RABBITMQ_URL")
-	if rabbitMQURL == "" {
-		rabbitMQURL = DefaultRabbitMQURL
-	}
+	// Load RabbitMQ connection details from environment variables
+	rabbitMQHost := getEnv("RABBITMQ_HOST", "rabbitmq")
+	rabbitMQPort := getEnv("RABBITMQ_PORT", "5672")
+	rabbitMQUser := getEnv("RABBITMQ_USER", "admin")
+	rabbitMQPass := getEnv("RABBITMQ_PASS", "password")
 
 	// Get the appropriate queue name based on query type
 	var queueName string
 	switch queryType {
 	case 2:
-		queueName = queues.Query2MapQueue
+		queueName = queues.Query2GroupByQueue
 	case 3:
-		queueName = queues.Query3MapQueue
+		queueName = queues.Query3GroupByQueue
 	case 4:
-		queueName = queues.Query4MapQueue
+		queueName = queues.Query4GroupByQueue
 	}
 
 	// Load partition configuration
@@ -70,6 +72,15 @@ func LoadConfig() (*PartitionerConfig, error) {
 		}
 	}
 
+	// Load number of workers
+	numWorkersStr := os.Getenv("NUM_WORKERS")
+	numWorkers := getNumWorkersForQuery(queryType)
+	if numWorkersStr != "" {
+		if parsed, err := strconv.Atoi(numWorkersStr); err == nil && parsed > 0 {
+			numWorkers = parsed
+		}
+	}
+
 	maxBufferSizeStr := os.Getenv("MAX_BUFFER_SIZE")
 	maxBufferSize := MaxBufferSize
 	if maxBufferSizeStr != "" {
@@ -78,8 +89,17 @@ func LoadConfig() (*PartitionerConfig, error) {
 		}
 	}
 
+	// Parse port to int
+	port, err := strconv.Atoi(rabbitMQPort)
+	if err != nil {
+		return nil, fmt.Errorf("invalid RABBITMQ_PORT: %v", err)
+	}
+
 	connectionConfig := &middleware.ConnectionConfig{
-		URL: rabbitMQURL,
+		Host:     rabbitMQHost,
+		Port:     port,
+		Username: rabbitMQUser,
+		Password: rabbitMQPass,
 	}
 
 	return &PartitionerConfig{
@@ -87,6 +107,29 @@ func LoadConfig() (*PartitionerConfig, error) {
 		QueueName:        queueName,
 		ConnectionConfig: connectionConfig,
 		NumPartitions:    numPartitions,
+		NumWorkers:       numWorkers,
 		MaxBufferSize:    maxBufferSize,
 	}, nil
+}
+
+// getNumWorkersForQuery returns the default number of workers for a specific query type
+func getNumWorkersForQuery(queryType int) int {
+	switch queryType {
+	case 2:
+		return 3
+	case 3:
+		return 3
+	case 4:
+		return 3 // configurable
+	default:
+		return 1
+	}
+}
+
+// getEnv gets an environment variable with a default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

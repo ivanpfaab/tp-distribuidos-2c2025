@@ -1,6 +1,6 @@
 # Simple Makefile for Docker Compose Management
 
-.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-rebuild docker-compose-generate docker-compose-restore
+.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore
 
 # Default target
 help: ## Show this help message
@@ -14,6 +14,7 @@ help: ## Show this help message
 	@echo "  docker-compose-logs-data-flow    - Show logs for data-flow services only"
 	@echo "  docker-compose-build             - Build all Docker images"
 	@echo "  docker-compose-rebuild           - Rebuild everything from scratch (no cache)"
+	@echo "  docker-rebuild                   - Full Docker cleanup and rebuild (stops all containers, prunes images)"
 	@echo "  docker-compose-test              - Run tests"
 	@echo "  docker-compose-generate          - Generate docker-compose.yaml (scale: filters, gateways, join workers, clients)"
 	@echo "  docker-compose-restore           - Restore original docker-compose.yaml from backup"
@@ -99,7 +100,7 @@ docker-compose-rebuild: ## Rebuild everything from scratch (no cache)
 	@echo "   Waiting for RabbitMQ to be healthy..."
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
 	@echo "   Starting Workers..."
-	docker compose --profile orchestration up -d year-filter-worker-1 year-filter-worker-2 year-filter-worker-3 time-filter-worker-1 time-filter-worker-2 amount-filter-worker-1 join-data-handler-1 itemid-join-worker-1 itemid-join-worker-2 storeid-join-worker-1 storeid-join-worker-2 user-partition-splitter user-partition-writer-1 user-partition-writer-2 user-partition-writer-3 user-partition-writer-4 user-partition-writer-5 user-join-reader-1 user-join-reader-2 query2-map-worker query2-reduce-s2-2023 query2-reduce-s1-2024 query2-reduce-s2-2024 query2-reduce-s1-2025 query2-reduce-s2-2025 query2-top-items-worker query3-map-worker query3-reduce-s2-2023 query3-reduce-s1-2024 query3-reduce-s2-2024 query3-reduce-s1-2025 query3-reduce-s2-2025 query4-map-worker query4-reduce-worker query4-top-users-worker streaming-service query-gateway-1
+	docker compose --profile orchestration up -d year-filter-worker-1 year-filter-worker-2 year-filter-worker-3 time-filter-worker-1 time-filter-worker-2 amount-filter-worker-1 join-data-handler-1 itemid-join-worker-1 itemid-join-worker-2 storeid-join-worker-1 user-partition-splitter user-partition-writer-1 user-partition-writer-2 user-partition-writer-3 user-partition-writer-4 user-partition-writer-5 user-join-reader-1 user-join-reader-2 query2-orchestrator query2-partitioner query2-groupby-worker-1 query2-groupby-worker-2 query2-groupby-worker-3 query2-top-items-worker query3-orchestrator query3-partitioner query3-groupby-worker-1 query3-groupby-worker-2 query3-groupby-worker-3 query4-orchestrator query4-partitioner query4-groupby-worker-1 query4-groupby-worker-2 query4-groupby-worker-3 query4-top-users-worker streaming-service query-gateway-1
 	@echo "   Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d server
 	@echo "   Starting Clients..."
@@ -109,6 +110,21 @@ docker-compose-rebuild: ## Rebuild everything from scratch (no cache)
 # Run tests
 docker-compose-test: ## Run tests
 	docker compose --profile test up --build
+
+# Full Docker cleanup and rebuild
+docker-rebuild: ## Full Docker cleanup and rebuild (stops all containers, prunes images)
+	@echo "Starting full Docker cleanup and rebuild..."
+	@echo "1. Stopping docker-compose services..."
+	docker compose down || true
+	@echo "2. Stopping all Docker containers..."
+	docker stop $$(docker ps -aq) 2>/dev/null || true
+	@echo "3. Removing all Docker containers..."
+	docker rm $$(docker ps -aq) 2>/dev/null || true
+	@echo "4. Pruning Docker images..."
+	docker image prune -a -f || true
+	@echo "5. Starting services with docker-compose-up..."
+	$(MAKE) docker-compose-up
+	@echo "Docker rebuild complete!"
 
 # Generate docker-compose.yaml with custom worker scaling
 docker-compose-generate: ## Generate docker-compose.yaml with custom worker scaling

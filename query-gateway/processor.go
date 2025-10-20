@@ -32,26 +32,26 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 	case 2:
 		// Query 2: Send to Query 2 GroupBy (MapReduce)
 		if err := qg.sendToQuery2GroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query 2 GroupBy worker: %v\n", err)
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 2 GroupBy: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 2 chunk to Query 2 GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 2 chunk to Query 2 GroupBy - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 3:
 		// Query 3: Send to Query 3 GroupBy (MapReduce)
 		if err := qg.sendToQuery3GroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query 3 GroupBy worker: %v\n", err)
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 3 GroupBy: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 3 chunk to Query 3 GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 3 chunk to Query 3 GroupBy - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 4:
 		// Query 4: Send to Query 4 GroupBy (MapReduce)
 		if err := qg.sendToQuery4GroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query 4 GroupBy worker: %v\n", err)
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 4 GroupBy: %v\n", err)
 			return err
 		}
-		fmt.Printf("Query Gateway: Routed Query 4 chunk to Query 4 GroupBy worker - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
+		fmt.Printf("Query Gateway: Routed Query 4 chunk to Query 4 GroupBy - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Query Gateway: Unknown query type %d, printing result\n", chunkMsg.QueryType)

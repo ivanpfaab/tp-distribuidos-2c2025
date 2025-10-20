@@ -1,4 +1,4 @@
-package partitioner
+package main
 
 import (
 	"encoding/csv"
@@ -7,8 +7,11 @@ import (
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
 // Record represents a single data record
@@ -18,37 +21,59 @@ type Record struct {
 
 // PartitionerProcessor handles the processing logic for partitioning chunks
 type PartitionerProcessor struct {
-	QueryType     int
-	Schema        []string
-	Partitions    [][]Record // One buffer per partition
-	NumPartitions int
-	MaxBufferSize int
+	QueryType        int
+	Schema           []string
+	NumPartitions    int
+	NumWorkers       int
+	ExchangeProducer *exchange.ExchangeMiddleware
+	ExchangeName     string
 }
 
 // NewPartitionerProcessor creates a new processor for the specified query type
-func NewPartitionerProcessor(queryType, numPartitions, maxBufferSize int) (*PartitionerProcessor, error) {
+func NewPartitionerProcessor(queryType, numPartitions, numWorkers int, connectionConfig interface{}) (*PartitionerProcessor, error) {
 	// Get the appropriate schema for the query type using the shared schema
 	schema := shared.GetSchemaForQueryType(queryType, shared.RawData)
 	if len(schema) == 0 {
 		return nil, fmt.Errorf("unsupported query type: %d", queryType)
 	}
 
-	// Initialize partitions
-	partitions := make([][]Record, numPartitions)
-	for i := range partitions {
-		partitions[i] = make([]Record, 0, maxBufferSize)
+	// Get exchange name for this query
+	exchangeName := queues.GetGroupByExchangeName(queryType)
+	if exchangeName == "" {
+		return nil, fmt.Errorf("no exchange found for query type %d", queryType)
+	}
+
+	// Create exchange producer
+	var exchangeProducer *exchange.ExchangeMiddleware
+	if connectionConfig != nil {
+		// Type assert connectionConfig to *middleware.ConnectionConfig
+		middlewareConfig, ok := connectionConfig.(*middleware.ConnectionConfig)
+		if !ok {
+			return nil, fmt.Errorf("connectionConfig is not of type *middleware.ConnectionConfig")
+		}
+		exchangeProducer = exchange.NewMessageMiddlewareExchange(exchangeName, []string{}, middlewareConfig)
+		if exchangeProducer == nil {
+			return nil, fmt.Errorf("failed to create exchange producer")
+		}
+
+		// Declare the topic exchange
+		if err := exchangeProducer.DeclareExchange("topic", false, false, false, false); err != 0 {
+			exchangeProducer.Close()
+			return nil, fmt.Errorf("failed to declare topic exchange: %v", err)
+		}
 	}
 
 	return &PartitionerProcessor{
-		QueryType:     queryType,
-		Schema:        schema,
-		Partitions:    partitions,
-		NumPartitions: numPartitions,
-		MaxBufferSize: maxBufferSize,
+		QueryType:        queryType,
+		Schema:           schema,
+		NumPartitions:    numPartitions,
+		NumWorkers:       numWorkers,
+		ExchangeProducer: exchangeProducer,
+		ExchangeName:     exchangeName,
 	}, nil
 }
 
-// ProcessChunk processes a chunk and partitions its data
+// ProcessChunk processes a chunk and sends partitioned data to workers
 func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 	testing_utils.LogInfo("Partitioner Processor", "Processing chunk %d for query type %d", chunkMessage.ChunkNumber, p.QueryType)
 
@@ -58,35 +83,36 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 		return fmt.Errorf("failed to parse chunk data: %v", err)
 	}
 
-	// Partition records based on user_id modulo
-	partitionStats := make(map[int]int)
+	// Partition records into temporary buffers (one per partition)
+	partitionedRecords := make(map[int][]Record)
 	for _, record := range records {
 		partition, err := p.GetPartition(record)
 		if err != nil {
 			testing_utils.LogWarn("Partitioner Processor", "Failed to get partition for record: %v", err)
 			continue
 		}
+		partitionedRecords[partition] = append(partitionedRecords[partition], record)
+	}
 
-		// Add to partition buffer
-		p.Partitions[partition] = append(p.Partitions[partition], record)
-		partitionStats[partition]++
-
-		// Flush partition if buffer is full
-		if len(p.Partitions[partition]) >= p.MaxBufferSize {
-			if err := p.FlushPartition(partition, chunkMessage, false); err != nil {
-				return fmt.Errorf("failed to flush partition %d: %v", partition, err)
+	// Group partitions by worker and send one chunk per worker
+	// Worker i gets partitions: i, i+numWorkers, i+2*numWorkers, ...
+	for workerID := 0; workerID < p.NumWorkers; workerID++ {
+		// Collect all records for this worker from its assigned partitions
+		workerRecords := []Record{}
+		for partition := workerID; partition < p.NumPartitions; partition += p.NumWorkers {
+			if records, exists := partitionedRecords[partition]; exists {
+				workerRecords = append(workerRecords, records...)
 			}
+		}
+
+		// Send chunk to this worker
+		if err := p.sendToWorker(workerID, workerRecords, chunkMessage); err != nil {
+			return fmt.Errorf("failed to send to worker %d: %v", workerID, err)
 		}
 	}
 
-	testing_utils.LogInfo("Partitioner Processor", "Partitioned %d records across %d partitions: %v",
-		len(records), p.NumPartitions, partitionStats)
-
-	// If this is the last chunk, flush all partitions
-	if chunkMessage.IsLastChunk {
-		testing_utils.LogInfo("Partitioner Processor", "Last chunk received, flushing all partitions")
-		return p.flushAllPartitions(chunkMessage)
-	}
+	testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d to %d workers (%d total records)",
+		chunkMessage.ChunkNumber, p.NumWorkers, len(records))
 
 	return nil
 }
@@ -107,14 +133,21 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 		return []Record{}, nil
 	}
 
-	// Validate header row against expected schema
-	if err := p.ValidateHeader(records[0]); err != nil {
-		return nil, fmt.Errorf("schema validation failed: %v", err)
+	// Check if first row is a header by trying to validate it against expected schema
+	// If validation fails, treat it as data instead of header
+	startIndex := 0
+	if err := p.ValidateHeader(records[0]); err == nil {
+		// First row is a valid header, skip it
+		testing_utils.LogInfo("Partitioner Processor", "Found header row, skipping it")
+		startIndex = 1
+	} else {
+		// First row is not a header, treat all rows as data
+		testing_utils.LogInfo("Partitioner Processor", "No header found, processing all rows as data")
 	}
 
-	// Skip header row and process data records
-	result := make([]Record, 0, len(records)-1)
-	for i := 1; i < len(records); i++ {
+	// Process data records
+	result := make([]Record, 0, len(records)-startIndex)
+	for i := startIndex; i < len(records); i++ {
 		record := records[i]
 		if len(record) < len(p.Schema) {
 			testing_utils.LogWarn("Partitioner Processor", "Skipping malformed record (insufficient fields): %v", record)
@@ -148,21 +181,16 @@ func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 // validateHeader validates that the CSV header matches the expected schema
 func (p *PartitionerProcessor) ValidateHeader(header []string) error {
 	if len(header) != len(p.Schema) {
-		testing_utils.LogError("Partitioner Processor", "Schema mismatch: expected %d fields, got %d. Expected: %v, Got: %v",
-			len(p.Schema), len(header), p.Schema, header)
 		return fmt.Errorf("schema field count mismatch: expected %d, got %d", len(p.Schema), len(header))
 	}
 
 	for i, expectedField := range p.Schema {
 		actualField := strings.TrimSpace(header[i])
 		if actualField != expectedField {
-			testing_utils.LogError("Partitioner Processor", "Schema field mismatch at position %d: expected '%s', got '%s'. Expected schema: %v, Got header: %v",
-				i, expectedField, actualField, p.Schema, header)
 			return fmt.Errorf("schema field mismatch at position %d: expected '%s', got '%s'", i, expectedField, actualField)
 		}
 	}
 
-	testing_utils.LogInfo("Partitioner Processor", "Schema validation passed for query type %d", p.QueryType)
 	return nil
 }
 
@@ -180,37 +208,62 @@ func (p *PartitionerProcessor) GetUserIDFieldIndex() int {
 	}
 }
 
-// flushPartition sends buffered records from a specific partition
-func (p *PartitionerProcessor) FlushPartition(partition int, originalChunk *chunk.Chunk, isLastChunk bool) error {
-	if len(p.Partitions[partition]) == 0 {
-		// Empty partition, nothing to flush
-		return nil
+// sendToWorker sends a chunk to a specific worker with correct metadata
+func (p *PartitionerProcessor) sendToWorker(workerID int, records []Record, originalChunk *chunk.Chunk) error {
+	// Convert records to CSV
+	csvData := p.recordsToCSV(records)
+
+	// Calculate chunk metadata
+	// chunkNumber = (original_chunk.ChunkNumber - 1) * numWorkers + workerID
+	newChunkNumber := (originalChunk.ChunkNumber-1)*p.NumWorkers + workerID
+
+	// isLastChunk = original_chunk.isLastChunk && workerID == numWorkers - 1
+	isLastChunk := originalChunk.IsLastChunk && (workerID == p.NumWorkers-1)
+
+	// isLastFromTable = original_chunk.isLastFromTable && workerID == numWorkers - 1
+	isLastFromTable := originalChunk.IsLastFromTable && (workerID == p.NumWorkers-1)
+
+	// Create chunk for this worker
+	workerChunk := chunk.NewChunk(
+		originalChunk.ClientID,
+		originalChunk.FileID,
+		originalChunk.QueryType,
+		newChunkNumber,
+		isLastChunk,
+		isLastFromTable,
+		originalChunk.Step,
+		len(csvData),
+		originalChunk.TableID,
+		csvData,
+	)
+
+	// Serialize the chunk
+	chunkMsg := chunk.NewChunkMessage(workerChunk)
+	serializedChunk, err := chunk.SerializeChunkMessage(chunkMsg)
+	if err != nil {
+		return fmt.Errorf("failed to serialize chunk: %v", err)
 	}
 
-	testing_utils.LogInfo("Partitioner Processor", "Flushed %d records from partition %d (IsLastChunk=%t)",
-		len(p.Partitions[partition]), partition, isLastChunk)
+	// Get routing key for this worker
+	routingKey := queues.GetGroupByWorkerRoutingKey(p.QueryType, workerID)
+	if routingKey == "" {
+		return fmt.Errorf("failed to get routing key for worker %d", workerID)
+	}
 
-	// Clear partition buffer
-	p.Partitions[partition] = p.Partitions[partition][:0]
-
-	// TODO: Send partitioned data to the appropriate group by worker
-	// This will be implemented in the next step
-
-	return nil
-}
-
-// flushAllPartitions flushes all partition buffers
-func (p *PartitionerProcessor) flushAllPartitions(originalChunk *chunk.Chunk) error {
-	for partition := 0; partition < p.NumPartitions; partition++ {
-		if err := p.FlushPartition(partition, originalChunk, true); err != nil {
-			return fmt.Errorf("failed to flush partition %d: %v", partition, err)
+	// Send to exchange with worker-specific routing key
+	if p.ExchangeProducer != nil {
+		if sendErr := p.ExchangeProducer.Send(serializedChunk, []string{routingKey}); sendErr != 0 {
+			return fmt.Errorf("failed to send chunk to worker %d: error code %v", workerID, sendErr)
 		}
+		testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d (%d records) to worker %d with routing key '%s' (IsLastChunk=%t, IsLastFromTable=%t)",
+			newChunkNumber, len(records), workerID, routingKey, isLastChunk, isLastFromTable)
 	}
+
 	return nil
 }
 
-// partitionToCSV converts a partition buffer to CSV format
-func (p *PartitionerProcessor) PartitionToCSV(partition int) string {
+// recordsToCSV converts records to CSV format
+func (p *PartitionerProcessor) recordsToCSV(records []Record) string {
 	var result strings.Builder
 
 	// Write header
@@ -218,7 +271,7 @@ func (p *PartitionerProcessor) PartitionToCSV(partition int) string {
 	result.WriteString("\n")
 
 	// Write records
-	for _, record := range p.Partitions[partition] {
+	for _, record := range records {
 		result.WriteString(strings.Join(record.Fields, ","))
 		result.WriteString("\n")
 	}

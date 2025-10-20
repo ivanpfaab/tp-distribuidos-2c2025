@@ -1,4 +1,4 @@
-package partitioner
+package main
 
 import (
 	"fmt"

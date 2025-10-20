@@ -9,9 +9,6 @@ import (
 )
 
 const (
-	YearFilterQueueName     = "year-filter"
-	TimeFilterQueueName     = "time-filter"
-	ReplyFilterBusQueueName = "reply-filter-bus"
 	DefaultRabbitMQHost     = "localhost"
 	DefaultRabbitMQPort     = "5672"
 	DefaultRabbitMQUser     = "admin"

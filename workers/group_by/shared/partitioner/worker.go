@@ -1,4 +1,4 @@
-package partitioner
+package main
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ func NewPartitionerWorker(config *PartitionerConfig) (*PartitionerWorker, error)
 	}
 
 	// Create processor with partitioning configuration
-	processor, err := NewPartitionerProcessor(config.QueryType, config.NumPartitions, config.MaxBufferSize)
+	processor, err := NewPartitionerProcessor(config.QueryType, config.NumPartitions, config.NumWorkers, config.ConnectionConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create processor: %v", err)
 	}

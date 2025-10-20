@@ -23,5 +23,8 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /app/year-filter-worker .
 
+# Set execute permissions
+RUN chmod +x year-filter-worker
+
 # Run the year filter worker
 CMD ["./year-filter-worker"]

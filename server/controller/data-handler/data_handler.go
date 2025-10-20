@@ -10,8 +10,8 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 const (
@@ -54,7 +54,7 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 
 	// Initialize queue producer for sending chunks directly to year-filter
 	dh.yearFilterProducer = workerqueue.NewMessageMiddlewareQueue(
-		"year-filter",
+		queues.YearFilterQueue,
 		dh.config,
 	)
 	if dh.yearFilterProducer == nil {
@@ -68,7 +68,7 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 
 	// Initialize queue producer for sending chunks directly to join data handler
 	dh.joinDataHandlerProducer = workerqueue.NewMessageMiddlewareQueue(
-		FixedJoinDataQueue,
+		queues.FixedJoinDataQueue,
 		dh.config,
 	)
 	if dh.joinDataHandlerProducer == nil {

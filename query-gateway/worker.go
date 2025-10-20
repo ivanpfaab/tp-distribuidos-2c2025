@@ -5,6 +5,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // QueryGateway encapsulates the query gateway state and dependencies
@@ -21,7 +22,7 @@ type QueryGateway struct {
 func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error) {
 	// Create reply-filter-bus consumer
 	consumer := workerqueue.NewQueueConsumer(
-		ReplyFilterBusQueueName,
+		queues.ReplyFilterBusQueue,
 		config,
 	)
 	if consumer == nil {
@@ -30,7 +31,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 
 	// Declare the reply-filter-bus queue using QueueMiddleware
 	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(
-		ReplyFilterBusQueueName,
+		queues.ReplyFilterBusQueue,
 		config,
 	)
 	if queueDeclarer == nil {
@@ -46,7 +47,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 
 	// Initialize queue producer for sending chunks to Query 2 GroupBy (MapReduce Worker)
 	query2GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		ItemIdGroupByChunkQueue, // query2-map-queue
+		queues.Query2GroupByQueue, // query2-groupby-queue
 		config,
 	)
 	if query2GroupByProducer == nil {
@@ -63,7 +64,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 
 	// Initialize queue producer for sending chunks to Query 3 GroupBy (MapReduce Worker)
 	query3GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		StoreIdGroupByChunkQueue, // query3-map-queue
+		queues.Query3GroupByQueue, // query3-groupby-queue
 		config,
 	)
 	if query3GroupByProducer == nil {
@@ -82,7 +83,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 
 	// Initialize queue producer for sending chunks to Query 4 GroupBy (MapReduce Worker)
 	query4GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		Query4MapQueue, // query4-map-queue
+		queues.Query4GroupByQueue, // query4-groupby-queue
 		config,
 	)
 	if query4GroupByProducer == nil {
@@ -103,7 +104,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 
 	// Initialize queue producer for Query 1 results
 	query1ResultsProducer := workerqueue.NewMessageMiddlewareQueue(
-		Query1ResultsQueue,
+		queues.Query1ResultsQueue,
 		config,
 	)
 	if query1ResultsProducer == nil {
