@@ -29,6 +29,7 @@ type GroupByOrchestrator struct {
 	chunkConsumer       *workerqueue.QueueConsumer
 	terminationProducer *exchange.ExchangeMiddleware
 	completionProducer  *workerqueue.QueueMiddleware // For sending completion chunks to next step
+	fileProcessor       *FileProcessor                // For reading and converting grouped data files
 }
 
 // NewGroupByOrchestrator creates a new group by orchestrator
@@ -37,7 +38,8 @@ func NewGroupByOrchestrator(queryType int) *GroupByOrchestrator {
 	config := NewOrchestratorConfig(queryType)
 
 	orchestrator := &GroupByOrchestrator{
-		config: config,
+		config:        config,
+		fileProcessor: NewFileProcessor(queryType),
 	}
 
 	// Create completion tracker with callback to send termination signals
@@ -101,19 +103,64 @@ func (gbo *GroupByOrchestrator) initializeQueues() {
 
 // onClientCompleted is called when all files for a client are completed
 func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus *shared.ClientStatus) {
-	log.Printf("Client %s: All %d files completed! Sending completion chunk to next step...",
+	log.Printf("Client %s: All %d files completed! Reading grouped data files and sending to next step...",
 		clientID, clientStatus.TotalExpectedFiles)
 
-	// Send completion chunk to next step
-	if err := gbo.sendCompletionChunk(clientID); err != nil {
-		log.Printf("Failed to send completion chunk for client %s: %v", clientID, err)
+	// Get all files for this client
+	files, err := gbo.fileProcessor.GetClientFiles(clientID)
+	if err != nil {
+		log.Printf("Failed to get files for client %s: %v", clientID, err)
 		return
+	}
+
+	if len(files) == 0 {
+		log.Printf("No files found for client %s, skipping", clientID)
+		gbo.completionTracker.ClearClientState(clientID)
+		return
+	}
+
+	log.Printf("Client %s: Found %d partition files to process", clientID, len(files))
+
+	// Process each file and send as a chunk (without deleting files yet)
+	for i, filePath := range files {
+		// Read and convert file to CSV
+		csvData, err := gbo.fileProcessor.ReadAndConvertFile(filePath)
+		if err != nil {
+			log.Printf("Failed to read/convert file %s: %v", filePath, err)
+			continue
+		}
+
+		// Determine if this is the last chunk
+		isLastChunk := (i == len(files)-1)
+
+		// Send chunk to next step
+		if err := gbo.sendDataChunk(clientID, i+1, csvData, isLastChunk); err != nil {
+			log.Printf("Failed to send data chunk for file %s: %v", filePath, err)
+			continue
+		}
+	}
+
+	// Now that all chunks have been sent, clean up files
+	log.Printf("Client %s: All %d chunks sent, now cleaning up files...", clientID, len(files))
+	
+	// Delete individual files
+	for _, filePath := range files {
+		if err := gbo.fileProcessor.DeleteFile(filePath); err != nil {
+			log.Printf("Failed to delete file %s: %v", filePath, err)
+			// Continue anyway - don't block on cleanup failures
+		}
+	}
+
+	// Delete the entire client directory
+	if err := gbo.fileProcessor.DeleteClientDirectory(clientID); err != nil {
+		log.Printf("Failed to delete client directory for %s: %v", clientID, err)
+		// Continue anyway - don't block on cleanup failures
 	}
 
 	// Clear client state from completion tracker
 	gbo.completionTracker.ClearClientState(clientID)
 
-	log.Printf("Client %s: Completion chunk sent and state cleared", clientID)
+	log.Printf("Client %s: All %d chunks sent and files cleaned up", clientID, len(files))
 }
 
 // sendTerminationSignals sends termination signals to all map and reduce workers
@@ -140,39 +187,39 @@ func (gbo *GroupByOrchestrator) sendTerminationSignals(clientID string) {
 	log.Printf("Termination signals sent successfully for Query %d", gbo.config.QueryType)
 }
 
-// sendCompletionChunk sends an empty completion chunk to the next processing step
-func (gbo *GroupByOrchestrator) sendCompletionChunk(clientID string) error {
-	// Create empty completion chunk with chunkNumber = -1, isLastChunk = True
-	// We use empty values for FileID since this is a completion signal
-	completionChunk := chunk.NewChunk(
-		clientID,            // ClientID
-		"DONE",              // FileID - using "DONE" as a marker
+// sendDataChunk sends a data chunk with CSV data to the next processing step
+func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, csvData string, isLastChunk bool) error {
+	// Create chunk with grouped CSV data
+	dataChunk := chunk.NewChunk(
+		clientID,                   // ClientID
+		"1",                        // FileID - hardcoded to 1 as requested
 		byte(gbo.config.QueryType), // QueryType
-		-1,                  // ChunkNumber = -1 to indicate completion
-		true,                // IsLastChunk = True
-		true,                // IsLastFromTable = True
-		0,                   // Step
-		0,                   // ChunkSize = 0 (empty chunk)
-		0,                   // TableID
-		"",                  // ChunkData = empty
+		chunkNumber,                // ChunkNumber
+		isLastChunk,                // IsLastChunk
+		isLastChunk,                // IsLastFromTable - same as isLastChunk since we only have one "file"
+		0,                          // Step
+		len(csvData),               // ChunkSize
+		0,                          // TableID
+		csvData,                    // ChunkData - CSV formatted data
 	)
 
 	// Create chunk message
-	completionMessage := chunk.NewChunkMessage(completionChunk)
+	chunkMessage := chunk.NewChunkMessage(dataChunk)
 
 	// Serialize the chunk
-	serializedChunk, err := chunk.SerializeChunkMessage(completionMessage)
+	serializedChunk, err := chunk.SerializeChunkMessage(chunkMessage)
 	if err != nil {
-		return fmt.Errorf("failed to serialize completion chunk: %v", err)
+		return fmt.Errorf("failed to serialize data chunk: %v", err)
 	}
 
 	// Send to the appropriate queue based on query type
 	if sendErr := gbo.completionProducer.Send(serializedChunk); sendErr != 0 {
-		return fmt.Errorf("failed to send completion chunk: error code %v", sendErr)
+		return fmt.Errorf("failed to send data chunk: error code %v", sendErr)
 	}
 
 	completionQueueName := getCompletionQueueName(gbo.config.QueryType)
-	log.Printf("Sent completion chunk for client %s to queue %s", clientID, completionQueueName)
+	log.Printf("Sent chunk %d for client %s to queue %s (IsLastChunk=%t, %d bytes)",
+		chunkNumber, clientID, completionQueueName, isLastChunk, len(csvData))
 
 	return nil
 }

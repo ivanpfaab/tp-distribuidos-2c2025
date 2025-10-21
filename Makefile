@@ -112,10 +112,10 @@ docker-compose-test: ## Run tests
 	docker compose --profile test up --build
 
 # Full Docker cleanup and rebuild
-docker-rebuild: ## Full Docker cleanup and rebuild (stops all containers, prunes images)
+docker-rebuild: ## Full Docker cleanup and rebuild (stops all containers, removes project volumes, prunes images)
 	@echo "Starting full Docker cleanup and rebuild..."
-	@echo "1. Stopping docker-compose services..."
-	docker compose down || true
+	@echo "1. Stopping docker-compose services and removing project volumes..."
+	docker compose down -v --remove-orphans || true
 	@echo "2. Stopping all Docker containers..."
 	docker stop $$(docker ps -aq) 2>/dev/null || true
 	@echo "3. Removing all Docker containers..."
