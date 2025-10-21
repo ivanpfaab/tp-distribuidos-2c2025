@@ -122,7 +122,6 @@ func (st *StoreTopUsers) GetTopUsers() []*UserRecord {
 // ClientState holds the state for a specific client
 type ClientState struct {
 	topUsersByStore map[string]*StoreTopUsers // key: store_id
-	LastChunkReceived bool         // Track last chunk received (key: ClientID)
 }
 
 // TopUsersWorker processes user-store aggregations and selects top users per store
@@ -188,7 +187,6 @@ func (tw *TopUsersWorker) getOrCreateClientState(clientID string) *ClientState {
 	if tw.clientStates[clientID] == nil {
 		tw.clientStates[clientID] = &ClientState{
 			topUsersByStore: make(map[string]*StoreTopUsers),
-			LastChunkReceived: false,
 		}
 	}
 	return tw.clientStates[clientID]
@@ -216,7 +214,6 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 
 	// Check if this is the last chunk (EOS marker)
 	if chunkMsg.IsLastChunk {
-		clientState.LastChunkReceived = true
 		log.Printf("Top Users Worker: Received last chunk for client %s, sending top users...", clientID)
 
 		if err := tw.sendTopUsers(clientID, clientState); err != 0 {

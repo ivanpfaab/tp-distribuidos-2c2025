@@ -30,8 +30,6 @@ type Store struct {
 
 // ClientState holds the state for a specific client's batch processing
 type ClientState struct {
-	eosReceived map[string]bool // Track EOS from reduce workers (key: FileID) TODO: CHANGE THIS
-	eosCount    int
 	chunks      []*chunk.Chunk // Store chunks for batch processing
 }
 
@@ -277,8 +275,6 @@ func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) mid
 func (w *StoreIdJoinWorker) getOrCreateClientState(clientID string) *ClientState {
 	if w.clientStates[clientID] == nil {
 		w.clientStates[clientID] = &ClientState{
-			eosReceived: make(map[string]bool),
-			eosCount:    0,
 			chunks:      make([]*chunk.Chunk, 0),
 		}
 	}
@@ -315,27 +311,16 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 
 	// Check if this is the last chunk (EOS marker)
 	if chunkMsg.IsLastChunk {
-		// Mark this reduce worker as finished
-		if !clientState.eosReceived[chunkMsg.FileID] {
-			clientState.eosReceived[chunkMsg.FileID] = true
-			clientState.eosCount++
-			fmt.Printf("StoreID Join Worker: Received EOS from reduce worker %s (Client: %s) - Count: %d/%d\n",
-				chunkMsg.FileID, clientID, clientState.eosCount, w.config.BatchSize)
+		fmt.Printf("StoreID Join Worker: Received last chunk for client %s, processing batch...\n", clientID)
+		if err := w.processBatch(clientID, clientState); err != 0 {
+			fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
+			delivery.Nack(false, false)
+			return err
 		}
-
-		// If we received EOS from all reduce workers, process the batch
-		if clientState.eosCount >= w.config.BatchSize {
-			fmt.Printf("StoreID Join Worker: All reduce workers finished for client %s, processing batch...\n", clientID)
-			if err := w.processBatch(clientID, clientState); err != 0 {
-				fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
-				delivery.Nack(false, false)
-				return err
-			}
-			// Clear client state
-			w.mutex.Lock()
-			delete(w.clientStates, clientID)
-			w.mutex.Unlock()
-		}
+		// Clear client state
+		w.mutex.Lock()
+		delete(w.clientStates, clientID)
+		w.mutex.Unlock()
 	}
 
 	delivery.Ack(false) // Acknowledge the chunk message

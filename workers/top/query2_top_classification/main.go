@@ -32,7 +32,6 @@ type MonthTopItems struct {
 // ClientState holds the state for a specific client
 type ClientState struct {
 	topItemsByMonth map[string]*MonthTopItems // key: "YYYY-MM"
-	LastChunkReceived bool        // Track last chunk received (key: ClientID)
 }
 
 // TopItemsWorker processes month-level aggregations and selects top items
@@ -98,7 +97,6 @@ func (tw *TopItemsWorker) getOrCreateClientState(clientID string) *ClientState {
 	if tw.clientStates[clientID] == nil {
 		tw.clientStates[clientID] = &ClientState{
 			topItemsByMonth: make(map[string]*MonthTopItems),
-			LastChunkReceived: false,
 		}
 	}
 	return tw.clientStates[clientID]
