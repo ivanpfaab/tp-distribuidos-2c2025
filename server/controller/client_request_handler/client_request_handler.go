@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	datahandler "github.com/tp-distribuidos-2c2025/server/controller/data-handler"
@@ -20,6 +21,7 @@ import (
 type ClientRequestHandler struct {
 	config                *middleware.ConnectionConfig
 	clientResultsConsumer *workerqueue.QueueConsumer
+	activeConnections     map[string]net.Conn // Store active connections by client ID
 }
 
 // NewClientRequestHandler creates a new instance of ClientRequestHandler
@@ -43,12 +45,23 @@ func NewClientRequestHandler(config *middleware.ConnectionConfig) *ClientRequest
 	return &ClientRequestHandler{
 		config:                config,
 		clientResultsConsumer: clientResultsConsumer,
+		activeConnections:     make(map[string]net.Conn),
 	}
 }
 
 // HandleConnection handles a TCP connection and creates a data handler for it
 func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		conn.Close()
+		// Remove connection from active connections map
+		for clientID, activeConn := range h.activeConnections {
+			if activeConn == conn {
+				delete(h.activeConnections, clientID)
+				log.Printf("Client Request Handler: Removed connection for client %s", clientID)
+				break
+			}
+		}
+	}()
 
 	log.Printf("Client Request Handler: New connection from %s", conn.RemoteAddr())
 
@@ -135,6 +148,12 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 		if err != nil {
 			log.Printf("Client Request Handler: Failed to process message from %s: %v", conn.RemoteAddr(), err)
 			response = []byte("ERROR: " + err.Error())
+		} else {
+			// Store connection for this client if it's a batch message
+			if batchMsg, ok := h.extractClientID(completeMessage); ok {
+				h.activeConnections[batchMsg.ClientID] = conn
+				log.Printf("Client Request Handler: Stored connection for client %s", batchMsg.ClientID)
+			}
 		}
 
 		// Send response back to client
@@ -206,6 +225,19 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 	return []byte(response), nil
 }
 
+// extractClientID extracts client ID from a message
+func (h *ClientRequestHandler) extractClientID(data []byte) (*batch.Batch, bool) {
+	message, err := deserializer.Deserialize(data)
+	if err != nil {
+		return nil, false
+	}
+
+	if batchMsg, ok := message.(*batch.Batch); ok {
+		return batchMsg, true
+	}
+	return nil, false
+}
+
 // StartClientResultsConsumer starts consuming formatted results from streaming service
 func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	if h.clientResultsConsumer == nil {
@@ -218,8 +250,30 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	// Start consuming in a goroutine
 	err := h.clientResultsConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			// Print the formatted data received from streaming service
-			fmt.Print(string(delivery.Body))
+			// Deserialize the chunk message to get client ID and formatted data
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				log.Printf("Client Request Handler: Failed to deserialize chunk message: %v", err)
+				continue
+			}
+
+			chunkData, ok := message.(*chunk.Chunk)
+			if !ok {
+				log.Printf("Client Request Handler: Failed to cast message to chunk")
+				continue
+			}
+
+			// Send formatted data to the appropriate client
+			if conn, exists := h.activeConnections[chunkData.ClientID]; exists {
+				_, err := conn.Write([]byte(chunkData.ChunkData))
+				if err != nil {
+					log.Printf("Client Request Handler: Failed to send data to client %s: %v", chunkData.ClientID, err)
+					// Remove the connection if it's no longer valid
+					delete(h.activeConnections, chunkData.ClientID)
+				}
+			} else {
+				log.Printf("Client Request Handler: No active connection found for client %s", chunkData.ClientID)
+			}
 		}
 	})
 
