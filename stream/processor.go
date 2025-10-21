@@ -12,7 +12,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// processMessage processes incoming messages and prints the results
+// processMessage processes incoming messages and sends formatted data to client
 func (sw *StreamingWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	// Deserialize the chunk message
 	chunkFromMsg, err := deserializer.Deserialize(delivery.Body)
@@ -27,18 +27,37 @@ func (sw *StreamingWorker) processMessage(delivery amqp.Delivery) middleware.Mes
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Print results immediately for all queries
-	sw.printResult(chunkData)
-	return 0
+	// Send formatted data to client instead of printing
+	return sw.sendFormattedDataToClient(chunkData)
 }
 
-// printResult prints the chunk data in a formatted way with ClientID
-func (sw *StreamingWorker) printResult(chunkData *chunk.Chunk) {
-	// Split the CSV data into individual rows and print each one
+// sendFormattedDataToClient formats the chunk data and sends it to client request handler
+func (sw *StreamingWorker) sendFormattedDataToClient(chunkData *chunk.Chunk) middleware.MessageMiddlewareError {
+	// Format the data the same way as it was being printed
+	var formattedRows []string
 	rows := strings.Split(strings.TrimSpace(chunkData.ChunkData), "\n")
 	for _, row := range rows {
 		if strings.TrimSpace(row) != "" { // Skip empty rows
-			fmt.Printf("%s | Q%d | %s\n", chunkData.ClientID, chunkData.QueryType, row)
+			formattedRow := fmt.Sprintf("%s | Q%d | %s", chunkData.ClientID, chunkData.QueryType, row)
+			formattedRows = append(formattedRows, formattedRow)
 		}
 	}
+
+	// Join all formatted rows with newlines
+	formattedData := strings.Join(formattedRows, "\n")
+	if formattedData != "" {
+		formattedData += "\n" // Add final newline
+	}
+
+	chunkData.ChunkData = formattedData
+	chunkData.ChunkSize = len(formattedData)
+
+	chunkMessage := chunk.NewChunkMessage(chunkData)
+	serializedData, err := chunk.SerializeChunkMessage(chunkMessage)
+	if err != nil {
+		testing.LogError("Streaming Worker", "Failed to serialize chunk: %v", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	return sw.clientResultsProducer.Send(serializedData)
 }

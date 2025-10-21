@@ -4,43 +4,31 @@ import (
 	"fmt"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // StreamingWorker encapsulates the streaming worker state and dependencies
 type StreamingWorker struct {
-	consumer       *exchange.ExchangeConsumer
-	query1Consumer *workerqueue.QueueConsumer
-	query2Consumer *workerqueue.QueueConsumer
-	query3Consumer *workerqueue.QueueConsumer
-	query4Consumer *workerqueue.QueueConsumer
-	config         *middleware.ConnectionConfig
+	query1Consumer        *workerqueue.QueueConsumer
+	query2Consumer        *workerqueue.QueueConsumer
+	query3Consumer        *workerqueue.QueueConsumer
+	query4Consumer        *workerqueue.QueueConsumer
+	clientResultsProducer *workerqueue.QueueMiddleware
+	config                *middleware.ConnectionConfig
 }
 
 // NewStreamingWorker creates a new StreamingWorker instance
 func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, error) {
-	// Create streaming consumer
-	consumer := exchange.NewExchangeConsumer(
-		StreamingExchangeName,
-		[]string{StreamingRoutingKey},
-		config,
-	)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create streaming consumer")
-	}
-
 	// Declare Query1 results queue
 	query1QueueDeclarer := workerqueue.NewMessageMiddlewareQueue(
 		Query1ResultsQueue,
 		config,
 	)
 	if query1QueueDeclarer == nil {
-		consumer.Close()
 		return nil, fmt.Errorf("failed to create Query1 queue declarer")
 	}
 	if err := query1QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1QueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare Query1 results queue: %v", err)
 	}
@@ -52,7 +40,6 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query1Consumer == nil {
-		consumer.Close()
 		return nil, fmt.Errorf("failed to create Query1 results consumer")
 	}
 
@@ -62,12 +49,10 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query2QueueDeclarer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query2 queue declarer")
 	}
 	if err := query2QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1Consumer.Close()
 		query2QueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare Query2 results queue: %v", err)
@@ -80,7 +65,6 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query2Consumer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query2 results consumer")
 	}
@@ -91,13 +75,11 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query3QueueDeclarer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query3 queue declarer")
 	}
 	if err := query3QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3QueueDeclarer.Close()
@@ -111,7 +93,6 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query3Consumer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query3 results consumer")
@@ -123,14 +104,12 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query4QueueDeclarer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query4 queue declarer")
 	}
 	if err := query4QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3Consumer.Close()
@@ -145,20 +124,34 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query4Consumer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query4 results consumer")
 	}
 
+	// Create client results producer
+	clientResultsProducer := workerqueue.NewMessageMiddlewareQueue(
+		queues.ClientResultsQueue,
+		config,
+	)
+
+	if err := clientResultsProducer.DeclareQueue(false, false, false, false); err != 0 {
+		query1Consumer.Close()
+		query2Consumer.Close()
+		query3Consumer.Close()
+		query4Consumer.Close()
+		clientResultsProducer.Close()
+		return nil, fmt.Errorf("failed to declare client results queue: %v", err)
+	}
+
 	return &StreamingWorker{
-		consumer:       consumer,
-		query1Consumer: query1Consumer,
-		query2Consumer: query2Consumer,
-		query3Consumer: query3Consumer,
-		query4Consumer: query4Consumer,
-		config:         config,
+		query1Consumer:        query1Consumer,
+		query2Consumer:        query2Consumer,
+		query3Consumer:        query3Consumer,
+		query4Consumer:        query4Consumer,
+		clientResultsProducer: clientResultsProducer,
+		config:                config,
 	}, nil
 }
 
@@ -166,14 +159,10 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 func (sw *StreamingWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Streaming Worker: Starting to listen for messages...")
 
-	if err := sw.consumer.StartConsuming(sw.createCallback()); err != 0 {
-		fmt.Printf("Failed to start streaming consumer: %v\n", err)
-	}
 
 	if err := sw.query1Consumer.StartConsuming(sw.createQuery1Callback()); err != 0 {
 		fmt.Printf("Failed to start Query1 results consumer: %v\n", err)
 	}
-
 
 	if err := sw.query2Consumer.StartConsuming(sw.createQuery2Callback()); err != 0 {
 		fmt.Printf("Failed to start Query2 results consumer: %v\n", err)
@@ -192,9 +181,6 @@ func (sw *StreamingWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (sw *StreamingWorker) Close() {
-	if sw.consumer != nil {
-		sw.consumer.Close()
-	}
 	if sw.query1Consumer != nil {
 		sw.query1Consumer.Close()
 	}
@@ -206,6 +192,9 @@ func (sw *StreamingWorker) Close() {
 	}
 	if sw.query4Consumer != nil {
 		sw.query4Consumer.Close()
+	}
+	if sw.clientResultsProducer != nil {
+		sw.clientResultsProducer.Close()
 	}
 }
 

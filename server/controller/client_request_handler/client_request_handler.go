@@ -12,17 +12,37 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	datahandler "github.com/tp-distribuidos-2c2025/server/controller/data-handler"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // ClientRequestHandler handles incoming client requests
 type ClientRequestHandler struct {
-	config *middleware.ConnectionConfig
+	config                *middleware.ConnectionConfig
+	clientResultsConsumer *workerqueue.QueueConsumer
 }
 
 // NewClientRequestHandler creates a new instance of ClientRequestHandler
 func NewClientRequestHandler(config *middleware.ConnectionConfig) *ClientRequestHandler {
+	// Create client results consumer
+	clientResultsConsumer := workerqueue.NewQueueConsumer(
+		queues.ClientResultsQueue,
+		config,
+	)
+
+		// Declare Query2 results queue
+		clientResultsQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(
+			queues.ClientResultsQueue,
+			config,
+		)
+		if err := clientResultsQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+			return nil
+		}
+		clientResultsQueueDeclarer.Close()
+
 	return &ClientRequestHandler{
-		config: config,
+		config:                config,
+		clientResultsConsumer: clientResultsConsumer,
 	}
 }
 
@@ -186,8 +206,32 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 	return []byte(response), nil
 }
 
+// StartClientResultsConsumer starts consuming formatted results from streaming service
+func (h *ClientRequestHandler) StartClientResultsConsumer() {
+	if h.clientResultsConsumer == nil {
+		log.Printf("Client Request Handler: Client results consumer not initialized")
+		return
+	}
+
+	log.Printf("Client Request Handler: Starting client results consumer...")
+
+	// Start consuming in a goroutine
+	err := h.clientResultsConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		for delivery := range *consumeChannel {
+			// Print the formatted data received from streaming service
+			fmt.Print(string(delivery.Body))
+		}
+	})
+
+	if err != 0 {
+		log.Printf("Client Request Handler: Error in client results consumer: %v", err)
+	}
+}
+
 // Close performs any necessary cleanup
 func (h *ClientRequestHandler) Close() {
 	log.Printf("Client Request Handler: Closing handler")
-	// Add any cleanup logic here if needed
+	if h.clientResultsConsumer != nil {
+		h.clientResultsConsumer.Close()
+	}
 }
