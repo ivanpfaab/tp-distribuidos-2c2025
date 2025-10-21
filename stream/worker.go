@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -262,16 +263,24 @@ func (sw *StreamingWorker) updateQueryCompletion(clientID string, queryType int)
 	}
 }
 
-// sendSystemCompleteMessage sends a system complete message to the client
+// sendSystemCompleteMessage sends a system complete signal to the client
 func (sw *StreamingWorker) sendSystemCompleteMessage(clientID string) {
-	fmt.Printf("Streaming Worker: 🎉 All queries completed for client %s! Sending system complete message.\n", clientID)
+	fmt.Printf("Streaming Worker: 🎉 All queries completed for client %s! Sending system complete signal.\n", clientID)
 
-	// Create a simple completion message
-	completionMessage := fmt.Sprintf("SYSTEM_COMPLETE: All queries completed for client %s\n", clientID)
+	// Create completion signal
+	completionMessage := fmt.Sprintf("All queries completed for client %s", clientID)
+	completionSignal := signals.NewClientCompletionSignal(clientID, completionMessage)
+
+	// Serialize the signal
+	serializedSignal, err := signals.SerializeClientCompletionSignal(completionSignal)
+	if err != nil {
+		fmt.Printf("Streaming Worker: Failed to serialize completion signal for client %s: %v\n", clientID, err)
+		return
+	}
 
 	// Send to client results queue
-	if err := sw.clientResultsProducer.Send([]byte(completionMessage)); err != 0 {
-		fmt.Printf("Streaming Worker: Failed to send system complete message for client %s: %v\n", clientID, err)
+	if err := sw.clientResultsProducer.Send(serializedSignal); err != 0 {
+		fmt.Printf("Streaming Worker: Failed to send completion signal for client %s: %v\n", clientID, err)
 	}
 }
 

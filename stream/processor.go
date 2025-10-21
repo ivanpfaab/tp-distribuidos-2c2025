@@ -28,6 +28,7 @@ func (sw *StreamingWorker) processMessage(delivery amqp.Delivery, queryType int)
 		testing.LogError("Streaming Worker", "Failed to cast message to chunk")
 		return middleware.MessageMiddlewareMessageError
 	}
+	sw.sendFormattedDataToClient(chunkData)
 
 	// Handle completion tracking based on query type
 	if queryType == 1 {
@@ -50,9 +51,7 @@ func (sw *StreamingWorker) processMessage(delivery amqp.Delivery, queryType int)
 		// Queries 2, 3, 4: Simple counter (only one chunk expected)
 		sw.handleSingleChunkCompletion(chunkData.ClientID, queryType)
 	}
-
-	// Send formatted data to client
-	return sw.sendFormattedDataToClient(chunkData)
+	return middleware.MessageMiddlewareError(0)
 }
 
 // handleSingleChunkCompletion handles completion for queries that only receive one chunk

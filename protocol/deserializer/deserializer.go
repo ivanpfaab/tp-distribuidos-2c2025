@@ -39,6 +39,8 @@ func Deserialize(data []byte) (interface{}, error) {
 		return signals.DeserializeJoinCompletionSignal(data)
 	case common.JoinCleanupSignalType:
 		return signals.DeserializeJoinCleanupSignal(data)
+	case common.ClientCompletionSignalType:
+		return signals.DeserializeClientCompletionSignal(data)
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msgType)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	datahandler "github.com/tp-distribuidos-2c2025/server/controller/data-handler"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -83,8 +84,6 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 
 	// Keep the connection alive and process messages
 	for {
-		// Set a read timeout for each message
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
 		// Read the complete header (7 bytes: HeaderLength + TotalLength + MsgTypeID)
 		// Handle TCP short reads by reading until we get all 7 bytes
@@ -238,16 +237,35 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	// Start consuming in a goroutine
 	err := h.clientResultsConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			// Deserialize the chunk message to get client ID and formatted data
+			// Deserialize the message to determine its type
 			message, err := deserializer.Deserialize(delivery.Body)
 			if err != nil {
-				log.Printf("Client Request Handler: Failed to deserialize chunk message: %v", err)
+				log.Printf("Client Request Handler: Failed to deserialize message: %v", err)
 				continue
 			}
 
+			// Check if it's a ClientCompletionSignal
+			if completionSignal, ok := message.(*signals.ClientCompletionSignal); ok {
+				log.Printf("Client Request Handler: Received completion signal for client %s: %s", completionSignal.ClientID, completionSignal.Message)
+
+				// Close the connection for this client
+				h.connectionsMutex.Lock()
+				conn, exists := h.activeConnections[completionSignal.ClientID]
+				if exists {
+					log.Printf("Client Request Handler: Closing connection for client %s", completionSignal.ClientID)
+					conn.Close()
+					delete(h.activeConnections, completionSignal.ClientID)
+				} else {
+					log.Printf("Client Request Handler: No active connection found for client %s", completionSignal.ClientID)
+				}
+				h.connectionsMutex.Unlock()
+				continue
+			}
+
+			// Check if it's a chunk message (regular data)
 			chunkData, ok := message.(*chunk.Chunk)
 			if !ok {
-				log.Printf("Client Request Handler: Failed to cast message to chunk")
+				log.Printf("Client Request Handler: Unknown message type: %T", message)
 				continue
 			}
 
