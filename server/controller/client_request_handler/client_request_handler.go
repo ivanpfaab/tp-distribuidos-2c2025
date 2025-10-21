@@ -30,15 +30,15 @@ func NewClientRequestHandler(config *middleware.ConnectionConfig) *ClientRequest
 		config,
 	)
 
-		// Declare Query2 results queue
-		clientResultsQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(
-			queues.ClientResultsQueue,
-			config,
-		)
-		if err := clientResultsQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-			return nil
-		}
-		clientResultsQueueDeclarer.Close()
+	// Declare Query2 results queue
+	clientResultsQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(
+		queues.ClientResultsQueue,
+		config,
+	)
+	if err := clientResultsQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+		return nil
+	}
+	clientResultsQueueDeclarer.Close()
 
 	return &ClientRequestHandler{
 		config:                config,

@@ -159,7 +159,6 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 func (sw *StreamingWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Streaming Worker: Starting to listen for messages...")
 
-
 	if err := sw.query1Consumer.StartConsuming(sw.createQuery1Callback()); err != 0 {
 		fmt.Printf("Failed to start Query1 results consumer: %v\n", err)
 	}
