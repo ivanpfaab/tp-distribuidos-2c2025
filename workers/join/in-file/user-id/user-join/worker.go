@@ -351,11 +351,7 @@ func (jw *JoinByUserIdWorker) processClientIfReady(clientID string) {
 			clientID, len(clientBuffer.TopUsers))
 	}
 
-	// Cleanup after successful join
-	jw.bufferMutex.Lock()
 	delete(jw.clientBuffers, clientID)
-	jw.bufferMutex.Unlock()
-
 	// Perform cleanup of partition files
 	jw.performCleanup(clientID)
 }
