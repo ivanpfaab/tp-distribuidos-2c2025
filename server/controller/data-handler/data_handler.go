@@ -9,7 +9,6 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
-	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -131,17 +130,11 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 		return fmt.Errorf("failed to deserialize message: %w", err)
 	}
 
-	// Check if it's an AllFilesSentSignal
-	if signal, ok := message.(*signals.AllFilesSentSignal); ok {
-		log.Printf("Data Handler: Received all files sent signal from client %s", signal.ClientID)
-		return nil
-	}
-
 	// Check if it's a Batch message
 	batchMsg, ok := message.(*batch.Batch)
 	if !ok {
 		log.Printf("Data Handler: Received unknown message type: %T", message)
-		return fmt.Errorf("expected batch or signal message, got %T", message)
+		return fmt.Errorf("expected batch message, got %T", message)
 	}
 
 	log.Printf("Data Handler: Processing batch - ClientID: %s, FileID: %s, BatchNumber: %d",

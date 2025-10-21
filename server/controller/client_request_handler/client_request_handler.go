@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
-	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	datahandler "github.com/tp-distribuidos-2c2025/server/controller/data-handler"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -22,6 +22,7 @@ type ClientRequestHandler struct {
 	config                *middleware.ConnectionConfig
 	clientResultsConsumer *workerqueue.QueueConsumer
 	activeConnections     map[string]net.Conn // Store active connections by client ID
+	connectionsMutex      sync.RWMutex        // Protect concurrent access to activeConnections
 }
 
 // NewClientRequestHandler creates a new instance of ClientRequestHandler
@@ -54,6 +55,7 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 	defer func() {
 		conn.Close()
 		// Remove connection from active connections map
+		h.connectionsMutex.Lock()
 		for clientID, activeConn := range h.activeConnections {
 			if activeConn == conn {
 				delete(h.activeConnections, clientID)
@@ -61,6 +63,7 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 				break
 			}
 		}
+		h.connectionsMutex.Unlock()
 	}()
 
 	log.Printf("Client Request Handler: New connection from %s", conn.RemoteAddr())
@@ -151,7 +154,9 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 		} else {
 			// Store connection for this client if it's a batch message
 			if batchMsg, ok := h.extractClientID(completeMessage); ok {
+				h.connectionsMutex.Lock()
 				h.activeConnections[batchMsg.ClientID] = conn
+				h.connectionsMutex.Unlock()
 				log.Printf("Client Request Handler: Stored connection for client %s", batchMsg.ClientID)
 			}
 		}
@@ -182,27 +187,10 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 		return nil, fmt.Errorf("failed to deserialize message: %w", err)
 	}
 
-	// Check if it's an AllFilesSentSignal
-	if signal, ok := message.(*signals.AllFilesSentSignal); ok {
-		log.Printf("Client Request Handler: Received all files sent signal from client %s", signal.ClientID)
-
-		// Process the signal with the data handler
-		if err := dataHandler.ProcessBatchMessage(data); err != nil {
-			log.Printf("Client Request Handler: Failed to process signal with data handler: %v", err)
-			return nil, fmt.Errorf("failed to process signal with data handler: %w", err)
-		}
-
-		log.Printf("Client Request Handler: Successfully processed all files sent signal from client %s", signal.ClientID)
-
-		// Create acknowledgment response for signal
-		response := fmt.Sprintf("ACK: All files sent signal received - ClientID: %s\n", signal.ClientID)
-		return []byte(response), nil
-	}
-
 	// Check if it's a Batch message
 	batchMsg, ok := message.(*batch.Batch)
 	if !ok {
-		return nil, fmt.Errorf("expected batch or signal message, got %T", message)
+		return nil, fmt.Errorf("expected batch message, got %T", message)
 	}
 
 	// Log the received batch
@@ -264,12 +252,18 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 			}
 
 			// Send formatted data to the appropriate client
-			if conn, exists := h.activeConnections[chunkData.ClientID]; exists {
+			h.connectionsMutex.RLock()
+			conn, exists := h.activeConnections[chunkData.ClientID]
+			h.connectionsMutex.RUnlock()
+
+			if exists {
 				_, err := conn.Write([]byte(chunkData.ChunkData))
 				if err != nil {
 					log.Printf("Client Request Handler: Failed to send data to client %s: %v", chunkData.ClientID, err)
 					// Remove the connection if it's no longer valid
+					h.connectionsMutex.Lock()
 					delete(h.activeConnections, chunkData.ClientID)
+					h.connectionsMutex.Unlock()
 				}
 			} else {
 				log.Printf("Client Request Handler: No active connection found for client %s", chunkData.ClientID)

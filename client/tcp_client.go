@@ -14,7 +14,6 @@ import (
 	"time"
 
 	batchpkg "github.com/tp-distribuidos-2c2025/protocol/batch"
-	"github.com/tp-distribuidos-2c2025/protocol/signals"
 )
 
 // TCPClient handles direct connection to the server
@@ -310,22 +309,6 @@ func (c *TCPClient) StartServerReader() {
 	}()
 }
 
-// SendAllFilesSentSignal sends a signal to the server indicating all files have been sent
-func (c *TCPClient) SendAllFilesSentSignal() error {
-	signal := signals.NewAllFilesSentSignal(c.clientID)
-	data, err := signals.SerializeAllFilesSentSignal(signal)
-	if err != nil {
-		return fmt.Errorf("failed to serialize all files sent signal: %w", err)
-	}
-
-	_, err = c.conn.Write(data)
-	if err != nil {
-		return fmt.Errorf("failed to send all files sent signal: %w", err)
-	}
-
-	return nil
-}
-
 // KeepConnectionOpen keeps the connection open after processing all files
 func (c *TCPClient) KeepConnectionOpen() error {
 	fmt.Println("Connection kept open. Press Ctrl+C to exit.")
@@ -418,14 +401,6 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 
 	fmt.Printf("\nFinished sending all files. Total files: %d, Total records: %d, Total batches: %d\n",
 		totalFiles, totalRecords, totalBatches)
-
-	// Send "all files sent" signal
-	err = client.SendAllFilesSentSignal()
-	if err != nil {
-		log.Printf("Failed to send all files sent signal: %v", err)
-	} else {
-		fmt.Println("Sent 'all files sent' signal to server")
-	}
 
 	// Keep connection open
 	fmt.Println("\n=== Connection kept open ===")

@@ -19,7 +19,6 @@ const (
 	ChunkNumberSize             = 4
 	JoinCompletionSignalType    = 5
 	JoinCleanupSignalType       = 6
-	AllFilesSentSignalType      = 7
 	ResourceTypeSize            = 32
 )
 
@@ -481,87 +480,6 @@ func DeserializeJoinCleanupSignal(data []byte) (*JoinCleanupSignal, error) {
 	offset += ClientIDSize
 
 	return &JoinCleanupSignal{
-		Header: common.Header{
-			HeaderLength: headerLength,
-			TotalLength:  int32(totalLength),
-			MsgTypeID:    msgTypeID,
-		},
-		ClientID: clientID,
-	}, nil
-}
-
-// AllFilesSentSignal represents a signal sent by client to server
-// indicating that all files have been sent
-type AllFilesSentSignal struct {
-	Header   common.Header
-	ClientID string
-}
-
-// NewAllFilesSentSignal creates a new AllFilesSentSignal
-func NewAllFilesSentSignal(clientID string) *AllFilesSentSignal {
-	return &AllFilesSentSignal{
-		Header: common.Header{
-			HeaderLength: 0,
-			TotalLength:  0,
-			MsgTypeID:    AllFilesSentSignalType,
-		},
-		ClientID: clientID,
-	}
-}
-
-// SerializeAllFilesSentSignal serializes an AllFilesSentSignal to bytes
-func SerializeAllFilesSentSignal(signal *AllFilesSentSignal) ([]byte, error) {
-	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + ClientIDSize
-	totalLength := headerLength
-
-	buf := make([]byte, totalLength)
-	offset := 0
-
-	// Serialize header
-	binary.BigEndian.PutUint16(buf[offset:], uint16(headerLength))
-	offset += common.HeaderLengthSize
-
-	binary.BigEndian.PutUint32(buf[offset:], uint32(totalLength))
-	offset += common.TotalLengthSize
-
-	buf[offset] = byte(signal.Header.MsgTypeID)
-	offset += common.MsgTypeIDSize
-
-	// Serialize signal data
-	if len(signal.ClientID) > ClientIDSize {
-		return nil, fmt.Errorf("client_id too long: %d bytes, max %d", len(signal.ClientID), ClientIDSize)
-	}
-	copy(buf[offset:], []byte(signal.ClientID))
-
-	return buf, nil
-}
-
-// DeserializeAllFilesSentSignal deserializes bytes to an AllFilesSentSignal
-func DeserializeAllFilesSentSignal(data []byte) (*AllFilesSentSignal, error) {
-	if len(data) < common.HeaderLengthSize+common.TotalLengthSize+common.MsgTypeIDSize+ClientIDSize {
-		return nil, fmt.Errorf("data too short for AllFilesSentSignal")
-	}
-
-	offset := 0
-
-	// Deserialize header
-	headerLength := binary.BigEndian.Uint16(data[offset:])
-	offset += common.HeaderLengthSize
-
-	totalLength := binary.BigEndian.Uint32(data[offset:])
-	offset += common.TotalLengthSize
-
-	msgTypeID := int(data[offset])
-	offset += common.MsgTypeIDSize
-
-	if msgTypeID != AllFilesSentSignalType {
-		return nil, fmt.Errorf("invalid message type for AllFilesSentSignal: %d", msgTypeID)
-	}
-
-	// Deserialize signal data
-	clientID := strings.TrimRight(string(data[offset:offset+ClientIDSize]), "\x00")
-
-	return &AllFilesSentSignal{
 		Header: common.Header{
 			HeaderLength: headerLength,
 			TotalLength:  int32(totalLength),
