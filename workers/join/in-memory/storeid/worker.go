@@ -9,11 +9,11 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
-	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // Store represents a store record
@@ -35,13 +35,14 @@ type ClientState struct {
 
 // StoreIdJoinWorker encapsulates the StoreID join worker state and dependencies
 type StoreIdJoinWorker struct {
-	dictionaryConsumer *exchange.ExchangeConsumer
-	chunkConsumer      *workerqueue.QueueConsumer
-	cleanupConsumer    *exchange.ExchangeConsumer
-	outputProducer     *workerqueue.QueueMiddleware
-	completionProducer *workerqueue.QueueMiddleware
-	config             *StoreIdConfig
-	workerID           string
+	dictionaryConsumer   *exchange.ExchangeConsumer
+	chunkConsumer        *workerqueue.QueueConsumer
+	completionConsumer   *exchange.ExchangeConsumer
+	outputProducer       *workerqueue.QueueMiddleware
+	completionProducer   *workerqueue.QueueMiddleware
+	orchestratorProducer *workerqueue.QueueMiddleware
+	config               *StoreIdConfig
+	workerID             string
 
 	// Dictionary state - now client-aware
 	dictionaryReady map[string]bool              // client_id -> ready status
@@ -61,12 +62,12 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 	}
 
 	// Create instance-specific routing key for this worker
-	instanceRoutingKey := fmt.Sprintf("%s-instance-%s", StoreIdDictionaryRoutingKey, instanceID)
+	instanceRoutingKey := fmt.Sprintf("%s-instance-%s", queues.StoreIdDictionaryRoutingKey, instanceID)
 	fmt.Printf("StoreID Join Worker: Initializing with instance ID: %s, routing key: %s\n", instanceID, instanceRoutingKey)
 
 	// Create dictionary consumer (exchange for broadcasting to all workers)
 	dictionaryConsumer := exchange.NewExchangeConsumer(
-		StoreIdDictionaryExchange,
+		queues.StoreIdDictionaryExchange,
 		[]string{instanceRoutingKey},
 		config.ConnectionConfig,
 	)
@@ -76,7 +77,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 
 	// Create chunk consumer
 	chunkConsumer := workerqueue.NewQueueConsumer(
-		StoreIdChunkQueue,
+		queues.StoreIdChunkQueue,
 		config.ConnectionConfig,
 	)
 	if chunkConsumer == nil {
@@ -86,7 +87,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 
 	// Create output producer
 	outputProducer := workerqueue.NewMessageMiddlewareQueue(
-		Query3ResultsQueue,
+		queues.Query3ResultsQueue,
 		config.ConnectionConfig,
 	)
 	if outputProducer == nil {
@@ -95,13 +96,13 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create output producer")
 	}
 
-	// Create cleanup consumer (exchange for cleanup commands)
-	cleanupConsumer := exchange.NewExchangeConsumer(
-		"storeid-cleanup-exchange",
-		[]string{fmt.Sprintf("storeid-cleanup-instance-%s", instanceID)},
+	// Create completion signal consumer (exchange for completion signals)
+	completionConsumer := exchange.NewExchangeConsumer(
+		queues.StoreIdCompletionExchange,
+		[]string{queues.StoreIdCompletionRoutingKey},
 		config.ConnectionConfig,
 	)
-	if cleanupConsumer == nil {
+	if completionConsumer == nil {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
@@ -110,24 +111,38 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 
 	// Create completion producer
 	completionProducer := workerqueue.NewMessageMiddlewareQueue(
-		"join-completion-queue",
+		queues.InMemoryJoinCompletionQueue,
 		config.ConnectionConfig,
 	)
 	if completionProducer == nil {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
-		cleanupConsumer.Close()
+		completionConsumer.Close()
 		return nil, fmt.Errorf("failed to create completion producer")
 	}
 
+	// Create orchestrator producer
+	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(
+		queues.InMemoryJoinCompletionQueue,
+		config.ConnectionConfig,
+	)
+	if orchestratorProducer == nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		completionProducer.Close()
+		return nil, fmt.Errorf("failed to create orchestrator producer")
+	}
+
 	// Declare input queue (StoreIdChunkQueue)
-	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(StoreIdChunkQueue, config.ConnectionConfig)
+	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(queues.StoreIdChunkQueue, config.ConnectionConfig)
 	if inputQueueDeclarer == nil {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
-		cleanupConsumer.Close()
+		completionConsumer.Close()
 		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create input queue declarer")
 	}
@@ -135,7 +150,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
-		cleanupConsumer.Close()
+		completionConsumer.Close()
 		completionProducer.Close()
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
@@ -146,7 +161,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
-		cleanupConsumer.Close()
+		completionConsumer.Close()
 		completionProducer.Close()
 		return nil, fmt.Errorf("failed to declare output queue: %v", err)
 	}
@@ -156,22 +171,23 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
-		cleanupConsumer.Close()
+		completionConsumer.Close()
 		completionProducer.Close()
 		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
 	}
 
 	return &StoreIdJoinWorker{
-		dictionaryConsumer: dictionaryConsumer,
-		chunkConsumer:      chunkConsumer,
-		cleanupConsumer:    cleanupConsumer,
-		outputProducer:     outputProducer,
-		completionProducer: completionProducer,
-		config:             config,
-		workerID:           fmt.Sprintf("storeid-worker-%s", instanceID),
-		dictionaryReady:    make(map[string]bool),
-		stores:             make(map[string]map[string]*Store),
-		clientStates:       make(map[string]*ClientState),
+		dictionaryConsumer:   dictionaryConsumer,
+		chunkConsumer:        chunkConsumer,
+		completionConsumer:   completionConsumer,
+		outputProducer:       outputProducer,
+		completionProducer:   completionProducer,
+		orchestratorProducer: orchestratorProducer,
+		config:               config,
+		workerID:             fmt.Sprintf("storeid-worker-%s", instanceID),
+		dictionaryReady:      make(map[string]bool),
+		stores:               make(map[string]map[string]*Store),
+		clientStates:         make(map[string]*ClientState),
 	}, nil
 }
 
@@ -187,8 +203,8 @@ func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 		fmt.Printf("Failed to start chunk consumer: %v\n", err)
 	}
 
-	if err := w.cleanupConsumer.StartConsuming(w.createCleanupCallback()); err != 0 {
-		fmt.Printf("Failed to start cleanup consumer: %v\n", err)
+	if err := w.completionConsumer.StartConsuming(w.createCompletionCallback()); err != 0 {
+		fmt.Printf("Failed to start completion consumer: %v\n", err)
 	}
 
 	return 0
@@ -202,14 +218,20 @@ func (w *StoreIdJoinWorker) Close() {
 	if w.chunkConsumer != nil {
 		w.chunkConsumer.Close()
 	}
-	if w.cleanupConsumer != nil {
-		w.cleanupConsumer.Close()
+	if w.completionConsumer != nil {
+		w.completionConsumer.Close()
+	}
+	if w.completionConsumer != nil {
+		w.completionConsumer.Close()
 	}
 	if w.outputProducer != nil {
 		w.outputProducer.Close()
 	}
 	if w.completionProducer != nil {
 		w.completionProducer.Close()
+	}
+	if w.orchestratorProducer != nil {
+		w.orchestratorProducer.Close()
 	}
 }
 
@@ -370,6 +392,9 @@ func (w *StoreIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messa
 
 	// SUCCESS: Data sent successfully - send completion notification to garbage collector
 	w.sendCompletionNotification(chunkMsg.ClientID)
+
+	// Send chunk to orchestrator for completion tracking
+	w.sendToOrchestrator(chunkMsg)
 
 	fmt.Printf("StoreID Join Worker: Successfully processed and sent joined chunk\n")
 	return 0
@@ -702,41 +727,58 @@ func (w *StoreIdJoinWorker) sendCompletionNotification(clientID string) {
 	}
 }
 
-// createCleanupCallback creates the cleanup message processing callback
-func (w *StoreIdJoinWorker) createCleanupCallback() func(middleware.ConsumeChannel, chan error) {
+// sendToOrchestrator sends chunk to orchestrator for completion tracking
+func (w *StoreIdJoinWorker) sendToOrchestrator(chunkMsg *chunk.Chunk) {
+	notification := signals.NewChunkNotification(
+		chunkMsg.ClientID,
+		chunkMsg.FileID,
+		"storeid-join-worker",
+		int(chunkMsg.TableID),
+		int(chunkMsg.ChunkNumber),
+		chunkMsg.IsLastChunk,
+		chunkMsg.IsLastFromTable,
+	)
+
+	messageData, err := signals.SerializeChunkNotification(notification)
+	if err != nil {
+		fmt.Printf("StoreID Join Worker: Failed to serialize chunk notification for orchestrator: %v\n", err)
+		return
+	}
+
+	if err := w.orchestratorProducer.Send(messageData); err != 0 {
+		fmt.Printf("StoreID Join Worker: Failed to send chunk notification to orchestrator: %v\n", err)
+	} else {
+		fmt.Printf("StoreID Join Worker: Sent chunk notification to orchestrator for client %s\n", chunkMsg.ClientID)
+	}
+}
+
+// createCompletionCallback creates the completion signal processing callback
+func (w *StoreIdJoinWorker) createCompletionCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.processCleanupMessage(delivery)
+			err := w.processCompletionSignal(delivery)
 			if err != 0 {
-				done <- fmt.Errorf("failed to process cleanup message: %v", err)
+				done <- fmt.Errorf("failed to process completion signal: %v", err)
 				return
 			}
 		}
 	}
 }
 
-// processCleanupMessage processes a cleanup signal
-func (w *StoreIdJoinWorker) processCleanupMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the message using the deserializer
-	message, err := deserializer.Deserialize(delivery.Body)
+// processCompletionSignal processes a completion signal from the orchestrator
+func (w *StoreIdJoinWorker) processCompletionSignal(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+	// Deserialize the completion signal
+	completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
 	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to deserialize message: %v\n", err)
-		delivery.Nack(false, false) // Reject the message
+		fmt.Printf("StoreID Join Worker: Failed to deserialize completion signal: %v\n", err)
+		delivery.Ack(false)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Check if it's a cleanup signal
-	cleanupSignal, ok := message.(*signals.JoinCleanupSignal)
-	if !ok {
-		fmt.Printf("StoreID Join Worker: Received non-cleanup message type")
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
-	}
+	fmt.Printf("StoreID Join Worker: Received completion signal for client %s\n", completionSignal.ClientID)
 
-	fmt.Printf("StoreID Join Worker: Received cleanup signal for client %s\n", cleanupSignal.ClientID)
-
-	// Perform cleanup
-	w.cleanupClientStores(cleanupSignal.ClientID)
+	// Clean up client data
+	w.cleanupClientStores(completionSignal.ClientID)
 
 	delivery.Ack(false) // Acknowledge the message
 	return 0

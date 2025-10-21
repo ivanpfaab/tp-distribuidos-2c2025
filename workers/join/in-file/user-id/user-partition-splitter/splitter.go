@@ -156,14 +156,6 @@ func (ups *UserPartitionSplitter) processMessage(delivery amqp.Delivery) middlew
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// If this is the last chunk, flush all buffers
-	if chunkMsg.IsLastChunk && chunkMsg.IsLastFromTable {
-		fmt.Printf("User Partition Splitter: Last chunk received, flushing all buffers\n")
-		if err := ups.flushAllBuffers(chunkMsg); err != 0 {
-			return err
-		}
-	}
-
 	return 0
 }
 
@@ -211,12 +203,10 @@ func (ups *UserPartitionSplitter) distributeUsers(chunkMsg *chunk.Chunk) error {
 		ups.buffers[writerID] = append(ups.buffers[writerID], user)
 		routingStats[writerID]++
 		userCount++
-
-		// Flush buffer if full
-		if len(ups.buffers[writerID]) >= MaxBufferSize {
-			if err := ups.flushBuffer(writerID, chunkMsg, false); err != 0 {
-				return fmt.Errorf("failed to flush buffer for writer %d: %v", writerID, err)
-			}
+	}
+	for i := 0; i < ups.splitterConfig.NumWriters; i++ {
+		if err := ups.flushBuffer(i, chunkMsg); err != 0 {
+			return fmt.Errorf("failed to flush buffer for writer %d: %v", i, err)
 		}
 	}
 
@@ -227,14 +217,7 @@ func (ups *UserPartitionSplitter) distributeUsers(chunkMsg *chunk.Chunk) error {
 }
 
 // flushBuffer sends buffered users to a specific writer
-func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk.Chunk, isLastChunk bool) middleware.MessageMiddlewareError {
-	if len(ups.buffers[writerID]) == 0 {
-		// Empty buffer, just send EOS if needed
-		if isLastChunk {
-			return ups.sendEOSToWriter(writerID, originalChunk)
-		}
-		return 0
-	}
+func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk.Chunk) middleware.MessageMiddlewareError {
 
 	// Convert buffer to CSV
 	csvData := ups.bufferToCSV(writerID)
@@ -244,9 +227,9 @@ func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk
 		ClientID:        originalChunk.ClientID,
 		FileID:          originalChunk.FileID,
 		QueryType:       originalChunk.QueryType,
-		ChunkNumber:     originalChunk.ChunkNumber,
-		IsLastChunk:     isLastChunk,
-		IsLastFromTable: originalChunk.IsLastFromTable,
+		ChunkNumber:     (originalChunk.ChunkNumber-1) * ups.splitterConfig.NumWriters + (writerID+1),
+		IsLastChunk:     originalChunk.IsLastChunk && writerID == ups.splitterConfig.NumWriters-1,
+		IsLastFromTable: originalChunk.IsLastFromTable && writerID == ups.splitterConfig.NumWriters-1,
 		Step:            originalChunk.Step,
 		ChunkSize:       len(ups.buffers[writerID]),
 		TableID:         originalChunk.TableID,
@@ -266,47 +249,13 @@ func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk
 		return err
 	}
 
-	fmt.Printf("User Partition Splitter: Flushed %d users to writer %d (IsLastChunk=%t)\n",
-		len(ups.buffers[writerID]), writerID+1, isLastChunk)
+	fmt.Printf("User Partition Splitter: Flushed %d users to writer %d (IsLastChunk=%t), ChunkNumber=%d\n",
+		len(ups.buffers[writerID]), writerID+1, writerChunk.IsLastChunk, writerChunk.ChunkNumber)
 
 	// Clear buffer
 	ups.buffers[writerID] = ups.buffers[writerID][:0]
 
 	return 0
-}
-
-// flushAllBuffers flushes all writer buffers
-func (ups *UserPartitionSplitter) flushAllBuffers(originalChunk *chunk.Chunk) middleware.MessageMiddlewareError {
-	for writerID := 0; writerID < ups.splitterConfig.NumWriters; writerID++ {
-		if err := ups.flushBuffer(writerID, originalChunk, true); err != 0 {
-			return err
-		}
-	}
-	return 0
-}
-
-// sendEOSToWriter sends an end-of-stream marker to a writer
-func (ups *UserPartitionSplitter) sendEOSToWriter(writerID int, originalChunk *chunk.Chunk) middleware.MessageMiddlewareError {
-	eosChunk := &chunk.Chunk{
-		ClientID:        originalChunk.ClientID,
-		FileID:          originalChunk.FileID,
-		QueryType:       originalChunk.QueryType,
-		ChunkNumber:     -1, // EOS marker
-		IsLastChunk:     true,
-		IsLastFromTable: true,
-		Step:            originalChunk.Step,
-		ChunkSize:       0,
-		TableID:         originalChunk.TableID,
-		ChunkData:       "",
-	}
-
-	chunkMessage := chunk.NewChunkMessage(eosChunk)
-	messageData, err := chunk.SerializeChunkMessage(chunkMessage)
-	if err != nil {
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	return ups.writerQueues[writerID].Send(messageData)
 }
 
 // bufferToCSV converts a writer buffer to CSV format

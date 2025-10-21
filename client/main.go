@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 )
@@ -28,13 +29,14 @@ func main() {
 	}
 	clientID = clientID[:4]
 
-	// Run the client
+	// Run the client (now keeps connection open)
 	err := runClient(dataFolder, serverAddr, clientID)
 	if err != nil {
 		log.Fatalf("Client error: %v", err)
 	}
 
-	select {}
+	// Client will exit gracefully after connection is closed
+	fmt.Println("Client program terminated.")
 }
 
 // Helper function to get environment variable with default value

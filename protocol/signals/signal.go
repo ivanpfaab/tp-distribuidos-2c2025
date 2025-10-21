@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
 
@@ -18,7 +19,7 @@ const (
 	ChunkNumberSize             = 4
 	JoinCompletionSignalType    = 5
 	JoinCleanupSignalType       = 6
-	ResourceTypeSize            = 8
+	ResourceTypeSize            = 32
 )
 
 // GroupByCompletionSignal represents a signal sent by map workers to reduce workers

@@ -381,11 +381,11 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  join-garbage-collector:
+  in-memory-join-orchestrator:
     build:
       context: .
-      dockerfile: ./workers/join/garbage-collector/Dockerfile
-    container_name: join-garbage-collector
+      dockerfile: ./workers/join/in-memory/orchestrator/Dockerfile
+    container_name: in-memory-join-orchestrator
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -394,10 +394,21 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-      COMPLETION_QUEUE: "join-completion-queue"
-      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
-      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
-      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
+    profiles: ["orchestration"]
+
+  in-file-join-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/orchestrator/Dockerfile
+    container_name: in-file-join-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
 EOF_REMAINING
@@ -875,7 +886,9 @@ generate_server_dependencies() {
 
     echo "      streaming-service:"
     echo "        condition: service_started"
-    echo "      join-garbage-collector:"
+    echo "      in-memory-join-orchestrator:"
+    echo "        condition: service_started"
+    echo "      in-file-join-orchestrator:"
     echo "        condition: service_started"
     echo "    environment:"
     echo "      - SERVER_PORT=8080"

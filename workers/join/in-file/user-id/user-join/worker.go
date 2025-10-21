@@ -7,19 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
-	InitialWaitDuration = 2 * time.Second
-	JoinTickerInterval  = 1 * time.Second // How often to check for ready clients
-	MaxJoinAttempts     = 10              // Maximum join retry attempts per client
+	MaxClientsInBufferWorker = 1000 // Maximum number of clients to buffer
 )
 
 // TopUserRecord represents a top user from classification
@@ -30,39 +29,41 @@ type TopUserRecord struct {
 	Rank          string
 }
 
-// ClientState holds the state for a specific client's join process
-type ClientState struct {
-	pendingUsers  []TopUserRecord // Users waiting to be joined
-	chunkMetadata *chunk.Chunk    // Original chunk metadata
-	receivedAt    time.Time       // When IsLastChunk was received
-	attemptCount  int             // Number of join attempts made
-	chunkCounter  int             // Sequential chunk numbering for output
-	ready         bool            // True when IsLastChunk received
+// ClientBufferWorker holds buffered chunks for a client
+type ClientBufferWorker struct {
+	Chunks       []*chunk.Chunk  // Buffered chunks
+	TopUsers     []TopUserRecord // Parsed top users from chunks
+	ChunkCounter int             // Sequential chunk numbering for output
+	Ready        bool            // True when completion signal received (files are written)
+
+	// Double-check pattern fields
+	CompletionSignalReceived bool // True when completion signal arrived
+	ChunkDataReceived        bool // True when chunk data arrived
+	JoinProcessed            bool // True when join has been processed (prevents duplicates)
 }
 
 // JoinByUserIdWorker handles joining top users data with user data from CSV files
 type JoinByUserIdWorker struct {
-	consumer           *workerqueue.QueueConsumer
+	topUsersConsumer   *workerqueue.QueueConsumer
+	completionConsumer *exchange.ExchangeConsumer
 	producer           *workerqueue.QueueMiddleware
-	completionProducer *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
 	workerID           string
 
-	clientStates map[string]*ClientState
-	stateMutex   sync.RWMutex
+	clientBuffers map[string]*ClientBufferWorker
+	bufferMutex   sync.RWMutex
 
-	ticker   *time.Ticker
 	stopChan chan struct{}
 }
 
 // NewJoinByUserIdWorker creates a new JoinByUserIdWorker instance
 func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWorker, error) {
 	// Create consumer for user ID chunks
-	consumer := workerqueue.NewQueueConsumer(
+	topUsersConsumer := workerqueue.NewQueueConsumer(
 		UserIdChunkQueue,
 		config,
 	)
-	if consumer == nil {
+	if topUsersConsumer == nil {
 		return nil, fmt.Errorf("failed to create user ID chunk consumer")
 	}
 
@@ -72,15 +73,26 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 		config,
 	)
 	if userChunkDeclarer == nil {
-		consumer.Close()
+		topUsersConsumer.Close()
 		return nil, fmt.Errorf("failed to create user chunk queue declarer")
 	}
 	if err := userChunkDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
+		topUsersConsumer.Close()
 		userChunkDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare user ID chunk queue: %v", err)
 	}
 	userChunkDeclarer.Close()
+
+	// Create completion signal consumer
+	completionConsumer := exchange.NewExchangeConsumer(
+		queues.UserIdCompletionExchange,
+		[]string{queues.UserIdCompletionRoutingKey},
+		config,
+	)
+	if completionConsumer == nil {
+		topUsersConsumer.Close()
+		return nil, fmt.Errorf("failed to create completion signal consumer")
+	}
 
 	// Create producer for query 4 results
 	producer := workerqueue.NewMessageMiddlewareQueue(
@@ -88,34 +100,17 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 		config,
 	)
 	if producer == nil {
-		consumer.Close()
+		topUsersConsumer.Close()
+		completionConsumer.Close()
 		return nil, fmt.Errorf("failed to create query 4 results producer")
 	}
 
 	// Declare producer queue
 	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
+		topUsersConsumer.Close()
+		completionConsumer.Close()
 		producer.Close()
 		return nil, fmt.Errorf("failed to declare query 4 results queue: %v", err)
-	}
-
-	// Create completion producer for garbage collector
-	completionProducer := workerqueue.NewMessageMiddlewareQueue(
-		"join-completion-queue",
-		config,
-	)
-	if completionProducer == nil {
-		consumer.Close()
-		producer.Close()
-		return nil, fmt.Errorf("failed to create completion producer")
-	}
-
-	// Declare completion queue
-	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		producer.Close()
-		completionProducer.Close()
-		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
 	}
 
 	// Generate worker ID
@@ -126,12 +121,12 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 	workerID := fmt.Sprintf("userid-reader-%s", instanceID)
 
 	return &JoinByUserIdWorker{
-		consumer:           consumer,
+		topUsersConsumer:   topUsersConsumer,
+		completionConsumer: completionConsumer,
 		producer:           producer,
-		completionProducer: completionProducer,
 		config:             config,
 		workerID:           workerID,
-		clientStates:       make(map[string]*ClientState),
+		clientBuffers:      make(map[string]*ClientBufferWorker),
 		stopChan:           make(chan struct{}),
 	}, nil
 }
@@ -140,12 +135,12 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 func (jw *JoinByUserIdWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Join by User ID Worker: Starting...")
 
-	// Start background join worker
-	jw.startBackgroundJoinWorker()
+	// Start completion signal consumer
+	go jw.startCompletionSignalConsumer()
 
-	// Start consuming messages
+	// Start consuming top users messages
 	fmt.Println("Join by User ID Worker: Starting to listen for top users chunks...")
-	return jw.consumer.StartConsuming(jw.createCallback())
+	return jw.topUsersConsumer.StartConsuming(jw.createTopUsersCallback())
 }
 
 // Close closes all connections
@@ -153,41 +148,55 @@ func (jw *JoinByUserIdWorker) Close() {
 	fmt.Println("Join by User ID Worker: Shutting down...")
 
 	// Stop background worker
-	if jw.ticker != nil {
-		jw.ticker.Stop()
-	}
 	if jw.stopChan != nil {
 		close(jw.stopChan)
 	}
 
 	// Close connections
-	if jw.consumer != nil {
-		jw.consumer.Close()
+	if jw.topUsersConsumer != nil {
+		jw.topUsersConsumer.Close()
+	}
+	if jw.completionConsumer != nil {
+		jw.completionConsumer.Close()
 	}
 	if jw.producer != nil {
 		jw.producer.Close()
-	}
-	if jw.completionProducer != nil {
-		jw.completionProducer.Close()
 	}
 
 	fmt.Println("Join by User ID Worker: Shutdown complete")
 }
 
-// createCallback creates the message processing callback
-func (jw *JoinByUserIdWorker) createCallback() func(middleware.ConsumeChannel, chan error) {
+// createTopUsersCallback creates the top users message processing callback
+func (jw *JoinByUserIdWorker) createTopUsersCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			if err := jw.processMessage(delivery); err != 0 {
-				fmt.Printf("Join by User ID Worker: Error processing message: %v\n", err)
+			if err := jw.processTopUsersMessage(delivery); err != 0 {
+				fmt.Printf("Join by User ID Worker: Error processing top users message: %v\n", err)
 			}
 		}
 		done <- nil
 	}
 }
 
-// processMessage processes a single top users chunk
-func (jw *JoinByUserIdWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+// startCompletionSignalConsumer starts the completion signal consumer
+func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
+	fmt.Println("Join by User ID Worker: Starting completion signal consumer...")
+
+	err := jw.completionConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		for delivery := range *consumeChannel {
+			if err := jw.processCompletionSignal(delivery); err != 0 {
+				fmt.Printf("Join by User ID Worker: Error processing completion signal: %v\n", err)
+			}
+		}
+		done <- nil
+	})
+	if err != 0 {
+		fmt.Printf("Join by User ID Worker: Failed to start completion signal consumer: %v\n", err)
+	}
+}
+
+// processTopUsersMessage processes a single top users chunk with buffering
+func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 	if err != nil {
@@ -207,138 +216,165 @@ func (jw *JoinByUserIdWorker) processMessage(delivery amqp.Delivery) middleware.
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Update client state (thread-safe)
-	jw.stateMutex.Lock()
-	state := jw.getOrCreateClientState(chunkMsg.ClientID)
-	state.pendingUsers = append(state.pendingUsers, topUsers...)
-	state.chunkMetadata = chunkMsg
+	// Check buffer capacity and NACK if full
+	jw.bufferMutex.Lock()
+	defer jw.bufferMutex.Unlock()
 
-	if chunkMsg.IsLastChunk {
-		state.ready = true
-		state.receivedAt = time.Now()
-		fmt.Printf("Join by User ID Worker: Client %s marked ready with %d pending users\n",
-			chunkMsg.ClientID, len(state.pendingUsers))
+	// Check if we can add this client to buffer
+	if jw.clientBuffers[chunkMsg.ClientID] == nil {
+		if len(jw.clientBuffers) >= MaxClientsInBufferWorker {
+			fmt.Printf("Join by User ID Worker: Buffer full (%d clients), NACKing message for client %s\n",
+				len(jw.clientBuffers), chunkMsg.ClientID)
+			delivery.Nack(false, false) // NACK and requeue
+			return middleware.MessageMiddlewareMessageError
+		}
+		// Create new client buffer
+		jw.clientBuffers[chunkMsg.ClientID] = &ClientBufferWorker{
+			Chunks:                   make([]*chunk.Chunk, 0),
+			TopUsers:                 make([]TopUserRecord, 0),
+			ChunkCounter:             1,
+			Ready:                    false,
+			CompletionSignalReceived: false,
+			ChunkDataReceived:        false,
+			JoinProcessed:            false,
+		}
 	}
-	jw.stateMutex.Unlock()
+
+	clientBuffer := jw.clientBuffers[chunkMsg.ClientID]
+
+	// Add chunk to buffer
+	clientBuffer.Chunks = append(clientBuffer.Chunks, chunkMsg)
+	clientBuffer.TopUsers = append(clientBuffer.TopUsers, topUsers...)
+
+	fmt.Printf("Join by User ID Worker: Buffered chunk for client %s (chunks: %d, users: %d)\n",
+		chunkMsg.ClientID, len(clientBuffer.Chunks), len(clientBuffer.TopUsers))
+
+	// Just log when last chunk is received - no processing yet
+	if chunkMsg.IsLastChunk {
+		fmt.Printf("Join by User ID Worker: Client %s last chunk received with %d buffered users\n",
+			chunkMsg.ClientID, len(clientBuffer.TopUsers))
+
+		// Mark chunk data as received and check if ready to join
+		clientBuffer.ChunkDataReceived = true
+		fmt.Printf("Join by User ID Worker: Client %s chunk data received\n", chunkMsg.ClientID)
+
+		// Check if both conditions are met and perform join if ready
+		jw.bufferMutex.Unlock() // Unlock before calling checkAndJoin
+		jw.checkAndJoin(chunkMsg.ClientID)
+		jw.bufferMutex.Lock() // Re-lock for the rest of the method
+	}
 
 	delivery.Ack(false)
 	return 0
 }
 
-// getOrCreateClientState gets or creates a client state (must be called with lock held)
-func (jw *JoinByUserIdWorker) getOrCreateClientState(clientID string) *ClientState {
-	if jw.clientStates[clientID] == nil {
-		jw.clientStates[clientID] = &ClientState{
-			pendingUsers:  make([]TopUserRecord, 0),
-			chunkMetadata: nil,
-			receivedAt:    time.Time{},
-			attemptCount:  0,
-			chunkCounter:  1, // Start from 1
-			ready:         false,
-		}
+// processCompletionSignal processes a completion signal from the orchestrator
+func (jw *JoinByUserIdWorker) processCompletionSignal(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+	// Deserialize the completion signal
+	completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
+	if err != nil {
+		fmt.Printf("Join by User ID Worker: Failed to deserialize completion signal: %v\n", err)
+		delivery.Ack(false)
+		return middleware.MessageMiddlewareMessageError
 	}
-	return jw.clientStates[clientID]
+
+	fmt.Printf("Join by User ID Worker: Received completion signal for client %s\n", completionSignal.ClientID)
+
+	// Mark completion signal as received and check if ready to join
+	jw.bufferMutex.Lock()
+
+	// Ensure client buffer exists (create if it doesn't)
+	if jw.clientBuffers[completionSignal.ClientID] == nil {
+		jw.clientBuffers[completionSignal.ClientID] = &ClientBufferWorker{
+			Chunks:                   make([]*chunk.Chunk, 0),
+			TopUsers:                 make([]TopUserRecord, 0),
+			ChunkCounter:             1,
+			Ready:                    false,
+			CompletionSignalReceived: false,
+			ChunkDataReceived:        false,
+			JoinProcessed:            false,
+		}
+		fmt.Printf("Join by User ID Worker: Created buffer for client %s (completion signal first)\n", completionSignal.ClientID)
+	}
+
+	clientBuffer := jw.clientBuffers[completionSignal.ClientID]
+	clientBuffer.CompletionSignalReceived = true
+	fmt.Printf("Join by User ID Worker: Client %s completion signal received\n", completionSignal.ClientID)
+
+	jw.bufferMutex.Unlock()
+
+	// Check if both conditions are met and perform join if ready
+	jw.checkAndJoin(completionSignal.ClientID)
+
+	delivery.Ack(false)
+	return 0
 }
 
-// startBackgroundJoinWorker starts the background worker that processes ready clients
-func (jw *JoinByUserIdWorker) startBackgroundJoinWorker() {
-	jw.ticker = time.NewTicker(JoinTickerInterval)
+// checkAndJoin checks if both completion signal and chunk data are ready, then performs join if both are ready
+func (jw *JoinByUserIdWorker) checkAndJoin(clientID string) {
+	jw.bufferMutex.Lock()
+	defer jw.bufferMutex.Unlock()
 
-	go func() {
-		fmt.Println("Join by User ID Worker: Background join worker started")
-		for {
-			select {
-			case <-jw.ticker.C:
-				jw.processReadyClients()
-			case <-jw.stopChan:
-				fmt.Println("Join by User ID Worker: Background join worker stopped")
-				return
-			}
-		}
-	}()
-}
+	clientBuffer, exists := jw.clientBuffers[clientID]
+	if !exists {
+		return
+	}
 
-// processReadyClients checks all clients and attempts joins for ready ones
-func (jw *JoinByUserIdWorker) processReadyClients() {
-	jw.stateMutex.Lock()
-	defer jw.stateMutex.Unlock()
+	// Check if both conditions are met and join hasn't been processed yet
+	if clientBuffer.CompletionSignalReceived && clientBuffer.ChunkDataReceived && !clientBuffer.JoinProcessed {
+		fmt.Printf("Join by User ID Worker: Both conditions met for client %s, performing join\n", clientID)
 
-	for clientID, state := range jw.clientStates {
-		if !state.ready {
-			continue
-		}
+		// Mark as processed to prevent duplicate joins
+		clientBuffer.JoinProcessed = true
 
-		// Wait initial period before first attempt
-		if time.Since(state.receivedAt) < InitialWaitDuration {
-			continue
-		}
-
-		// Try to join pending users
-		found, notFound := jw.attemptJoinAll(state.pendingUsers, clientID)
-
-		// Send found users immediately
-		if len(found) > 0 {
-			isLast := len(notFound) == 0
-			if err := jw.sendJoinedChunk(clientID, state, found, isLast); err != 0 {
-				fmt.Printf("Join by User ID Worker: Failed to send joined chunk for client %s: %v\n", clientID, err)
-			} else {
-				state.chunkCounter++
-				fmt.Printf("Join by User ID Worker: Sent chunk with %d joined users for client %s (pending: %d)\n",
-					len(found), clientID, len(notFound))
-			}
-		}
-
-		// Update pending users
-		state.pendingUsers = notFound
-		state.attemptCount++
-
-		// Cleanup if done or max attempts reached
-		if len(notFound) == 0 {
-			fmt.Printf("Join by User ID Worker: All users joined for client %s\n", clientID)
-			jw.sendCompletionNotification(clientID)
-			delete(jw.clientStates, clientID)
-		} else if state.attemptCount >= MaxJoinAttempts {
-			fmt.Printf("Join by User ID Worker: Max attempts reached for client %s, %d users not found (INNER JOIN - dropping)\n",
-				clientID, len(notFound))
-			// Send final EOS chunk if we've sent any data
-			if state.chunkCounter > 1 {
-				jw.sendEmptyEOS(clientID, state)
-			}
-			jw.sendCompletionNotification(clientID)
-			delete(jw.clientStates, clientID)
-		}
+		// Perform the join
+		jw.processClientIfReady(clientID)
+	} else {
+		// Log current status for debugging
+		fmt.Printf("Join by User ID Worker: Client %s not ready - CompletionSignal: %t, ChunkData: %t, JoinProcessed: %t\n",
+			clientID, clientBuffer.CompletionSignalReceived, clientBuffer.ChunkDataReceived, clientBuffer.JoinProcessed)
 	}
 }
 
-// attemptJoinAll attempts to join all pending users, returns (found, notFound)
-func (jw *JoinByUserIdWorker) attemptJoinAll(pendingUsers []TopUserRecord, clientID string) ([]TopUserRecord, []TopUserRecord) {
-	var found []TopUserRecord
-	var notFound []TopUserRecord
+// processClientIfReady processes a client when completion signal is received
+func (jw *JoinByUserIdWorker) processClientIfReady(clientID string) {
 
-	for _, topUser := range pendingUsers {
-		user, err := jw.lookupUserFromFile(topUser.UserID, clientID)
-		if err != nil || user == nil {
-			// User not found yet, keep in pending
-			notFound = append(notFound, topUser)
-		} else {
-			// User found, add to results
-			found = append(found, topUser)
-		}
+	clientBuffer := jw.clientBuffers[clientID]
+	fmt.Printf("Join by User ID Worker: Processing client %s with %d buffered users\n",
+		clientID, len(clientBuffer.TopUsers))
+
+	// Completion signal received - files are ready, so join all users
+	if err := jw.sendJoinedChunk(clientID, clientBuffer, clientBuffer.TopUsers, true); err != 0 {
+		fmt.Printf("Join by User ID Worker: Failed to send joined chunk for client %s: %v\n", clientID, err)
+	} else {
+		fmt.Printf("Join by User ID Worker: Sent complete joined data for client %s (%d users)\n",
+			clientID, len(clientBuffer.TopUsers))
 	}
 
-	return found, notFound
+	// Cleanup after successful join
+	jw.bufferMutex.Lock()
+	delete(jw.clientBuffers, clientID)
+	jw.bufferMutex.Unlock()
+
+	// Perform cleanup of partition files
+	jw.performCleanup(clientID)
 }
 
 // sendJoinedChunk sends a chunk with joined user data
-func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, state *ClientState, foundUsers []TopUserRecord, isLast bool) middleware.MessageMiddlewareError {
+func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, clientBuffer *ClientBufferWorker, foundUsers []TopUserRecord, isLast bool) middleware.MessageMiddlewareError {
 	// Build CSV data with joined users
 	var csvBuilder strings.Builder
 	csvBuilder.WriteString("user_id,store_id,purchase_count,rank,gender,birthdate,registered_at\n")
 
+	successfulJoins := 0
+	failedJoins := 0
+
 	for _, topUser := range foundUsers {
 		user, err := jw.lookupUserFromFile(topUser.UserID, clientID)
 		if err != nil || user == nil {
-			// Should not happen since we already found them
+			failedJoins++
+			fmt.Printf("Join by User ID Worker: Failed to lookup user %s for client %s: %v\n",
+				topUser.UserID, clientID, err)
 			continue
 		}
 
@@ -351,21 +387,34 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, state *ClientStat
 			user.Birthdate,
 			user.RegisteredAt,
 		))
+		successfulJoins++
 	}
 
+	fmt.Printf("Join by User ID Worker: Client %s - Successful joins: %d, Failed joins: %d, Total users: %d\n",
+		clientID, successfulJoins, failedJoins, len(foundUsers))
+
 	csvData := csvBuilder.String()
+
+	// Use metadata from first chunk
+	var chunkMetadata *chunk.Chunk
+	if len(clientBuffer.Chunks) > 0 {
+		chunkMetadata = clientBuffer.Chunks[0]
+	} else {
+		// Fallback - this shouldn't happen
+		return middleware.MessageMiddlewareMessageError
+	}
 
 	// Create chunk for output
 	outputChunk := chunk.NewChunk(
 		clientID,
-		state.chunkMetadata.FileID,
-		state.chunkMetadata.QueryType,
-		state.chunkCounter,
+		chunkMetadata.FileID,
+		chunkMetadata.QueryType,
+		clientBuffer.ChunkCounter,
 		isLast,
-		state.chunkMetadata.IsLastFromTable,
-		state.chunkMetadata.Step,
+		chunkMetadata.IsLastFromTable,
+		chunkMetadata.Step,
 		len(csvData),
-		state.chunkMetadata.TableID,
+		chunkMetadata.TableID,
 		csvData,
 	)
 
@@ -374,30 +423,6 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, state *ClientStat
 	serializedData, err := chunk.SerializeChunkMessage(chunkMsg)
 	if err != nil {
 		fmt.Printf("Join by User ID Worker: Failed to serialize chunk: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	return jw.producer.Send(serializedData)
-}
-
-// sendEmptyEOS sends an empty EOS chunk
-func (jw *JoinByUserIdWorker) sendEmptyEOS(clientID string, state *ClientState) middleware.MessageMiddlewareError {
-	outputChunk := chunk.NewChunk(
-		clientID,
-		state.chunkMetadata.FileID,
-		state.chunkMetadata.QueryType,
-		state.chunkCounter,
-		true, // IsLastChunk
-		true,
-		state.chunkMetadata.Step,
-		0,
-		state.chunkMetadata.TableID,
-		"",
-	)
-
-	chunkMsg := chunk.NewChunkMessage(outputChunk)
-	serializedData, err := chunk.SerializeChunkMessage(chunkMsg)
-	if err != nil {
 		return middleware.MessageMiddlewareMessageError
 	}
 
@@ -494,19 +519,37 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 	return nil, fmt.Errorf("user %s not found in partition %d", normalizedUserID, partition)
 }
 
-// sendCompletionNotification sends a completion signal to the garbage collector
-func (jw *JoinByUserIdWorker) sendCompletionNotification(clientID string) {
-	completionSignal := signals.NewJoinCompletionSignal(clientID, "users", jw.workerID)
+// performCleanup performs cleanup operations for partition files (idempotent)
+func (jw *JoinByUserIdWorker) performCleanup(clientID string) {
+	fmt.Printf("Join by User ID Worker: Performing cleanup for client: %s\n", clientID)
 
-	messageData, err := signals.SerializeJoinCompletionSignal(completionSignal)
+	// Clean up partition files for this client
+	jw.cleanupClientFiles(clientID)
+
+	fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s\n", clientID)
+}
+
+// cleanupClientFiles deletes all partition files for a specific client
+func (jw *JoinByUserIdWorker) cleanupClientFiles(clientID string) {
+	// Delete all partition files for this client from the shared data directory
+	pattern := filepath.Join(SharedDataDir, fmt.Sprintf("%s-users-partition-*.csv", clientID))
+	fmt.Printf("Join by User ID Worker: Looking for files with pattern: %s\n", pattern)
+
+	files, err := filepath.Glob(pattern)
 	if err != nil {
-		fmt.Printf("Join by User ID Worker: Failed to serialize completion signal: %v\n", err)
+		fmt.Printf("Join by User ID Worker: Error finding files for client %s: %v\n", clientID, err)
 		return
 	}
 
-	if err := jw.completionProducer.Send(messageData); err != 0 {
-		fmt.Printf("Join by User ID Worker: Failed to send completion signal: %v\n", err)
-	} else {
-		fmt.Printf("Join by User ID Worker: Sent completion signal for client %s\n", clientID)
+	fmt.Printf("Join by User ID Worker: Found %d files for client %s: %v\n", len(files), clientID, files)
+
+	for _, file := range files {
+		if err := os.Remove(file); err != nil {
+			fmt.Printf("Join by User ID Worker: Error deleting file %s: %v\n", file, err)
+		} else {
+			fmt.Printf("Join by User ID Worker: Deleted file %s for client %s\n", file, clientID)
+		}
 	}
+
+	fmt.Printf("Join by User ID Worker: Cleaned up %d files for client %s\n", len(files), clientID)
 }

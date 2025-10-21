@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 const (
@@ -11,10 +12,10 @@ const (
 	StreamingRoutingKey   = "streaming"
 
 	// Result queues for all query types
-	Query1ResultsQueue = "query1-results-chunks"
-	Query2ResultsQueue = "query2-results-chunks"
-	Query3ResultsQueue = "query3-results-chunks"
-	Query4ResultsQueue = "query4-results-chunks"
+	Query1ResultsQueue = queues.Query1ResultsQueue
+	Query2ResultsQueue = queues.Query2ResultsQueue
+	Query3ResultsQueue = queues.Query3ResultsQueue
+	Query4ResultsQueue = queues.Query4ResultsQueue
 )
 
 // Config holds the configuration for the streaming service

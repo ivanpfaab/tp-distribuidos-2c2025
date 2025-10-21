@@ -7,6 +7,11 @@ import "strconv"
 
 const (
 	// ============================================================================
+	// Client Communication Queues
+	// ============================================================================
+	ClientResultsQueue = "client-results-queue"
+
+	// ============================================================================
 	// Filter Worker Queues
 	// ============================================================================
 	YearFilterQueue   = "year-filter-queue"
@@ -100,6 +105,22 @@ const (
 	// Streaming Service Queues
 	// ============================================================================
 	StreamingServiceQueue = "streaming-service-queue"
+
+	// ============================================================================
+	// In-File Join Orchestrator Queues
+	// ============================================================================
+	UserPartitionCompletionQueue = "user-partition-completion-queue"
+	UserIdCompletionExchange     = "userid-completion-exchange"
+	UserIdCompletionRoutingKey   = "userid.completion"
+
+	// ============================================================================
+	// In-Memory Join Orchestrator Queues
+	// ============================================================================
+	InMemoryJoinCompletionQueue = "in-memory-join-completion-queue"
+	ItemIdCompletionExchange    = "itemid-completion-exchange"
+	ItemIdCompletionRoutingKey  = "itemid.completion"
+	StoreIdCompletionExchange   = "storeid-completion-exchange"
+	StoreIdCompletionRoutingKey = "storeid.completion"
 )
 
 // GetQuery2RoutingKey returns the routing key for a specific semester in Query 2

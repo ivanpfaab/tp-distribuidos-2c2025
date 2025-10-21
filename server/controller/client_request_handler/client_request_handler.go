@@ -5,29 +5,66 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	datahandler "github.com/tp-distribuidos-2c2025/server/controller/data-handler"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // ClientRequestHandler handles incoming client requests
 type ClientRequestHandler struct {
-	config *middleware.ConnectionConfig
+	config                *middleware.ConnectionConfig
+	clientResultsConsumer *workerqueue.QueueConsumer
+	activeConnections     map[string]net.Conn // Store active connections by client ID
+	connectionsMutex      sync.RWMutex        // Protect concurrent access to activeConnections
 }
 
 // NewClientRequestHandler creates a new instance of ClientRequestHandler
 func NewClientRequestHandler(config *middleware.ConnectionConfig) *ClientRequestHandler {
+	// Create client results consumer
+	clientResultsConsumer := workerqueue.NewQueueConsumer(
+		queues.ClientResultsQueue,
+		config,
+	)
+
+	// Declare Query2 results queue
+	clientResultsQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(
+		queues.ClientResultsQueue,
+		config,
+	)
+	if err := clientResultsQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+		return nil
+	}
+	clientResultsQueueDeclarer.Close()
+
 	return &ClientRequestHandler{
-		config: config,
+		config:                config,
+		clientResultsConsumer: clientResultsConsumer,
+		activeConnections:     make(map[string]net.Conn),
 	}
 }
 
 // HandleConnection handles a TCP connection and creates a data handler for it
 func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		conn.Close()
+		// Remove connection from active connections map
+		h.connectionsMutex.Lock()
+		for clientID, activeConn := range h.activeConnections {
+			if activeConn == conn {
+				delete(h.activeConnections, clientID)
+				log.Printf("Client Request Handler: Removed connection for client %s", clientID)
+				break
+			}
+		}
+		h.connectionsMutex.Unlock()
+	}()
 
 	log.Printf("Client Request Handler: New connection from %s", conn.RemoteAddr())
 
@@ -114,6 +151,14 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 		if err != nil {
 			log.Printf("Client Request Handler: Failed to process message from %s: %v", conn.RemoteAddr(), err)
 			response = []byte("ERROR: " + err.Error())
+		} else {
+			// Store connection for this client if it's a batch message
+			if batchMsg, ok := h.extractClientID(completeMessage); ok {
+				h.connectionsMutex.Lock()
+				h.activeConnections[batchMsg.ClientID] = conn
+				h.connectionsMutex.Unlock()
+				log.Printf("Client Request Handler: Stored connection for client %s", batchMsg.ClientID)
+			}
 		}
 
 		// Send response back to client
@@ -142,7 +187,7 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 		return nil, fmt.Errorf("failed to deserialize message: %w", err)
 	}
 
-	// Check if it's a Batch message (only type we handle)
+	// Check if it's a Batch message
 	batchMsg, ok := message.(*batch.Batch)
 	if !ok {
 		return nil, fmt.Errorf("expected batch message, got %T", message)
@@ -168,8 +213,73 @@ func (h *ClientRequestHandler) processBatchMessage(data []byte, dataHandler *dat
 	return []byte(response), nil
 }
 
+// extractClientID extracts client ID from a message
+func (h *ClientRequestHandler) extractClientID(data []byte) (*batch.Batch, bool) {
+	message, err := deserializer.Deserialize(data)
+	if err != nil {
+		return nil, false
+	}
+
+	if batchMsg, ok := message.(*batch.Batch); ok {
+		return batchMsg, true
+	}
+	return nil, false
+}
+
+// StartClientResultsConsumer starts consuming formatted results from streaming service
+func (h *ClientRequestHandler) StartClientResultsConsumer() {
+	if h.clientResultsConsumer == nil {
+		log.Printf("Client Request Handler: Client results consumer not initialized")
+		return
+	}
+
+	log.Printf("Client Request Handler: Starting client results consumer...")
+
+	// Start consuming in a goroutine
+	err := h.clientResultsConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
+		for delivery := range *consumeChannel {
+			// Deserialize the chunk message to get client ID and formatted data
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				log.Printf("Client Request Handler: Failed to deserialize chunk message: %v", err)
+				continue
+			}
+
+			chunkData, ok := message.(*chunk.Chunk)
+			if !ok {
+				log.Printf("Client Request Handler: Failed to cast message to chunk")
+				continue
+			}
+
+			// Send formatted data to the appropriate client
+			h.connectionsMutex.RLock()
+			conn, exists := h.activeConnections[chunkData.ClientID]
+			h.connectionsMutex.RUnlock()
+
+			if exists {
+				_, err := conn.Write([]byte(chunkData.ChunkData))
+				if err != nil {
+					log.Printf("Client Request Handler: Failed to send data to client %s: %v", chunkData.ClientID, err)
+					// Remove the connection if it's no longer valid
+					h.connectionsMutex.Lock()
+					delete(h.activeConnections, chunkData.ClientID)
+					h.connectionsMutex.Unlock()
+				}
+			} else {
+				log.Printf("Client Request Handler: No active connection found for client %s", chunkData.ClientID)
+			}
+		}
+	})
+
+	if err != 0 {
+		log.Printf("Client Request Handler: Error in client results consumer: %v", err)
+	}
+}
+
 // Close performs any necessary cleanup
 func (h *ClientRequestHandler) Close() {
 	log.Printf("Client Request Handler: Closing handler")
-	// Add any cleanup logic here if needed
+	if h.clientResultsConsumer != nil {
+		h.clientResultsConsumer.Close()
+	}
 }

@@ -123,7 +123,7 @@ func determineQueryType(fileID string) uint8 {
 
 // ProcessBatchMessage processes a batch message and creates chunks
 func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
-	// Deserialize the batch message
+	// Deserialize the message
 	message, err := deserializer.Deserialize(data)
 	if err != nil {
 		log.Printf("Data Handler: Failed to deserialize message: %v", err)
@@ -133,7 +133,7 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	// Check if it's a Batch message
 	batchMsg, ok := message.(*batch.Batch)
 	if !ok {
-		log.Printf("Data Handler: Received non-batch message type: %T", message)
+		log.Printf("Data Handler: Received unknown message type: %T", message)
 		return fmt.Errorf("expected batch message, got %T", message)
 	}
 

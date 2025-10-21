@@ -29,7 +29,7 @@ type GroupByOrchestrator struct {
 	chunkConsumer       *workerqueue.QueueConsumer
 	terminationProducer *exchange.ExchangeMiddleware
 	completionProducer  *workerqueue.QueueMiddleware // For sending completion chunks to next step
-	fileProcessor       *FileProcessor                // For reading and converting grouped data files
+	fileProcessor       *FileProcessor               // For reading and converting grouped data files
 }
 
 // NewGroupByOrchestrator creates a new group by orchestrator
@@ -142,7 +142,7 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 
 	// Now that all chunks have been sent, clean up files
 	log.Printf("Client %s: All %d chunks sent, now cleaning up files...", clientID, len(files))
-	
+
 	// Delete individual files
 	for _, filePath := range files {
 		if err := gbo.fileProcessor.DeleteFile(filePath); err != nil {
@@ -192,7 +192,7 @@ func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, 
 	// Create chunk with grouped CSV data
 	dataChunk := chunk.NewChunk(
 		clientID,                   // ClientID
-		"1",                        // FileID - hardcoded to 1 as requested
+		"01",                       // FileID - use "01" so completion tracker can parse it
 		byte(gbo.config.QueryType), // QueryType
 		chunkNumber,                // ChunkNumber
 		isLastChunk,                // IsLastChunk
