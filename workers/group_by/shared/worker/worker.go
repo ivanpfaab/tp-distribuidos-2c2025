@@ -18,6 +18,8 @@ type GroupByWorker struct {
 	consumer                *exchange.ExchangeConsumer
 	orchestratorProducer    *workerqueue.QueueMiddleware
 	workerIDStr             string
+	fileManager             *FileManager
+	processor               *ChunkProcessor
 }
 
 // NewGroupByWorker creates a new group by worker instance
@@ -58,11 +60,17 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 	// Generate worker ID string
 	workerIDStr := fmt.Sprintf("query%d-groupby-worker-%d", config.QueryType, config.WorkerID)
 
+	// Create file manager and processor
+	fileManager := NewFileManager(config.QueryType)
+	processor := NewChunkProcessor(config.QueryType)
+
 	return &GroupByWorker{
 		config:               config,
 		consumer:             consumer,
 		orchestratorProducer: orchestratorProducer,
 		workerIDStr:          workerIDStr,
+		fileManager:          fileManager,
+		processor:            processor,
 	}, nil
 }
 
@@ -117,20 +125,57 @@ func (w *GroupByWorker) processMessage(messageBody []byte) error {
 	return w.processChunk(chunkMessage)
 }
 
-// processChunk processes a single chunk with dummy group by logic
+// processChunk processes a single chunk with file-based group by aggregation
 func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 	testing_utils.LogInfo("GroupBy Worker", "Processing chunk %d from client %s, file %s (IsLastChunk=%t, IsLastFromTable=%t)",
 		chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID,
 		chunkMessage.IsLastChunk, chunkMessage.IsLastFromTable)
 
-	// ===== DUMMY GROUP BY LOGIC =====
-	// For now, we just log that we received the chunk
-	// In the future, this will perform actual group by aggregation
-	testing_utils.LogInfo("GroupBy Worker", "Dummy group by processing for chunk %d (TableID=%d, ChunkSize=%d)",
-		chunkMessage.ChunkNumber, chunkMessage.TableID, chunkMessage.ChunkSize)
+	// Determine partition(s) for this worker
+	// For Q2/Q3: worker ID = partition (1:1 mapping)
+	// For Q4: worker handles multiple partitions
+	partitions := w.getPartitionsForWorker()
 
-	// ===== SEND CHUNK NOTIFICATION TO ORCHESTRATOR =====
+	// Process each partition
+	for _, partition := range partitions {
+		// Load existing data from file
+		currentData, err := w.fileManager.LoadData(chunkMessage.ClientID, partition)
+		if err != nil {
+			return fmt.Errorf("failed to load data for partition %d: %v", partition, err)
+		}
+
+		// Process chunk and update data
+		updatedData, err := w.processor.ProcessChunk(chunkMessage, currentData, partition, w.config.NumPartitions)
+		if err != nil {
+			return fmt.Errorf("failed to process chunk for partition %d: %v", partition, err)
+		}
+
+		// Save updated data back to file
+		if err := w.fileManager.SaveData(chunkMessage.ClientID, partition, updatedData); err != nil {
+			return fmt.Errorf("failed to save data for partition %d: %v", partition, err)
+		}
+
+		testing_utils.LogInfo("GroupBy Worker", "Successfully processed and saved partition %d for chunk %d",
+			partition, chunkMessage.ChunkNumber)
+	}
+
+	// Send chunk notification to orchestrator AFTER successful file writes
 	return w.sendChunkNotification(chunkMessage)
+}
+
+// getPartitionsForWorker returns the list of partitions this worker handles
+func (w *GroupByWorker) getPartitionsForWorker() []int {
+	// For Q2/Q3: worker ID maps directly to partition (1:1 mapping)
+	if w.config.QueryType == 2 || w.config.QueryType == 3 {
+		return []int{w.config.WorkerID}
+	}
+
+	// For Q4: worker handles multiple partitions (partition % NUM_WORKERS == workerID)
+	partitions := []int{}
+	for partition := w.config.WorkerID; partition < w.config.NumPartitions; partition += w.config.NumWorkers {
+		partitions = append(partitions, partition)
+	}
+	return partitions
 }
 
 // sendChunkNotification sends a chunk notification to the orchestrator

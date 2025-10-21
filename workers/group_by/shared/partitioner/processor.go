@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -166,16 +167,85 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 	return result, nil
 }
 
-// getPartition calculates the partition for a record based on user_id modulo
-func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
-	// Find user_id field index based on query type
-	userIDIndex := p.GetUserIDFieldIndex()
-	if userIDIndex >= len(record.Fields) {
-		return 0, fmt.Errorf("record does not have enough fields for user_id")
+// getTimeBasedPartition calculates partition based on semester from created_at field
+// Partition 0: 2024-S1 (Jan-Jun 2024)
+// Partition 1: 2024-S2 (Jul-Dec 2024)
+// Partition 2: 2025-S1 (Jan-Jun 2025)
+func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtIndex int) (int, error) {
+	if createdAtIndex >= len(record.Fields) {
+		return 0, fmt.Errorf("record does not have created_at field at index %d", createdAtIndex)
 	}
 
-	userID := record.Fields[userIDIndex]
-	return GetUserPartition(userID, p.NumPartitions)
+	createdAtStr := record.Fields[createdAtIndex]
+	createdAt, err := p.parseDate(createdAtStr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse created_at '%s': %v", createdAtStr, err)
+	}
+
+	year := createdAt.Year()
+	month := createdAt.Month()
+
+	// Determine semester: S1 (Jan-Jun) or S2 (Jul-Dec)
+	semester := 1
+	if month >= 7 {
+		semester = 2
+	}
+
+	// Map year-semester to partition
+	switch {
+	case year == 2024 && semester == 1:
+		return 0, nil
+	case year == 2024 && semester == 2:
+		return 1, nil
+	case year == 2025 && semester == 1:
+		return 2, nil
+	default:
+		// For dates outside our expected range, log warning and assign to a default partition
+		testing_utils.LogWarn("Partitioner Processor", "Unexpected date %s (year=%d, semester=%d), assigning to partition 0", createdAtStr, year, semester)
+		return 0, nil
+	}
+}
+
+// parseDate parses a date string in various formats
+func (p *PartitionerProcessor) parseDate(dateStr string) (time.Time, error) {
+	// Try different date formats
+	formats := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+		"2006/01/02",
+		"2006-01-02T15:04:05Z",
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, dateStr); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("unable to parse date: %s", dateStr)
+}
+
+// getPartition calculates the partition for a record based on query type
+// Query 2/3: Time-based partitioning (semester)
+// Query 4: User-based partitioning (user_id % NUM_PARTITIONS)
+func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
+	switch p.QueryType {
+	case 2:
+		// Query 2: Time-based partitioning (created_at is at index 5)
+		return p.getTimeBasedPartition(record, 5)
+	case 3:
+		// Query 3: Time-based partitioning (created_at is at index 8)
+		return p.getTimeBasedPartition(record, 8)
+	case 4:
+		// Query 4: User-based partitioning (user_id is at index 4)
+		if 4 >= len(record.Fields) {
+			return 0, fmt.Errorf("record does not have enough fields for user_id")
+		}
+		userID := record.Fields[4]
+		return GetUserPartition(userID, p.NumPartitions)
+	default:
+		return 0, fmt.Errorf("unsupported query type: %d", p.QueryType)
+	}
 }
 
 // validateHeader validates that the CSV header matches the expected schema
@@ -192,20 +262,6 @@ func (p *PartitionerProcessor) ValidateHeader(header []string) error {
 	}
 
 	return nil
-}
-
-// getUserIDFieldIndex returns the index of the user_id field based on query type
-func (p *PartitionerProcessor) GetUserIDFieldIndex() int {
-	switch p.QueryType {
-	case 2:
-		// Query 2 doesn't have user_id, use item_id instead
-		return 1 // item_id is at index 1
-	case 3, 4:
-		// Query 3 and 4 have user_id at index 4
-		return 4
-	default:
-		return 0
-	}
 }
 
 // sendToWorker sends a chunk to a specific worker with correct metadata
