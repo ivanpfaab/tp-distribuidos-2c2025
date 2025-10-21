@@ -30,7 +30,7 @@ type Store struct {
 
 // ClientState holds the state for a specific client's batch processing
 type ClientState struct {
-	chunks      []*chunk.Chunk // Store chunks for batch processing
+	chunks []*chunk.Chunk // Store chunks for batch processing
 }
 
 // StoreIdJoinWorker encapsulates the StoreID join worker state and dependencies
@@ -297,7 +297,7 @@ func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) mid
 func (w *StoreIdJoinWorker) getOrCreateClientState(clientID string) *ClientState {
 	if w.clientStates[clientID] == nil {
 		w.clientStates[clientID] = &ClientState{
-			chunks:      make([]*chunk.Chunk, 0),
+			chunks: make([]*chunk.Chunk, 0),
 		}
 	}
 	return w.clientStates[clientID]
@@ -353,15 +353,48 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 func (w *StoreIdJoinWorker) processBatch(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
 	fmt.Printf("StoreID Join Worker: Processing batch for client %s with %d chunks\n", clientID, len(clientState.chunks))
 
-	// Process each chunk in the batch
-	for _, chunkMsg := range clientState.chunks {
-		if err := w.processChunk(chunkMsg); err != 0 {
-			fmt.Printf("StoreID Join Worker: Failed to process chunk in batch: %v\n", err)
-			return err
-		}
+	// Combine all chunk data into a single chunk
+	var combinedData strings.Builder
+	var totalChunkSize int
+	var queryType byte
+	var tableID int
+	var fileID string
+
+	// Use metadata from the first chunk
+	if len(clientState.chunks) > 0 {
+		firstChunk := clientState.chunks[0]
+		queryType = firstChunk.QueryType
+		tableID = firstChunk.TableID
+		fileID = firstChunk.FileID
 	}
 
-	fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
+	// Combine all chunk data
+	for _, chunkMsg := range clientState.chunks {
+		combinedData.WriteString(chunkMsg.ChunkData)
+		totalChunkSize += chunkMsg.ChunkSize
+	}
+
+	// Create a single combined chunk
+	combinedChunk := chunk.NewChunk(
+		clientID,              // ClientID
+		fileID,                // FileID
+		queryType,             // QueryType
+		1,                     // ChunkNumber - single chunk
+		true,                  // IsLastChunk
+		true,                  // IsLastFromTable
+		4,                     // Step
+		totalChunkSize,        // ChunkSize
+		tableID,               // TableID
+		combinedData.String(), // ChunkData - combined data
+	)
+
+	// Process the single combined chunk
+	if err := w.processChunk(combinedChunk); err != 0 {
+		fmt.Printf("StoreID Join Worker: Failed to process combined chunk: %v\n", err)
+		return err
+	}
+
+	fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s as single chunk\n", clientID)
 	return 0
 }
 
