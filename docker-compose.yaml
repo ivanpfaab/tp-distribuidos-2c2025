@@ -185,6 +185,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 3 Group By Orchestrator
@@ -202,6 +204,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Group By Orchestrator
@@ -219,6 +223,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 2 Partitioner
@@ -236,7 +242,7 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
       NUM_WORKERS: "3"
     profiles: ["orchestration"]
 
@@ -261,7 +267,9 @@ services:
       QUERY_TYPE: "2"
       WORKER_ID: "1"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   query2-groupby-worker-2:
@@ -284,7 +292,9 @@ services:
       QUERY_TYPE: "2"
       WORKER_ID: "2"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   query2-groupby-worker-3:
@@ -307,7 +317,9 @@ services:
       QUERY_TYPE: "2"
       WORKER_ID: "3"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 2 Top Items Classification (Top N per month)
@@ -347,7 +359,7 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
       NUM_WORKERS: "3"
     profiles: ["orchestration"]
 
@@ -372,7 +384,9 @@ services:
       QUERY_TYPE: "3"
       WORKER_ID: "1"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   query3-groupby-worker-2:
@@ -395,7 +409,9 @@ services:
       QUERY_TYPE: "3"
       WORKER_ID: "2"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   query3-groupby-worker-3:
@@ -418,7 +434,9 @@ services:
       QUERY_TYPE: "3"
       WORKER_ID: "3"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Partitioner
@@ -436,7 +454,7 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "100"
       NUM_WORKERS: "3"
     profiles: ["orchestration"]
 
@@ -461,7 +479,9 @@ services:
       QUERY_TYPE: "4"
       WORKER_ID: "1"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "100"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   query4-groupby-worker-2:
@@ -484,7 +504,9 @@ services:
       QUERY_TYPE: "4"
       WORKER_ID: "2"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "100"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   query4-groupby-worker-3:
@@ -507,7 +529,9 @@ services:
       QUERY_TYPE: "4"
       WORKER_ID: "3"
       NUM_WORKERS: "3"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "100"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Top Users Classification (Top N per store)
@@ -917,4 +941,10 @@ services:
 
 volumes:
   shared-data:
+    driver: local
+  query2-groupby-data:
+    driver: local
+  query3-groupby-data:
+    driver: local
+  query4-groupby-data:
     driver: local

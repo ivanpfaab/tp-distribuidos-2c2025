@@ -323,6 +323,8 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 3 Group By Orchestrator
@@ -340,6 +342,8 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Group By Orchestrator
@@ -357,6 +361,8 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Streaming service (NOT SCALABLE - outputs to stdout)
@@ -403,6 +409,14 @@ generate_partitioner() {
     local count=$2
     local num_workers=$3
 
+    # Determine NUM_PARTITIONS based on query type
+    local num_partitions
+    if [ "$query_type" = "2" ] || [ "$query_type" = "3" ]; then
+        num_partitions="3"  # Time-based partitions (3 semesters)
+    else
+        num_partitions="100"  # Default for Query 4 (configurable)
+    fi
+
     for i in $(seq 1 $count); do
         local container_name
         if [ $count -eq 1 ]; then
@@ -427,7 +441,7 @@ generate_partitioner() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "${query_type}"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "${num_partitions}"
       NUM_WORKERS: "${num_workers}"
     profiles: ["orchestration"]
 
@@ -440,6 +454,14 @@ generate_groupby_workers() {
     local query_type=$1
     local count=$2
     local partitioner_count=$3
+
+    # Determine NUM_PARTITIONS based on query type
+    local num_partitions
+    if [ "$query_type" = "2" ] || [ "$query_type" = "3" ]; then
+        num_partitions="3"  # Time-based partitions (3 semesters)
+    else
+        num_partitions="100"  # Default for Query 4 (configurable)
+    fi
 
     for i in $(seq 1 $count); do
         # Build dependencies on all partitioners
@@ -476,7 +498,9 @@ $(echo -e "${partitioner_deps}")    environment:
       QUERY_TYPE: "${query_type}"
       WORKER_ID: "${i}"
       NUM_WORKERS: "${count}"
-      NUM_PARTITIONS: "10"
+      NUM_PARTITIONS: "${num_partitions}"
+    volumes:
+      - query${query_type}-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
 EOF
@@ -924,6 +948,12 @@ cat >> docker-compose.yaml << 'EOF_FOOTER'
 
 volumes:
   shared-data:
+    driver: local
+  query2-groupby-data:
+    driver: local
+  query3-groupby-data:
+    driver: local
+  query4-groupby-data:
     driver: local
 EOF_FOOTER
 
