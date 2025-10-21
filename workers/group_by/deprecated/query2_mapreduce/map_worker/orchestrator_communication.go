@@ -39,7 +39,7 @@ func NewOrchestratorCommunicator(mapWorkerID string, config *middleware.Connecti
 	}
 
 	// Declare the chunk notification queue
-	if err := chunkNotificationProducer.DeclareQueue(false, false, false, false); err != 0 {
+	if err := chunkNotificationProducer.D(false, false, false, false); err != 0 {
 		chunkNotificationProducer.Close()
 		log.Fatalf("Failed to declare chunk notification queue: %v", err)
 	}

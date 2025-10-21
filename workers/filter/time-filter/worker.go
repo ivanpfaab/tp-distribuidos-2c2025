@@ -45,7 +45,7 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 
 	// Create amount filter producer
 	amountFilterProducer := workerqueue.NewMessageMiddlewareQueue(
-		AmountFilterQueueName,
+		queues.AmountFilterQueue,
 		config,
 	)
 	if amountFilterProducer == nil {

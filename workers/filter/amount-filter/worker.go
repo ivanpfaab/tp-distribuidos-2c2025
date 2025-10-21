@@ -5,6 +5,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // AmountFilterWorker encapsulates the amount filter worker state and dependencies
@@ -18,7 +19,7 @@ type AmountFilterWorker struct {
 func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWorker, error) {
 	// Create amount filter consumer
 	consumer := workerqueue.NewQueueConsumer(
-		AmountFilterQueueName,
+		queues.AmountFilterQueue,
 		config,
 	)
 	if consumer == nil {
@@ -27,7 +28,7 @@ func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWo
 
 	// Declare the amount filter queue using QueueMiddleware
 	amountFilterConsumer := workerqueue.NewMessageMiddlewareQueue(
-		AmountFilterQueueName,
+		queues.AmountFilterQueue,
 		config,
 	)
 	if amountFilterConsumer == nil {
@@ -43,7 +44,7 @@ func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWo
 
 	// Create reply producer
 	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		ReplyFilterBusQueueName,
+		queues.ReplyFilterBusQueue,
 		config,
 	)
 	if replyProducer == nil {
