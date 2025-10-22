@@ -179,6 +179,8 @@ services:
       RABBITMQ_PASS: password
     volumes:
       - ./tests/groupby_blackbox_test/testdata:/app/testdata:ro
+      - groupby-test-data:/app/groupby-data
+      - /var/run/docker.sock:/var/run/docker.sock  # Allow access to Docker daemon
     command: ["go", "test", "-v", "./tests/groupby_blackbox_test", "-timeout", "5m"]
 
 volumes:

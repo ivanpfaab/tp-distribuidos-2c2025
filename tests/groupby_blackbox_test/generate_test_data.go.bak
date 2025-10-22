@@ -1,0 +1,77 @@
+package main
+
+import (
+	"fmt"
+	"math/rand"
+	"os"
+	"time"
+)
+
+func main() {
+	numRecords := 1000
+	itemIDs := []int{101, 102, 103, 104, 105, 106, 107, 108, 109, 110}
+
+	// Define semester date ranges
+	semesters := []struct {
+		name      string
+		startDate time.Time
+		endDate   time.Time
+	}{
+		{"2024-S1", time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2024, 6, 30, 23, 59, 59, 0, time.UTC)},
+		{"2024-S2", time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC), time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)},
+		{"2025-S1", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2025, 6, 30, 23, 59, 59, 0, time.UTC)},
+	}
+
+	file, err := os.Create("testdata/transaction_items.csv")
+	if err != nil {
+		fmt.Printf("Failed to create file: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	// Write header
+	file.WriteString("transaction_id,item_id,quantity,unit_price,subtotal,created_at\n")
+
+	// Generate records distributed across semesters
+	rand.Seed(time.Now().UnixNano())
+
+	for i := 1; i <= numRecords; i++ {
+		// Distribute records evenly across semesters
+		semesterIdx := (i - 1) % len(semesters)
+		semester := semesters[semesterIdx]
+
+		// Generate random date within the semester
+		daysInRange := int(semester.endDate.Sub(semester.startDate).Hours() / 24)
+		randomDays := rand.Intn(daysInRange)
+		randomDate := semester.startDate.AddDate(0, 0, randomDays)
+
+		// Add random hours and minutes
+		randomHour := rand.Intn(24)
+		randomMinute := rand.Intn(60)
+		randomDate = time.Date(randomDate.Year(), randomDate.Month(), randomDate.Day(), randomHour, randomMinute, 0, 0, time.UTC)
+
+		// Random item
+		itemID := itemIDs[rand.Intn(len(itemIDs))]
+
+		// Random quantity (1-5)
+		quantity := rand.Intn(5) + 1
+
+		// Random unit price (5.00 - 30.00)
+		unitPrice := float64(rand.Intn(2500)+500) / 100.0
+
+		// Calculate subtotal
+		subtotal := float64(quantity) * unitPrice
+
+		// Write record
+		fmt.Fprintf(file, "%d,%d,%d,%.2f,%.2f,%s\n",
+			i,
+			itemID,
+			quantity,
+			unitPrice,
+			subtotal,
+			randomDate.Format("2006-01-02 15:04:05"),
+		)
+	}
+
+	fmt.Printf("Generated %d records in testdata/transaction_items.csv\n", numRecords)
+}
