@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -298,22 +299,89 @@ func (c *TCPClient) sendBatches(r *csv.Reader, batchSize int, fileID string, isL
 
 func (c *TCPClient) StartServerReader() {
 	go func() {
+		// Ensure results directory exists
+		if err := os.MkdirAll("/results", 0755); err != nil {
+			log.Printf("Failed to create results directory: %v", err)
+			return
+		}
+
+		// Create new result file
+		filename := fmt.Sprintf("/results/results_%s.txt", c.clientID)
+		resultFile, err := os.Create(filename)
+		if err != nil {
+			log.Printf("Failed to create result file: %v", err)
+			return
+		}
+		defer resultFile.Close()
+
+		// Create buffered writer
+		writer := bufio.NewWriter(resultFile)
+		defer writer.Flush()
+
+		log.Printf("(Client) Writing query results to: %s", filename)
+
+		// Read server responses
 		sc := bufio.NewScanner(c.conn)
 		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+
 		for sc.Scan() {
-			fmt.Printf("(Client) Server: %s\n", sc.Text())
+			line := sc.Text()
+
+			// Check if line contains query result pattern
+			if strings.Contains(line, "Q") && strings.Contains(line, " | ") {
+				// Write to file
+				if _, err := writer.WriteString(line + "\n"); err != nil {
+					log.Printf("Failed to write result: %v", err)
+				}
+				fmt.Printf("(Client) Query Result: %s\n", line)
+			} else {
+				fmt.Printf("(Client) Server: %s\n", line)
+			}
 		}
+
+		// Handle disconnection
 		if err := sc.Err(); err != nil && err != io.EOF {
 			log.Printf("(Client) Error reading from server: %v", err)
 		}
+
+		// Server disconnected - graceful shutdown
+		log.Printf("(Client) Server disconnected. Shutting down gracefully...")
+		writer.Flush()
+		resultFile.Close()
+		c.conn.Close()
+
+		// Stop the container
+		c.gracefulShutdown()
 	}()
+}
+
+// gracefulShutdown stops the Docker container gracefully
+func (c *TCPClient) gracefulShutdown() {
+	// Get container ID from environment (Docker sets HOSTNAME automatically)
+	containerID := os.Getenv("HOSTNAME")
+	if containerID == "" {
+		log.Printf("Container ID not found, using os.Exit(0)")
+		os.Exit(0)
+		return
+	}
+
+	log.Printf("Stopping container: %s", containerID)
+
+	// Stop the container
+	cmd := exec.Command("docker", "stop", containerID)
+	if err := cmd.Run(); err != nil {
+		log.Printf("Failed to stop container: %v", err)
+		// Fallback to os.Exit(0)
+		os.Exit(0)
+	}
 }
 
 // KeepConnectionOpen keeps the connection open after processing all files
 func (c *TCPClient) KeepConnectionOpen() error {
-	fmt.Println("Connection kept open. Press Ctrl+C to exit.")
+	fmt.Println("Connection kept open. Waiting for results...")
 
-	// Wait indefinitely to keep connection open
+	// Wait for the result reader goroutine to finish
+	// The goroutine will call gracefulShutdown() when server disconnects
 	select {}
 }
 
@@ -402,8 +470,10 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 	fmt.Printf("\nFinished sending all files. Total files: %d, Total records: %d, Total batches: %d\n",
 		totalFiles, totalRecords, totalBatches)
 
-	// Keep connection open
-	fmt.Println("\n=== Connection kept open ===")
+	// Keep connection open and wait for results
+	fmt.Println("\n=== Waiting for query results ===")
+	fmt.Println("Query results will be written to /results/results_" + clientID + ".txt")
+	fmt.Println("Container will stop automatically when processing is complete.")
 
 	// Keep connection open
 	return client.KeepConnectionOpen()

@@ -909,6 +909,8 @@ services:
         condition: service_started
     volumes:
       - ./data:/app/data
+      - ./results:/results  # Mount local results directory
+      - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI1
     command: ["./main", "/app/data", "server:8080"]
@@ -925,6 +927,8 @@ services:
         condition: service_started
     volumes:
       - ./data:/app/data
+      - ./results:/results  # Mount local results directory
+      - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI2
     command: ["./main", "/app/data", "server:8080"]

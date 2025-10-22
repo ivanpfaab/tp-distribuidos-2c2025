@@ -549,38 +549,3 @@ func (jw *JoinByUserIdWorker) cleanupClientFiles(clientID string) {
 
 	fmt.Printf("Join by User ID Worker: Cleaned up %d files for client %s\n", len(files), clientID)
 }
-
-// performCleanup performs cleanup operations for partition files (idempotent)
-func (jw *JoinByUserIdWorker) performCleanup(clientID string) {
-	fmt.Printf("Join by User ID Worker: Performing cleanup for client: %s\n", clientID)
-
-	// Clean up partition files for this client
-	jw.cleanupClientFiles(clientID)
-
-	fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s\n", clientID)
-}
-
-// cleanupClientFiles deletes all partition files for a specific client
-func (jw *JoinByUserIdWorker) cleanupClientFiles(clientID string) {
-	// Delete all partition files for this client from the shared data directory
-	pattern := filepath.Join(SharedDataDir, fmt.Sprintf("%s-users-partition-*.csv", clientID))
-	fmt.Printf("Join by User ID Worker: Looking for files with pattern: %s\n", pattern)
-
-	files, err := filepath.Glob(pattern)
-	if err != nil {
-		fmt.Printf("Join by User ID Worker: Error finding files for client %s: %v\n", clientID, err)
-		return
-	}
-
-	fmt.Printf("Join by User ID Worker: Found %d files for client %s: %v\n", len(files), clientID, files)
-
-	for _, file := range files {
-		if err := os.Remove(file); err != nil {
-			fmt.Printf("Join by User ID Worker: Error deleting file %s: %v\n", file, err)
-		} else {
-			fmt.Printf("Join by User ID Worker: Deleted file %s for client %s\n", file, clientID)
-		}
-	}
-
-	fmt.Printf("Join by User ID Worker: Cleaned up %d files for client %s\n", len(files), clientID)
-}
