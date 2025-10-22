@@ -3,8 +3,8 @@ FROM golang:1.23-alpine
 
 WORKDIR /app
 
-# Install dependencies
-RUN apk add --no-cache git
+# Install dependencies including docker CLI
+RUN apk add --no-cache git docker-cli
 
 # Copy go mod files
 COPY go.mod go.sum ./
