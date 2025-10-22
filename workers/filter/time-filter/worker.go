@@ -5,6 +5,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // TimeFilterWorker encapsulates the time filter worker state and dependencies
@@ -19,7 +20,7 @@ type TimeFilterWorker struct {
 func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker, error) {
 	// Create time filter consumer
 	consumer := workerqueue.NewQueueConsumer(
-		TimeFilterQueueName,
+		queues.TimeFilterQueue,
 		config,
 	)
 	if consumer == nil {
@@ -28,7 +29,7 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 
 	// Declare the time filter queue using QueueMiddleware
 	timeFilterConsumer := workerqueue.NewMessageMiddlewareQueue(
-		TimeFilterQueueName,
+		queues.TimeFilterQueue,
 		config,
 	)
 	if timeFilterConsumer == nil {
@@ -44,7 +45,7 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 
 	// Create amount filter producer
 	amountFilterProducer := workerqueue.NewMessageMiddlewareQueue(
-		AmountFilterQueueName,
+		queues.AmountFilterQueue,
 		config,
 	)
 	if amountFilterProducer == nil {
@@ -54,7 +55,7 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 
 	// Create reply producer
 	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		ReplyFilterBusQueueName,
+		queues.ReplyFilterBusQueue,
 		config,
 	)
 	if replyProducer == nil {

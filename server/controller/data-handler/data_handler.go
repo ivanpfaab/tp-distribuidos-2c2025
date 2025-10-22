@@ -10,8 +10,8 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
 
 const (
@@ -54,7 +54,7 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 
 	// Initialize queue producer for sending chunks directly to year-filter
 	dh.yearFilterProducer = workerqueue.NewMessageMiddlewareQueue(
-		"year-filter",
+		queues.YearFilterQueue,
 		dh.config,
 	)
 	if dh.yearFilterProducer == nil {
@@ -68,7 +68,7 @@ func (dh *DataHandler) Initialize() middleware.MessageMiddlewareError {
 
 	// Initialize queue producer for sending chunks directly to join data handler
 	dh.joinDataHandlerProducer = workerqueue.NewMessageMiddlewareQueue(
-		FixedJoinDataQueue,
+		queues.FixedJoinDataQueue,
 		dh.config,
 	)
 	if dh.joinDataHandlerProducer == nil {
@@ -123,7 +123,7 @@ func determineQueryType(fileID string) uint8 {
 
 // ProcessBatchMessage processes a batch message and creates chunks
 func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
-	// Deserialize the batch message
+	// Deserialize the message
 	message, err := deserializer.Deserialize(data)
 	if err != nil {
 		log.Printf("Data Handler: Failed to deserialize message: %v", err)
@@ -133,7 +133,7 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	// Check if it's a Batch message
 	batchMsg, ok := message.(*batch.Batch)
 	if !ok {
-		log.Printf("Data Handler: Received non-batch message type: %T", message)
+		log.Printf("Data Handler: Received unknown message type: %T", message)
 		return fmt.Errorf("expected batch message, got %T", message)
 	}
 

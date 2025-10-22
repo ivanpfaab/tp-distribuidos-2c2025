@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o orchestrator ./workers/group_by/orchestrator
+RUN CGO_ENABLED=0 GOOS=linux go build -o orchestrator ./workers/group_by/shared/orchestrator
 
 FROM alpine:latest
 

@@ -309,7 +309,15 @@ func (c *TCPClient) StartServerReader() {
 	}()
 }
 
-// runClient runs the client with the given data folder
+// KeepConnectionOpen keeps the connection open after processing all files
+func (c *TCPClient) KeepConnectionOpen() error {
+	fmt.Println("Connection kept open. Press Ctrl+C to exit.")
+
+	// Wait indefinitely to keep connection open
+	select {}
+}
+
+// runClient runs the client with the given data folder and keeps connection open
 func runClient(dataFolder string, serverAddr string, clientID string) error {
 	// Scan for CSV files in the data folder
 	fileMap, err := scanCSVFiles(dataFolder)
@@ -326,7 +334,7 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
-	defer client.Close()
+	// Note: Removed defer client.Close() to keep connection open
 
 	fmt.Printf("Connected to server at %s\n", serverAddr)
 	fmt.Printf("Found %d CSV files in folder: %s\n", len(fileMap), dataFolder)
@@ -391,10 +399,12 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	sleep := time.After(10 * time.Second)
-	<-sleep
-
 	fmt.Printf("\nFinished sending all files. Total files: %d, Total records: %d, Total batches: %d\n",
 		totalFiles, totalRecords, totalBatches)
-	return nil
+
+	// Keep connection open
+	fmt.Println("\n=== Connection kept open ===")
+
+	// Keep connection open
+	return client.KeepConnectionOpen()
 }

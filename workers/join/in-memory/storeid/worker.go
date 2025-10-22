@@ -30,9 +30,7 @@ type Store struct {
 
 // ClientState holds the state for a specific client's batch processing
 type ClientState struct {
-	eosReceived map[string]bool // Track EOS from reduce workers (key: FileID)
-	eosCount    int
-	chunks      []*chunk.Chunk // Store chunks for batch processing
+	chunks []*chunk.Chunk // Store chunks for batch processing
 }
 
 // StoreIdJoinWorker encapsulates the StoreID join worker state and dependencies
@@ -275,8 +273,8 @@ func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) mid
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	fmt.Printf("StoreID Join Worker: Received dictionary message for FileID: %s, ChunkNumber: %d, IsLastChunk: %t, IsLastFromTable: %t\n",
-		chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk, chunkMsg.IsLastFromTable)
+	fmt.Printf("StoreID Join Worker: Received dictionary message for FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
+		chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
 
 	// Parse the stores data from the chunk
 	if err := w.parseStoresData(string(chunkMsg.ChunkData), chunkMsg.ClientID); err != nil {
@@ -299,9 +297,7 @@ func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) mid
 func (w *StoreIdJoinWorker) getOrCreateClientState(clientID string) *ClientState {
 	if w.clientStates[clientID] == nil {
 		w.clientStates[clientID] = &ClientState{
-			eosReceived: make(map[string]bool),
-			eosCount:    0,
-			chunks:      make([]*chunk.Chunk, 0),
+			chunks: make([]*chunk.Chunk, 0),
 		}
 	}
 	return w.clientStates[clientID]
@@ -336,28 +332,17 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 	w.mutex.Unlock()
 
 	// Check if this is the last chunk (EOS marker)
-	if chunkMsg.IsLastChunk { // TODO: Check if we are handling this well now with the isLastFromTable flag addition
-		// Mark this reduce worker as finished
-		if !clientState.eosReceived[chunkMsg.FileID] {
-			clientState.eosReceived[chunkMsg.FileID] = true
-			clientState.eosCount++
-			fmt.Printf("StoreID Join Worker: Received EOS from reduce worker %s (Client: %s) - Count: %d/%d\n",
-				chunkMsg.FileID, clientID, clientState.eosCount, w.config.BatchSize)
+	if chunkMsg.IsLastChunk {
+		fmt.Printf("StoreID Join Worker: Received last chunk for client %s, processing batch...\n", clientID)
+		if err := w.processBatch(clientID, clientState); err != 0 {
+			fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
+			delivery.Nack(false, false)
+			return err
 		}
-
-		// If we received EOS from all reduce workers, process the batch
-		if clientState.eosCount >= w.config.BatchSize {
-			fmt.Printf("StoreID Join Worker: All reduce workers finished for client %s, processing batch...\n", clientID)
-			if err := w.processBatch(clientID, clientState); err != 0 {
-				fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
-				delivery.Nack(false, false)
-				return err
-			}
-			// Clear client state
-			w.mutex.Lock()
-			delete(w.clientStates, clientID)
-			w.mutex.Unlock()
-		}
+		// Clear client state
+		w.mutex.Lock()
+		delete(w.clientStates, clientID)
+		w.mutex.Unlock()
 	}
 
 	delivery.Ack(false) // Acknowledge the chunk message
@@ -368,15 +353,48 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 func (w *StoreIdJoinWorker) processBatch(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
 	fmt.Printf("StoreID Join Worker: Processing batch for client %s with %d chunks\n", clientID, len(clientState.chunks))
 
-	// Process each chunk in the batch
-	for _, chunkMsg := range clientState.chunks {
-		if err := w.processChunk(chunkMsg); err != 0 {
-			fmt.Printf("StoreID Join Worker: Failed to process chunk in batch: %v\n", err)
-			return err
-		}
+	// Combine all chunk data into a single chunk
+	var combinedData strings.Builder
+	var totalChunkSize int
+	var queryType byte
+	var tableID int
+	var fileID string
+
+	// Use metadata from the first chunk
+	if len(clientState.chunks) > 0 {
+		firstChunk := clientState.chunks[0]
+		queryType = firstChunk.QueryType
+		tableID = firstChunk.TableID
+		fileID = firstChunk.FileID
 	}
 
-	fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
+	// Combine all chunk data
+	for _, chunkMsg := range clientState.chunks {
+		combinedData.WriteString(chunkMsg.ChunkData)
+		totalChunkSize += chunkMsg.ChunkSize
+	}
+
+	// Create a single combined chunk
+	combinedChunk := chunk.NewChunk(
+		clientID,              // ClientID
+		fileID,                // FileID
+		queryType,             // QueryType
+		1,                     // ChunkNumber - single chunk
+		true,                  // IsLastChunk
+		true,                  // IsLastFromTable
+		4,                     // Step
+		totalChunkSize,        // ChunkSize
+		tableID,               // TableID
+		combinedData.String(), // ChunkData - combined data
+	)
+
+	// Process the single combined chunk
+	if err := w.processChunk(combinedChunk); err != 0 {
+		fmt.Printf("StoreID Join Worker: Failed to process combined chunk: %v\n", err)
+		return err
+	}
+
+	fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s as single chunk\n", clientID)
 	return 0
 }
 
@@ -434,16 +452,15 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 
 		// Create new chunk with joined data
 		joinedChunk := &chunk.Chunk{
-			ClientID:        chunkMsg.ClientID,
-			FileID:          chunkMsg.FileID,
-			QueryType:       chunkMsg.QueryType,
-			ChunkNumber:     chunkMsg.ChunkNumber,
-			IsLastChunk:     chunkMsg.IsLastChunk,
-			IsLastFromTable: chunkMsg.IsLastFromTable,
-			Step:            chunkMsg.Step,
-			ChunkSize:       len(joinedData),
-			TableID:         chunkMsg.TableID,
-			ChunkData:       joinedData,
+			ClientID:    chunkMsg.ClientID,
+			FileID:      chunkMsg.FileID,
+			QueryType:   chunkMsg.QueryType,
+			ChunkNumber: chunkMsg.ChunkNumber,
+			IsLastChunk: chunkMsg.IsLastChunk,
+			Step:        chunkMsg.Step,
+			ChunkSize:   len(joinedData),
+			TableID:     chunkMsg.TableID,
+			ChunkData:   joinedData,
 		}
 
 		return joinedChunk, nil
@@ -460,16 +477,15 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 
 	// Create new chunk with joined data
 	joinedChunk := &chunk.Chunk{
-		ClientID:        chunkMsg.ClientID,
-		FileID:          chunkMsg.FileID,
-		QueryType:       chunkMsg.QueryType,
-		ChunkNumber:     chunkMsg.ChunkNumber,
-		IsLastChunk:     chunkMsg.IsLastChunk,
-		IsLastFromTable: chunkMsg.IsLastFromTable,
-		Step:            chunkMsg.Step,
-		ChunkSize:       len(joinedData),
-		TableID:         chunkMsg.TableID,
-		ChunkData:       joinedData,
+		ClientID:    chunkMsg.ClientID,
+		FileID:      chunkMsg.FileID,
+		QueryType:   chunkMsg.QueryType,
+		ChunkNumber: chunkMsg.ChunkNumber,
+		IsLastChunk: chunkMsg.IsLastChunk,
+		Step:        chunkMsg.Step,
+		ChunkSize:   len(joinedData),
+		TableID:     chunkMsg.TableID,
+		ChunkData:   joinedData,
 	}
 
 	return joinedChunk, nil

@@ -4,16 +4,6 @@ import (
 	"os"
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/queues"
-)
-
-// Alias commonly used queue names from the shared package for convenience
-const (
-	ReplyFilterBusQueueName  = queues.ReplyFilterBusQueue
-	ItemIdGroupByChunkQueue  = queues.Query2MapQueue
-	StoreIdGroupByChunkQueue = queues.Query3MapQueue
-	Query4MapQueue           = queues.Query4MapQueue
-	Query1ResultsQueue       = queues.Query1ResultsQueue
 )
 
 // Config holds the configuration for the query gateway

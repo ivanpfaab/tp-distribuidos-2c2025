@@ -32,8 +32,6 @@ type MonthTopItems struct {
 // ClientState holds the state for a specific client
 type ClientState struct {
 	topItemsByMonth map[string]*MonthTopItems // key: "YYYY-MM"
-	eosReceived     map[string]bool           // Track EOS from 5 reduce workers (key: FileID)
-	eosCount        int
 }
 
 // TopItemsWorker processes month-level aggregations and selects top items
@@ -73,7 +71,7 @@ func NewTopItemsWorker() *TopItemsWorker {
 	queueDeclarer.Close()
 
 	// Create producer for output queue (to ItemID join)
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2GroupByResultsQueue, config)
+	producer := workerqueue.NewMessageMiddlewareQueue(queues.ItemIdChunkQueue, config)
 	if producer == nil {
 		consumer.Close()
 		log.Fatal("Failed to create producer")
@@ -83,7 +81,7 @@ func NewTopItemsWorker() *TopItemsWorker {
 	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
 		consumer.Close()
 		producer.Close()
-		log.Fatalf("Failed to declare output queue '%s': %v", queues.Query2GroupByResultsQueue, err)
+		log.Fatalf("Failed to declare output queue '%s': %v", queues.ItemIdChunkQueue, err)
 	}
 
 	return &TopItemsWorker{
@@ -99,8 +97,6 @@ func (tw *TopItemsWorker) getOrCreateClientState(clientID string) *ClientState {
 	if tw.clientStates[clientID] == nil {
 		tw.clientStates[clientID] = &ClientState{
 			topItemsByMonth: make(map[string]*MonthTopItems),
-			eosReceived:     make(map[string]bool),
-			eosCount:        0,
 		}
 	}
 	return tw.clientStates[clientID]
@@ -120,32 +116,30 @@ func (tw *TopItemsWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 
 	// Process the chunk data first (if it has data)
 	if chunkMsg.ChunkSize > 0 && len(chunkMsg.ChunkData) > 0 {
+		log.Printf("Top Items Worker: Processing data chunk for client %s", clientID)
 		if err := tw.processChunkData(chunkMsg, clientState); err != nil {
 			log.Printf("Top Items Worker: Failed to process chunk data: %v", err)
 			return middleware.MessageMiddlewareMessageError
 		}
+		log.Printf("Top Items Worker: Processed chunk for client %s - Now tracking %d months", clientID, len(clientState.topItemsByMonth))
 	}
 
-	// Check if this is the last chunk (EOS marker)
+	// Check if this is the last chunk
 	if chunkMsg.IsLastChunk {
-		// Mark this reduce worker as finished
-		if !clientState.eosReceived[chunkMsg.FileID] {
-			clientState.eosReceived[chunkMsg.FileID] = true
-			clientState.eosCount++
-			log.Printf("Top Items Worker: Received EOS from reduce worker %s (Client: %s) - Count: %d/3",
-				chunkMsg.FileID, clientID, clientState.eosCount)
-		}
+		// For completion chunks (FileID = "DONE"), we don't need to track by FileID
+		// Just process the completion immediately
+		log.Printf("Top Items Worker: Received last chunk from orchestrator for client %s", clientID)
+		log.Printf("Top Items Worker: Client state has %d months of data", len(clientState.topItemsByMonth))
 
-		// If we received EOS from all 3 reduce workers, send final results
-		if clientState.eosCount >= 5 {
-			log.Printf("Top Items Worker: All reduce workers finished for client %s, sending top items...", clientID)
-			if err := tw.sendTopItems(clientID, clientState); err != 0 {
-				log.Printf("Top Items Worker: Failed to send top items: %v", err)
-				return err
-			}
-			// Clear client state
-			delete(tw.clientStates, clientID)
+		log.Printf("Top Items Worker: About to send top items for client %s", clientID)
+		if err := tw.sendTopItems(clientID, clientState); err != 0 {
+			log.Printf("Top Items Worker: Failed to send top items: %v", err)
+			return err
 		}
+		log.Printf("Top Items Worker: Successfully sent top items for client %s", clientID)
+		log.Printf("Top Items Worker: Successfully processed completion for client %s", clientID)
+		// Clear client state
+		delete(tw.clientStates, clientID)
 	}
 
 	return 0
@@ -160,9 +154,15 @@ func (tw *TopItemsWorker) processChunkData(chunkMsg *chunk.Chunk, clientState *C
 		return fmt.Errorf("failed to parse CSV: %w", err)
 	}
 
+	log.Printf("Top Items Worker: Processing %d records from groupby worker", len(records))
+	if len(records) > 0 {
+		log.Printf("Top Items Worker: First record: %v", records[0])
+	}
+
 	// Skip header row
-	for _, record := range records {
+	for i, record := range records {
 		if strings.Contains(record[0], "year") {
+			log.Printf("Top Items Worker: Skipping header row %d: %v", i, record)
 			continue
 		}
 
@@ -285,12 +285,14 @@ func (tw *TopItemsWorker) Start() {
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
+			log.Printf("Top Items Worker: Processing message from queue")
 			err := tw.processMessage(delivery)
 			if err != 0 {
-				log.Printf("Failed to process message: %v", err)
+				log.Printf("Top Items Worker: Failed to process message: %v", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
 			}
+			log.Printf("Top Items Worker: Message processed successfully, acknowledging")
 			delivery.Ack(false)
 		}
 		done <- nil

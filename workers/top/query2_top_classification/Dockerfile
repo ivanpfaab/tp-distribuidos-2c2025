@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # Build the worker
-RUN CGO_ENABLED=0 GOOS=linux go build -o /query4-top-users-worker ./workers/group_by/query4_top_classification
+RUN CGO_ENABLED=0 GOOS=linux go build -o /query2-top-items-worker ./workers/top/query2_top_classification
 
 # Runtime stage
 FROM alpine:latest
@@ -21,8 +21,8 @@ FROM alpine:latest
 WORKDIR /root/
 
 # Copy the binary from builder
-COPY --from=builder /query4-top-users-worker .
+COPY --from=builder /query2-top-items-worker .
 
 # Run the worker
-CMD ["./query4-top-users-worker"]
+CMD ["./query2-top-items-worker"]
 

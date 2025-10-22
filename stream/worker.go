@@ -2,45 +2,51 @@ package main
 
 import (
 	"fmt"
+	"sync"
 
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
+	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
 // StreamingWorker encapsulates the streaming worker state and dependencies
 type StreamingWorker struct {
-	consumer       *exchange.ExchangeConsumer
-	query1Consumer *workerqueue.QueueConsumer
-	query2Consumer *workerqueue.QueueConsumer
-	query3Consumer *workerqueue.QueueConsumer
-	query4Consumer *workerqueue.QueueConsumer
-	config         *middleware.ConnectionConfig
+	query1Consumer        *workerqueue.QueueConsumer
+	query2Consumer        *workerqueue.QueueConsumer
+	query3Consumer        *workerqueue.QueueConsumer
+	query4Consumer        *workerqueue.QueueConsumer
+	clientResultsProducer *workerqueue.QueueMiddleware
+	config                *middleware.ConnectionConfig
+
+	// Query completion tracking
+	query1Tracker         *shared.CompletionTracker
+	clientQueryCompletion map[string]*ClientQueryStatus
+	completionMutex       sync.RWMutex
+}
+
+// ClientQueryStatus tracks completion status for all queries per client
+type ClientQueryStatus struct {
+	ClientID            string
+	Query1Completed     bool
+	Query2Completed     bool
+	Query3Completed     bool
+	Query4Completed     bool
+	AllQueriesCompleted bool
 }
 
 // NewStreamingWorker creates a new StreamingWorker instance
 func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, error) {
-	// Create streaming consumer
-	consumer := exchange.NewExchangeConsumer(
-		StreamingExchangeName,
-		[]string{StreamingRoutingKey},
-		config,
-	)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create streaming consumer")
-	}
-
 	// Declare Query1 results queue
 	query1QueueDeclarer := workerqueue.NewMessageMiddlewareQueue(
 		Query1ResultsQueue,
 		config,
 	)
 	if query1QueueDeclarer == nil {
-		consumer.Close()
 		return nil, fmt.Errorf("failed to create Query1 queue declarer")
 	}
 	if err := query1QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1QueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare Query1 results queue: %v", err)
 	}
@@ -52,7 +58,6 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query1Consumer == nil {
-		consumer.Close()
 		return nil, fmt.Errorf("failed to create Query1 results consumer")
 	}
 
@@ -62,12 +67,10 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query2QueueDeclarer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query2 queue declarer")
 	}
 	if err := query2QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1Consumer.Close()
 		query2QueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare Query2 results queue: %v", err)
@@ -80,7 +83,6 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query2Consumer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query2 results consumer")
 	}
@@ -91,13 +93,11 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query3QueueDeclarer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query3 queue declarer")
 	}
 	if err := query3QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3QueueDeclarer.Close()
@@ -111,7 +111,6 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query3Consumer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query3 results consumer")
@@ -123,14 +122,12 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query4QueueDeclarer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query4 queue declarer")
 	}
 	if err := query4QueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3Consumer.Close()
@@ -145,35 +142,51 @@ func NewStreamingWorker(config *middleware.ConnectionConfig) (*StreamingWorker, 
 		config,
 	)
 	if query4Consumer == nil {
-		consumer.Close()
 		query1Consumer.Close()
 		query2Consumer.Close()
 		query3Consumer.Close()
 		return nil, fmt.Errorf("failed to create Query4 results consumer")
 	}
 
-	return &StreamingWorker{
-		consumer:       consumer,
-		query1Consumer: query1Consumer,
-		query2Consumer: query2Consumer,
-		query3Consumer: query3Consumer,
-		query4Consumer: query4Consumer,
-		config:         config,
-	}, nil
+	// Create client results producer
+	clientResultsProducer := workerqueue.NewMessageMiddlewareQueue(
+		queues.ClientResultsQueue,
+		config,
+	)
+
+	if err := clientResultsProducer.DeclareQueue(false, false, false, false); err != 0 {
+		query1Consumer.Close()
+		query2Consumer.Close()
+		query3Consumer.Close()
+		query4Consumer.Close()
+		clientResultsProducer.Close()
+		return nil, fmt.Errorf("failed to declare client results queue: %v", err)
+	}
+
+	// Create streaming worker instance
+	sw := &StreamingWorker{
+		query1Consumer:        query1Consumer,
+		query2Consumer:        query2Consumer,
+		query3Consumer:        query3Consumer,
+		query4Consumer:        query4Consumer,
+		clientResultsProducer: clientResultsProducer,
+		config:                config,
+		clientQueryCompletion: make(map[string]*ClientQueryStatus),
+	}
+
+	// Initialize completion tracker (only for Query1)
+	sw.query1Tracker = shared.NewCompletionTracker("Query1", sw.onQuery1Completed)
+
+	return sw, nil
 }
 
 // Start starts the streaming worker
 func (sw *StreamingWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Streaming Worker: Starting to listen for messages...")
 
-	if err := sw.consumer.StartConsuming(sw.createCallback()); err != 0 {
-		fmt.Printf("Failed to start streaming consumer: %v\n", err)
-	}
-
 	if err := sw.query1Consumer.StartConsuming(sw.createQuery1Callback()); err != 0 {
 		fmt.Printf("Failed to start Query1 results consumer: %v\n", err)
 	}
-
 
 	if err := sw.query2Consumer.StartConsuming(sw.createQuery2Callback()); err != 0 {
 		fmt.Printf("Failed to start Query2 results consumer: %v\n", err)
@@ -192,9 +205,6 @@ func (sw *StreamingWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (sw *StreamingWorker) Close() {
-	if sw.consumer != nil {
-		sw.consumer.Close()
-	}
 	if sw.query1Consumer != nil {
 		sw.query1Consumer.Close()
 	}
@@ -207,21 +217,70 @@ func (sw *StreamingWorker) Close() {
 	if sw.query4Consumer != nil {
 		sw.query4Consumer.Close()
 	}
+	if sw.clientResultsProducer != nil {
+		sw.clientResultsProducer.Close()
+	}
 }
 
-// createCallback creates the message processing callback
-func (sw *StreamingWorker) createCallback() func(middleware.ConsumeChannel, chan error) {
-	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		fmt.Println("Streaming Worker: Starting to listen for messages...")
-		for delivery := range *consumeChannel {
-			if err := sw.processMessage(delivery); err != 0 {
-				fmt.Printf("Streaming Worker: Failed to process message: %v\n", err)
-				delivery.Nack(false, true) // Reject and requeue
-				continue
-			}
-			delivery.Ack(false)
+// onQuery1Completed is called when Query1 completes for a client
+func (sw *StreamingWorker) onQuery1Completed(clientID string, clientStatus *shared.ClientStatus) {
+	sw.updateQueryCompletion(clientID, 1)
+}
+
+// updateQueryCompletion updates the completion status for Query1
+func (sw *StreamingWorker) updateQueryCompletion(clientID string, queryType int) {
+	sw.completionMutex.Lock()
+	defer sw.completionMutex.Unlock()
+
+	// Initialize client query status if not exists
+	if sw.clientQueryCompletion[clientID] == nil {
+		sw.clientQueryCompletion[clientID] = &ClientQueryStatus{
+			ClientID:            clientID,
+			Query1Completed:     false,
+			Query2Completed:     false,
+			Query3Completed:     false,
+			Query4Completed:     false,
+			AllQueriesCompleted: false,
 		}
-		done <- nil
+	}
+
+	clientQueryStatus := sw.clientQueryCompletion[clientID]
+
+	// Mark Query1 as completed
+	if queryType == 1 {
+		clientQueryStatus.Query1Completed = true
+		fmt.Printf("Streaming Worker: ✅ Query1 completed for client %s\n", clientID)
+	}
+
+	// Check if all queries are completed
+	if clientQueryStatus.Query1Completed && clientQueryStatus.Query2Completed &&
+		clientQueryStatus.Query3Completed && clientQueryStatus.Query4Completed {
+
+		if !clientQueryStatus.AllQueriesCompleted {
+			clientQueryStatus.AllQueriesCompleted = true
+			sw.sendSystemCompleteMessage(clientID)
+		}
+	}
+}
+
+// sendSystemCompleteMessage sends a system complete signal to the client
+func (sw *StreamingWorker) sendSystemCompleteMessage(clientID string) {
+	fmt.Printf("Streaming Worker: 🎉 All queries completed for client %s! Sending system complete signal.\n", clientID)
+
+	// Create completion signal
+	completionMessage := fmt.Sprintf("All queries completed for client %s", clientID)
+	completionSignal := signals.NewClientCompletionSignal(clientID, completionMessage)
+
+	// Serialize the signal
+	serializedSignal, err := signals.SerializeClientCompletionSignal(completionSignal)
+	if err != nil {
+		fmt.Printf("Streaming Worker: Failed to serialize completion signal for client %s: %v\n", clientID, err)
+		return
+	}
+
+	// Send to client results queue
+	if err := sw.clientResultsProducer.Send(serializedSignal); err != 0 {
+		fmt.Printf("Streaming Worker: Failed to send completion signal for client %s: %v\n", clientID, err)
 	}
 }
 
@@ -230,7 +289,7 @@ func (sw *StreamingWorker) createQuery1Callback() middleware.OnMessageCallback {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		fmt.Println("Streaming Worker: Starting to listen for Query1 results...")
 		for delivery := range *consumeChannel {
-			if err := sw.processMessage(delivery); err != 0 {
+			if err := sw.processMessage(delivery, 1); err != 0 {
 				fmt.Printf("Streaming Worker: Failed to process Query1 message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -246,7 +305,7 @@ func (sw *StreamingWorker) createQuery2Callback() middleware.OnMessageCallback {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		fmt.Println("Streaming Worker: Starting to listen for Query2 results...")
 		for delivery := range *consumeChannel {
-			if err := sw.processMessage(delivery); err != 0 {
+			if err := sw.processMessage(delivery, 2); err != 0 {
 				fmt.Printf("Streaming Worker: Failed to process Query2 message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -262,7 +321,7 @@ func (sw *StreamingWorker) createQuery3Callback() middleware.OnMessageCallback {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		fmt.Println("Streaming Worker: Starting to listen for Query3 results...")
 		for delivery := range *consumeChannel {
-			if err := sw.processMessage(delivery); err != 0 {
+			if err := sw.processMessage(delivery, 3); err != 0 {
 				fmt.Printf("Streaming Worker: Failed to process Query3 message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -278,7 +337,7 @@ func (sw *StreamingWorker) createQuery4Callback() middleware.OnMessageCallback {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		fmt.Println("Streaming Worker: Starting to listen for Query4 results...")
 		for delivery := range *consumeChannel {
-			if err := sw.processMessage(delivery); err != 0 {
+			if err := sw.processMessage(delivery, 4); err != 0 {
 				fmt.Printf("Streaming Worker: Failed to process Query4 message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

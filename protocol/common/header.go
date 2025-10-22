@@ -15,6 +15,7 @@ const (
 	ChunkNotificationType       = 4
 	JoinCompletionSignalType    = 5
 	JoinCleanupSignalType       = 6
+	ClientCompletionSignalType  = 7
 )
 
 // Common header sizes

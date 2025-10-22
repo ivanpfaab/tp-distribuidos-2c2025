@@ -5,6 +5,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // YearFilterWorker encapsulates the year filter worker state and dependencies
@@ -19,7 +20,7 @@ type YearFilterWorker struct {
 func NewYearFilterWorker(config *middleware.ConnectionConfig) (*YearFilterWorker, error) {
 	// Create year filter consumer
 	consumer := workerqueue.NewQueueConsumer(
-		YearFilterQueueName,
+		queues.YearFilterQueue,
 		config,
 	)
 	if consumer == nil {
@@ -28,7 +29,7 @@ func NewYearFilterWorker(config *middleware.ConnectionConfig) (*YearFilterWorker
 
 	// Declare the year filter queue using QueueMiddleware
 	yearFilterConsumer := workerqueue.NewMessageMiddlewareQueue(
-		YearFilterQueueName,
+		queues.YearFilterQueue,
 		config,
 	)
 	if yearFilterConsumer == nil {
@@ -44,7 +45,7 @@ func NewYearFilterWorker(config *middleware.ConnectionConfig) (*YearFilterWorker
 
 	// Create time filter producer
 	timeFilterProducer := workerqueue.NewMessageMiddlewareQueue(
-		TimeFilterQueueName,
+		queues.TimeFilterQueue,
 		config,
 	)
 	if timeFilterProducer == nil {
@@ -54,7 +55,7 @@ func NewYearFilterWorker(config *middleware.ConnectionConfig) (*YearFilterWorker
 
 	// Create reply producer
 	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		ReplyFilterBusQueueName,
+		queues.ReplyFilterBusQueue,
 		config,
 	)
 	if replyProducer == nil {

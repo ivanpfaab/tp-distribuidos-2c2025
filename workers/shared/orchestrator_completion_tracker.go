@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 )
@@ -50,8 +51,12 @@ func NewCompletionTracker(trackerName string, onCompletion CompletionCallback) *
 
 // ProcessChunkNotification processes a chunk notification and updates the completion status
 func (ct *CompletionTracker) ProcessChunkNotification(notification *signals.ChunkNotification) error {
+	// Determine if we need to trigger the completion callback
+	var shouldTriggerCallback bool
+	var clientStatusCopy *ClientStatus
+
+	// Critical section - minimize time holding the lock
 	ct.mutex.Lock()
-	defer ct.mutex.Unlock()
 
 	// Initialize client status if not exists
 	if ct.clientStatuses[notification.ClientID] == nil {
@@ -99,12 +104,12 @@ func (ct *CompletionTracker) ProcessChunkNotification(notification *signals.Chun
 			ct.trackerName, notification.ClientID, notification.FileID, notification.TableID, notification.ChunkNumber)
 
 		// Check if file is completed
-		if fileStatus.ChunksReceived == notification.ChunkNumber {
+		if fileStatus.ChunksReceived >= notification.ChunkNumber {
 			ct.completeFileForClient(notification.ClientID, fileStatus)
 		}
 	} else if fileStatus.LastChunkReceived {
 		// We already received the last chunk, check if this completes the file
-		if fileStatus.ChunksReceived == fileStatus.LastChunkNumber {
+		if fileStatus.ChunksReceived >= fileStatus.LastChunkNumber {
 			ct.completeFileForClient(notification.ClientID, fileStatus)
 		}
 	}
@@ -129,17 +134,30 @@ func (ct *CompletionTracker) ProcessChunkNotification(notification *signals.Chun
 	}
 
 	// Check if all files are completed for this client (only if we know the expected count)
-	if clientStatus.ExpectedFilesKnown && clientStatus.CompletedFiles >= clientStatus.TotalExpectedFiles {
-		log.Printf("[%s] Client %s: All %d files completed! Triggering completion callback...",
+	if clientStatus.ExpectedFilesKnown && clientStatus.CompletedFiles >= clientStatus.TotalExpectedFiles && !clientStatus.IsCompleted {
+		log.Printf("[%s] Client %s: All %d files completed! Will trigger completion callback after a brief delay...",
 			ct.trackerName, notification.ClientID, clientStatus.TotalExpectedFiles)
 
-		// Mark client as completed before calling callback
+		// Mark client as completed BEFORE releasing the lock
 		clientStatus.IsCompleted = true
+		shouldTriggerCallback = true
 
-		// Call the completion callback
-		if ct.onCompletion != nil {
-			ct.onCompletion(notification.ClientID, clientStatus)
-		}
+		// Make a copy of the client status for the callback
+		statusCopy := *clientStatus
+		clientStatusCopy = &statusCopy
+	}
+
+	// Release the lock BEFORE calling the callback
+	ct.mutex.Unlock()
+
+	// Call the completion callback OUTSIDE the critical section with a delay
+	if shouldTriggerCallback && ct.onCompletion != nil {
+		// Start a goroutine to delay the callback, allowing any pending chunk notifications to be processed
+		go func() {
+			// Wait a short time to allow any pending chunk notifications to be processed
+			time.Sleep(100 * time.Millisecond)
+			ct.onCompletion(notification.ClientID, clientStatusCopy)
+		}()
 	}
 
 	return nil
@@ -199,4 +217,15 @@ func (ct *CompletionTracker) IsClientCompleted(clientID string) bool {
 		return status.IsCompleted
 	}
 	return false
+}
+
+// ClearClientState removes all state for a specific client
+func (ct *CompletionTracker) ClearClientState(clientID string) {
+	ct.mutex.Lock()
+	defer ct.mutex.Unlock()
+
+	if _, exists := ct.clientStatuses[clientID]; exists {
+		delete(ct.clientStatuses, clientID)
+		log.Printf("[%s] Cleared state for client %s", ct.trackerName, clientID)
+	}
 }
