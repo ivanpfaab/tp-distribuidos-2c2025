@@ -334,9 +334,10 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 	// Check if this is the last chunk (EOS marker)
 	if chunkMsg.IsLastChunk {
 		fmt.Printf("StoreID Join Worker: Received last chunk for client %s, processing batch...\n", clientID)
+		fmt.Printf("StoreID Join Worker: Chunks: %d\n", len(clientState.chunks))
 		if err := w.processBatch(clientID, clientState); err != 0 {
 			fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
-			delivery.Nack(false, false)
+			delivery.Nack(false, true)
 			return err
 		}
 		// Clear client state

@@ -167,32 +167,14 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "1"
-    profiles: ["orchestration"]
-
-  # StoreID Join Worker 2 (scalable with dictionary broadcasting)
-  storeid-join-worker-2:
-    build:
-      context: .
-      dockerfile: ./workers/join/in-memory/storeid/Dockerfile
-    container_name: storeid-join-worker-2
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      join-data-handler-1:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      WORKER_INSTANCE_ID: "2"
+      STOREID_BATCH_SIZE: 5
     profiles: ["orchestration"]
 
   # Query 2 Group By Orchestrator
   query2-orchestrator:
     build:
       context: .
-      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
     container_name: query2-orchestrator
     depends_on:
       rabbitmq:
@@ -203,13 +185,15 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 3 Group By Orchestrator
   query3-orchestrator:
     build:
       context: .
-      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
     container_name: query3-orchestrator
     depends_on:
       rabbitmq:
@@ -220,13 +204,15 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Group By Orchestrator
   query4-orchestrator:
     build:
       context: .
-      dockerfile: ./workers/group_by/orchestrator/Dockerfile
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
     container_name: query4-orchestrator
     depends_on:
       rabbitmq:
@@ -237,140 +223,119 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  # Query 2 MapReduce Workers
-  query2-map-worker:
+  # Query 2 Partitioner
+  query2-partitioner:
     build:
       context: .
-      dockerfile: ./workers/group_by/query2_mapreduce/map_worker/Dockerfile
-    container_name: query2-map-worker
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query2-partitioner
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      NUM_PARTITIONS: "3"
+      NUM_WORKERS: "3"
+    profiles: ["orchestration"]
+
+  # Query 2 GroupBy Workers
+  query2-groupby-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query2-groupby-worker-1
     depends_on:
       rabbitmq:
         condition: service_healthy
       query2-orchestrator:
         condition: service_started
+      query2-partitioner:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      WORKER_ID: "1"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  query2-reduce-s2-2023:
+  query2-groupby-worker-2:
     build:
       context: .
-      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
-    container_name: query2-reduce-s2-2023
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query2-groupby-worker-2
     depends_on:
       rabbitmq:
         condition: service_healthy
       query2-orchestrator:
         condition: service_started
-      query2-map-worker:
+      query2-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-    command: ["./reduce-worker-s2-2023"]
+      QUERY_TYPE: "2"
+      WORKER_ID: "2"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  query2-reduce-s1-2024:
+  query2-groupby-worker-3:
     build:
       context: .
-      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
-    container_name: query2-reduce-s1-2024
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query2-groupby-worker-3
     depends_on:
       rabbitmq:
         condition: service_healthy
       query2-orchestrator:
         condition: service_started
-      query2-map-worker:
+      query2-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-    command: ["./reduce-worker-s1-2024"]
-    profiles: ["orchestration"]
-
-  query2-reduce-s2-2024:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
-    container_name: query2-reduce-s2-2024
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      query2-orchestrator:
-        condition: service_started
-      query2-map-worker:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    command: ["./reduce-worker-s2-2024"]
-    profiles: ["orchestration"]
-
-  query2-reduce-s1-2025:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
-    container_name: query2-reduce-s1-2025
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      query2-map-worker:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    command: ["./reduce-worker-s1-2025"]
-    profiles: ["orchestration"]
-
-  query2-reduce-s2-2025:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/query2_mapreduce/reduce_workers/Dockerfile
-    container_name: query2-reduce-s2-2025
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      query2-map-worker:
-        condition: service_started
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    command: ["./reduce-worker-s2-2025"]
+      QUERY_TYPE: "2"
+      WORKER_ID: "3"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query2-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 2 Top Items Classification (Top N per month)
   query2-top-items-worker:
     build:
       context: .
-      dockerfile: ./workers/group_by/query2_top_classification/Dockerfile
+      dockerfile: ./workers/top/query2_top_classification/Dockerfile
     container_name: query2-top-items-worker
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query2-reduce-s2-2023:
+      query2-groupby-worker-1:
         condition: service_started
-      query2-reduce-s1-2024:
+      query2-groupby-worker-2:
         condition: service_started
-      query2-reduce-s2-2024:
-        condition: service_started
-      query2-reduce-s1-2025:
-        condition: service_started
-      query2-reduce-s2-2025:
+      query2-groupby-worker-3:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -379,12 +344,12 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # Query 3 MapReduce Workers
-  query3-map-worker:
+  # Query 3 Partitioner
+  query3-partitioner:
     build:
       context: .
-      dockerfile: ./workers/group_by/query3_mapreduce/map_worker/Dockerfile
-    container_name: query3-map-worker
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query3-partitioner
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -393,141 +358,196 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY_TYPE: "3"
+      NUM_PARTITIONS: "3"
+      NUM_WORKERS: "3"
     profiles: ["orchestration"]
 
-  query3-reduce-s2-2023:
+  # Query 3 GroupBy Workers
+  query3-groupby-worker-1:
     build:
       context: .
-      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
-    container_name: query3-reduce-s2-2023
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query3-groupby-worker-1
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-map-worker:
+      query3-orchestrator:
+        condition: service_started
+      query3-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-    command: ["./reduce-worker-s2-2023"]
+      QUERY_TYPE: "3"
+      WORKER_ID: "1"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  query3-reduce-s1-2024:
+  query3-groupby-worker-2:
     build:
       context: .
-      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
-    container_name: query3-reduce-s1-2024
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query3-groupby-worker-2
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-map-worker:
+      query3-orchestrator:
+        condition: service_started
+      query3-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-    command: ["./reduce-worker-s1-2024"]
+      QUERY_TYPE: "3"
+      WORKER_ID: "2"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  query3-reduce-s2-2024:
+  query3-groupby-worker-3:
     build:
       context: .
-      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
-    container_name: query3-reduce-s2-2024
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query3-groupby-worker-3
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-map-worker:
+      query3-orchestrator:
+        condition: service_started
+      query3-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-    command: ["./reduce-worker-s2-2024"]
+      QUERY_TYPE: "3"
+      WORKER_ID: "3"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - query3-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  query3-reduce-s1-2025:
+  # Query 4 Partitioner
+  query4-partitioner:
     build:
       context: .
-      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
-    container_name: query3-reduce-s1-2025
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query4-partitioner
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-map-worker:
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "3"
+    profiles: ["orchestration"]
+
+  # Query 4 GroupBy Workers
+  query4-groupby-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query4-groupby-worker-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-orchestrator:
+        condition: service_started
+      query4-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-    command: ["./reduce-worker-s1-2025"]
+      QUERY_TYPE: "4"
+      WORKER_ID: "1"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "100"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  query3-reduce-s2-2025:
+  query4-groupby-worker-2:
     build:
       context: .
-      dockerfile: ./workers/group_by/query3_mapreduce/reduce_workers/Dockerfile
-    container_name: query3-reduce-s2-2025
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query4-groupby-worker-2
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-map-worker:
+      query4-orchestrator:
+        condition: service_started
+      query4-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-    command: ["./reduce-worker-s2-2025"]
+      QUERY_TYPE: "4"
+      WORKER_ID: "2"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "100"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  # Query 4 MapReduce Workers
-  query4-map-worker:
+  query4-groupby-worker-3:
     build:
       context: .
-      dockerfile: ./workers/group_by/query4_mapreduce/map_worker/Dockerfile
-    container_name: query4-map-worker
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: query4-groupby-worker-3
     depends_on:
       rabbitmq:
         condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-    profiles: ["orchestration"]
-
-  query4-reduce-worker:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/query4_mapreduce/reduce_worker/Dockerfile
-    container_name: query4-reduce-worker
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      query4-map-worker:
+      query4-orchestrator:
+        condition: service_started
+      query4-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      WORKER_ID: "3"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "100"
+    volumes:
+      - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Top Users Classification (Top N per store)
   query4-top-users-worker:
     build:
       context: .
-      dockerfile: ./workers/group_by/query4_top_classification/Dockerfile
+      dockerfile: ./workers/top/query4_top_classification/Dockerfile
     container_name: query4-top-users-worker
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query4-reduce-worker:
+      query4-groupby-worker-1:
+        condition: service_started
+      query4-groupby-worker-2:
+        condition: service_started
+      query4-groupby-worker-3:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -552,25 +572,6 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  join-garbage-collector:
-    build:
-      context: .
-      dockerfile: ./workers/join/garbage-collector/Dockerfile
-    container_name: join-garbage-collector
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      COMPLETION_QUEUE: "join-completion-queue"
-      STOREID_CLEANUP_EXCHANGE: "storeid-cleanup-exchange"
-      ITEMID_CLEANUP_EXCHANGE: "itemid-cleanup-exchange"
-      USERID_CLEANUP_EXCHANGE: "userid-cleanup-exchange"
-    profiles: ["orchestration"]
-
   # Join Data Handler 1
   join-data-handler-1:
     build:
@@ -586,7 +587,39 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       ITEMID_WORKER_COUNT: "2"
-      STOREID_WORKER_COUNT: "2"
+      STOREID_WORKER_COUNT: "1"
+    profiles: ["orchestration"]
+
+  # In-Memory Join Orchestrator
+  in-memory-join-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-memory/orchestrator/Dockerfile
+    container_name: in-memory-join-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration"]
+
+  # In-File Join Orchestrator
+  in-file-join-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/orchestrator/Dockerfile
+    container_name: in-file-join-orchestrator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
   # User Partition Splitter (distributes users to writers)
@@ -821,45 +854,41 @@ services:
         condition: service_started
       storeid-join-worker-1:
         condition: service_started
-      storeid-join-worker-2:
-        condition: service_started
       query2-orchestrator:
         condition: service_started
-      query2-map-worker:
+      query2-partitioner:
         condition: service_started
-      query2-reduce-s2-2023:
+      query2-groupby-worker-1:
         condition: service_started
-      query2-reduce-s1-2024:
+      query2-groupby-worker-2:
         condition: service_started
-      query2-reduce-s2-2024:
-        condition: service_started
-      query2-reduce-s1-2025:
-        condition: service_started
-      query2-reduce-s2-2025:
+      query2-groupby-worker-3:
         condition: service_started
       query2-top-items-worker:
         condition: service_started
-      query3-map-worker:
+      query3-orchestrator:
         condition: service_started
-      query3-reduce-s2-2023:
+      query3-partitioner:
         condition: service_started
-      query3-reduce-s1-2024:
+      query3-groupby-worker-1:
         condition: service_started
-      query3-reduce-s2-2024:
+      query3-groupby-worker-2:
         condition: service_started
-      query3-reduce-s1-2025:
+      query3-groupby-worker-3:
         condition: service_started
-      query3-reduce-s2-2025:
+      query4-orchestrator:
         condition: service_started
-      query4-map-worker:
+      query4-partitioner:
         condition: service_started
-      query4-reduce-worker:
+      query4-groupby-worker-1:
+        condition: service_started
+      query4-groupby-worker-2:
+        condition: service_started
+      query4-groupby-worker-3:
         condition: service_started
       query4-top-users-worker:
         condition: service_started
       streaming-service:
-        condition: service_started
-      join-garbage-collector:
         condition: service_started
     environment:
       - SERVER_PORT=8080
@@ -874,12 +903,14 @@ services:
     build:
       context: .
       dockerfile: ./client/Dockerfile
-    container_name: client
+    container_name: client-1
     depends_on:
       server:
         condition: service_started
     volumes:
       - ./data:/app/data
+      - ./results:/results  # Mount local results directory
+      - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI1
     command: ["./main", "/app/data", "server:8080"]
@@ -896,6 +927,8 @@ services:
         condition: service_started
     volumes:
       - ./data:/app/data
+      - ./results:/results  # Mount local results directory
+      - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI2
     command: ["./main", "/app/data", "server:8080"]
@@ -923,4 +956,10 @@ services:
 
 volumes:
   shared-data:
+    driver: local
+  query2-groupby-data:
+    driver: local
+  query3-groupby-data:
+    driver: local
+  query4-groupby-data:
     driver: local

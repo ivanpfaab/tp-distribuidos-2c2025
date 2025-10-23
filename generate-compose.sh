@@ -381,6 +381,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
+  # In-Memory Join Orchestrator
   in-memory-join-orchestrator:
     build:
       context: .
@@ -501,7 +502,8 @@ generate_groupby_workers() {
         condition: service_healthy
       query${query_type}-orchestrator:
         condition: service_started
-$(echo -e "${partitioner_deps}")    environment:
+$(echo -e "${partitioner_deps}")
+    environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -542,7 +544,8 @@ generate_top_worker() {
     depends_on:
       rabbitmq:
         condition: service_healthy
-$(echo -e "${groupby_deps}")    environment:
+$(echo -e "${groupby_deps}")
+    environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -924,6 +927,8 @@ generate_clients() {
         condition: service_started
     volumes:
       - ./data:/app/data
+      - ./results:/results  # Mount local results directory
+      - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=${client_id}
     command: ["./main", "/app/data", "server:8080"]
