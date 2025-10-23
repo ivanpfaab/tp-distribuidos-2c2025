@@ -1,0 +1,188 @@
+services:
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-groupby-test
+    ports:
+      - "5673:5672"   # AMQP port (mapped to 5673 to avoid conflicts)
+      - "15673:15672" # Management UI port (mapped to 15673 to avoid conflicts)
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Group By Orchestrator
+  groupby-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: groupby-orchestrator-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+    volumes:
+      - groupby-test-data:/app/groupby-data
+
+  # Partitioner 1
+  groupby-partitioner-1:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: groupby-partitioner-1-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      NUM_PARTITIONS: "3"
+      NUM_WORKERS: "3"
+
+  # Partitioner 2
+  groupby-partitioner-2:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: groupby-partitioner-2-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      NUM_PARTITIONS: "3"
+      NUM_WORKERS: "3"
+
+  # GroupBy Worker 1
+  groupby-worker-1:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: groupby-worker-1-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      groupby-orchestrator:
+        condition: service_started
+      groupby-partitioner-1:
+        condition: service_started
+      groupby-partitioner-2:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      WORKER_ID: "1"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - groupby-test-data:/app/groupby-data
+
+  # GroupBy Worker 2
+  groupby-worker-2:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: groupby-worker-2-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      groupby-orchestrator:
+        condition: service_started
+      groupby-partitioner-1:
+        condition: service_started
+      groupby-partitioner-2:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      WORKER_ID: "2"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - groupby-test-data:/app/groupby-data
+
+  # GroupBy Worker 3
+  groupby-worker-3:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/worker/Dockerfile
+    container_name: groupby-worker-3-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      groupby-orchestrator:
+        condition: service_started
+      groupby-partitioner-1:
+        condition: service_started
+      groupby-partitioner-2:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      WORKER_ID: "3"
+      NUM_WORKERS: "3"
+      NUM_PARTITIONS: "3"
+    volumes:
+      - groupby-test-data:/app/groupby-data
+
+  # Test Runner
+  test-runner:
+    build:
+      context: .
+      dockerfile: ./tests/groupby_blackbox_test/Dockerfile
+    container_name: groupby-test-runner
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      groupby-orchestrator:
+        condition: service_started
+      groupby-partitioner-1:
+        condition: service_started
+      groupby-partitioner-2:
+        condition: service_started
+      groupby-worker-1:
+        condition: service_started
+      groupby-worker-2:
+        condition: service_started
+      groupby-worker-3:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - ./tests/groupby_blackbox_test/testdata:/app/testdata:ro
+      - groupby-test-data:/app/groupby-data
+      - /var/run/docker.sock:/var/run/docker.sock  # Allow access to Docker daemon
+    command: ["go", "test", "-v", "./tests/groupby_blackbox_test", "-timeout", "5m"]
+
+volumes:
+  groupby-test-data:
+    driver: local

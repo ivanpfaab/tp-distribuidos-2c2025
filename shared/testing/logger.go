@@ -23,6 +23,7 @@ const (
 	Green  = "\033[32m"
 	Yellow = "\033[33m"
 	Blue   = "\033[34m"
+	Gray   = "\033[90m"
 )
 
 var currentLogLevel LogLevel = INFO
@@ -101,6 +102,11 @@ func LogFailure(message string, args ...interface{}) {
 // LogStep logs a test step message (always shown)
 func LogStep(message string, args ...interface{}) {
 	fmt.Printf("  → %s\n", fmt.Sprintf(message, args...))
+}
+
+// LogQuiet logs a quiet message (always shown, grey color)
+func LogQuiet(message string, args ...interface{}) {
+	fmt.Printf("%s%s%s\n", Gray, fmt.Sprintf(message, args...), Reset)
 }
 
 // InitLogger initializes the logger with environment variables

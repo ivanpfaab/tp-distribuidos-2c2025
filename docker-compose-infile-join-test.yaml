@@ -1,0 +1,222 @@
+services:
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-infile-join-test
+    ports:
+      - "5674:5672"   # AMQP port (mapped to 5674 to avoid conflicts)
+      - "15674:15672" # Management UI port
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Orchestrator
+  infile-join-orchestrator:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/orchestrator/Dockerfile
+    container_name: infile-join-orchestrator-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  # Partitioner (User Partition Splitter)
+  user-partition-splitter:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-splitter/Dockerfile
+    container_name: user-partition-splitter-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      NUM_WRITERS: "5"
+
+  # Writer 1
+  user-partition-writer-1:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-1-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: "1"
+      NUM_WRITERS: "5"
+    volumes:
+      - infile-join-test-data:/shared-data
+
+  # Writer 2
+  user-partition-writer-2:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-2-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: "2"
+      NUM_WRITERS: "5"
+    volumes:
+      - infile-join-test-data:/shared-data
+
+  # Writer 3
+  user-partition-writer-3:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-3-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: "3"
+      NUM_WRITERS: "5"
+    volumes:
+      - infile-join-test-data:/shared-data
+
+  # Writer 4
+  user-partition-writer-4:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-4-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: "4"
+      NUM_WRITERS: "5"
+    volumes:
+      - infile-join-test-data:/shared-data
+
+  # Writer 5
+  user-partition-writer-5:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-partition-writer/Dockerfile
+    container_name: user-partition-writer-5-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      user-partition-splitter:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      WRITER_ID: "5"
+      NUM_WRITERS: "5"
+    volumes:
+      - infile-join-test-data:/shared-data
+
+  # Join Worker
+  user-join-worker:
+    build:
+      context: .
+      dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
+    container_name: user-join-worker-test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      infile-join-orchestrator:
+        condition: service_started
+      user-partition-writer-1:
+        condition: service_started
+      user-partition-writer-2:
+        condition: service_started
+      user-partition-writer-3:
+        condition: service_started
+      user-partition-writer-4:
+        condition: service_started
+      user-partition-writer-5:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - infile-join-test-data:/shared-data
+
+  # Test Runner
+  test-runner:
+    build:
+      context: .
+      dockerfile: ./tests/infile_join_blackbox_test/Dockerfile
+    container_name: infile-join-test-runner
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      infile-join-orchestrator:
+        condition: service_started
+      user-partition-splitter:
+        condition: service_started
+      user-partition-writer-1:
+        condition: service_started
+      user-partition-writer-2:
+        condition: service_started
+      user-partition-writer-3:
+        condition: service_started
+      user-partition-writer-4:
+        condition: service_started
+      user-partition-writer-5:
+        condition: service_started
+      user-join-worker:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    volumes:
+      - ./tests/infile_join_blackbox_test/testdata:/app/testdata
+      - infile-join-test-data:/shared-data
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["go", "test", "-v", "./tests/infile_join_blackbox_test", "-timeout", "5m"]
+
+volumes:
+  infile-join-test-data:
+    driver: local
