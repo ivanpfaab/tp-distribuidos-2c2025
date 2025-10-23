@@ -1,0 +1,291 @@
+#!/bin/bash
+
+# Comprehensive Results Comparison Script
+# Compares client results against source of truth files
+
+set -e
+
+# Configuration
+CLIENT_RESULTS_DIR="results"
+SOURCE_OF_TRUTH_DIR="results_source_of_truth"
+OUTPUT_DIR="comparison_results"
+TEMP_DIR="temp_comparison"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Create directories
+mkdir -p "$OUTPUT_DIR" "$TEMP_DIR"
+
+echo -e "${BLUE}=== COMPREHENSIVE RESULTS COMPARISON ===${NC}"
+echo "Comparing client results against source of truth..."
+echo ""
+
+# Function to extract and clean client data
+extract_client_data() {
+    local client_id="$1"
+    local query="$2"
+    local output_file="$3"
+    
+    # Extract query data and remove client prefix
+    grep "Q$query |" "$CLIENT_RESULTS_DIR/results_$client_id.txt" | \
+    sed "s/^$client_id | Q$query | //" > "${output_file}.raw"
+    
+    # Keep only the first header and remove all subsequent headers
+    # Get the first line (header)
+    head -1 "${output_file}.raw" > "$output_file"
+    
+    # Get all data lines (skip lines that match the header pattern)
+    local header=$(head -1 "${output_file}.raw")
+    grep -v "^$header$" "${output_file}.raw" >> "$output_file"
+    
+    # Clean up
+    rm "${output_file}.raw"
+}
+
+# Function to compare Q1 (exact match)
+compare_q1() {
+    local client_id="$1"
+    local client_file="$TEMP_DIR/${client_id}_q1_transactions.csv"
+    local source_file="$SOURCE_OF_TRUTH_DIR/q1_transactions.csv"
+    
+    echo "Comparing Q1 (Transactions) for $client_id..."
+    
+    # Extract only relevant columns: transaction_id,final_amount
+    # Client format: transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at
+    # We need: transaction_id (col 1), final_amount (col 8)
+    tail -n +2 "$client_file" | awk -F',' '{print $1","$8}' | sort > "${client_file}.extracted"
+    tail -n +2 "$source_file" | sort > "${source_file}.sorted"
+    
+    if diff -q "${client_file}.extracted" "${source_file}.sorted" > /dev/null 2>&1; then
+        echo -e "  Q1: ${GREEN}✅ PASS${NC} ($(wc -l < "${client_file}.extracted") data rows match)"
+        # Keep only the extracted version, remove original
+        mv "${client_file}.extracted" "$client_file"
+        rm -f "${source_file}.sorted"
+        return 0
+    else
+        echo -e "  Q1: ${RED}❌ FAIL${NC} (Differences found)"
+        echo "    Client: $(wc -l < "${client_file}.extracted") data rows"
+        echo "    Source: $(wc -l < "${source_file}.sorted") data rows"
+        # Keep only the extracted version, remove original
+        mv "${client_file}.extracted" "$client_file"
+        rm -f "${source_file}.sorted"
+        return 1
+    fi
+}
+
+# Function to compare Q2 (category-based)
+compare_q2() {
+    local client_id="$1"
+    local client_file="$TEMP_DIR/${client_id}_q2_categories.csv"
+    
+    echo "Comparing Q2 (Categories) for $client_id..."
+    
+    # Split by category: coffee vs non-coffee
+    # Category 1 (best selling) = coffee category
+    # Category 2 (most profits) = non-coffee category
+    
+    # Extract coffee category (best selling) - skip header
+    # Client format: year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal
+    # We need: year_month_created_at (col1-col2), item_name (col7), sellings_qty (col4)
+    tail -n +2 "$client_file" | awk -F',' '$8=="coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, $4}' | sort > "$TEMP_DIR/${client_id}_q2_best_selling.csv"
+    
+    # Extract non-coffee category (most profits) - skip header
+    # We need: year_month_created_at (col1-col2), item_name (col7), profit_sum (col5) - treat as integer
+    tail -n +2 "$client_file" | awk -F',' '$8=="non-coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, int($5)}' | sort > "$TEMP_DIR/${client_id}_q2_most_profits.csv"
+    
+    # Compare coffee category against best_selling
+    local coffee_source="$SOURCE_OF_TRUTH_DIR/q2_best_selling.csv"
+    tail -n +2 "$coffee_source" | sort > "${coffee_source}.sorted"
+    
+    if diff -q "$TEMP_DIR/${client_id}_q2_best_selling.csv" "${coffee_source}.sorted" > /dev/null 2>&1; then
+        echo -e "  Q2 Best Selling (coffee): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_best_selling.csv") rows)"
+    else
+        echo -e "  Q2 Best Selling (coffee): ${RED}❌ FAIL${NC}"
+        echo "    Client: $(wc -l < "$TEMP_DIR/${client_id}_q2_best_selling.csv") rows"
+        echo "    Source: $(tail -n +2 "$coffee_source" | wc -l) rows"
+    fi
+    
+    # Compare non-coffee category against most_profits
+    local profits_source="$SOURCE_OF_TRUTH_DIR/q2_most_profits.csv"
+    tail -n +2 "$profits_source" | awk -F',' '{printf "%s,%s,%d\n", $1, $2, int($3)}' | sort > "${profits_source}.sorted"
+    
+    if diff -q "$TEMP_DIR/${client_id}_q2_most_profits.csv" "${profits_source}.sorted" > /dev/null 2>&1; then
+        echo -e "  Q2 Most Profits (non-coffee): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_most_profits.csv") rows)"
+    else
+        echo -e "  Q2 Most Profits (non-coffee): ${RED}❌ FAIL${NC}"
+        echo "    Client: $(wc -l < "$TEMP_DIR/${client_id}_q2_most_profits.csv") rows"
+        echo "    Source: $(tail -n +2 "$profits_source" | wc -l) rows"
+    fi
+    
+    # Clean up: remove original categories file and temporary sorted files
+    rm -f "$client_file" "${coffee_source}.sorted" "${profits_source}.sorted"
+}
+
+# Function to compare Q3 (with year-semester transformation)
+compare_q3() {
+    local client_id="$1"
+    local client_file="$TEMP_DIR/${client_id}_q3_tpv.csv"
+    local source_file="$SOURCE_OF_TRUTH_DIR/q3_tpv.csv"
+    
+    echo "Comparing Q3 (TPV) for $client_id..."
+    
+    # Transform year,semester to year-H{semester} format
+    # Client format: year,semester,store_id,total_final_amount,count,store_name,street,postal_code,city,state,latitude,longitude
+    # We need: year_half_created_at (col1-col2), store_name (col6), tpv (col4) - treat as integer
+    tail -n +2 "$client_file" | awk -F',' '{printf "%s-H%d,%s,%d\n", $1, $2, $6, int($4)}' | sort > "${client_file}.transformed"
+    
+    # Sort source file (skip header) and treat TPV as integer
+    tail -n +2 "$source_file" | awk -F',' '{printf "%s,%s,%d\n", $1, $2, int($3)}' | sort > "${source_file}.sorted"
+    
+    if diff -q "${client_file}.transformed" "${source_file}.sorted" > /dev/null 2>&1; then
+        echo -e "  Q3: ${GREEN}✅ PASS${NC} ($(wc -l < "${client_file}.transformed") rows match)"
+        # Keep only the transformed version, remove original
+        mv "${client_file}.transformed" "$client_file"
+        rm -f "${source_file}.sorted"
+        return 0
+    else
+        echo -e "  Q3: ${RED}❌ FAIL${NC} (Differences found)"
+        echo "    Client: $(wc -l < "${client_file}.transformed") rows"
+        echo "    Source: $(wc -l < "${source_file}.sorted") rows"
+        # Keep only the transformed version, remove original
+        mv "${client_file}.transformed" "$client_file"
+        rm -f "${source_file}.sorted"
+        return 1
+    fi
+}
+
+# Function to compare Q4 (subset comparison)
+compare_q4() {
+    local client_id="$1"
+    local client_file="$TEMP_DIR/${client_id}_q4_most_purchases.csv"
+    local source_file="$SOURCE_OF_TRUTH_DIR/q4_most_purchases.csv"
+    
+    echo "Comparing Q4 (Most Purchases) for $client_id..."
+    
+    # Extract relevant columns: store_id,birthdate,purchases_qty
+    # Client format: user_id,store_id,purchase_count,rank,gender,birthdate,registered_at
+    # We need: store_id (col2), birthdate (col6), purchases_qty (col3)
+    tail -n +2 "$client_file" | awk -F',' '{print $2","$6","$3}' | sort > "${client_file}.extracted"
+    
+    # Sort source file (skip header)
+    tail -n +2 "$source_file" | sort > "${source_file}.sorted"
+    
+    # Check how many client results are found in source of truth
+    local found_count=$(comm -12 "${client_file}.extracted" "${source_file}.sorted" | wc -l)
+    local client_count=$(wc -l < "${client_file}.extracted")
+    local source_count=$(tail -n +2 "$source_file" | wc -l)
+    
+    local coverage_percent=$((found_count * 100 / client_count))
+    
+    if [ "$found_count" -eq "$client_count" ]; then
+        echo -e "  Q4: ${GREEN}✅ PASS${NC} (All $client_count client results found in source of truth)"
+    elif [ "$coverage_percent" -ge 90 ]; then
+        echo -e "  Q4: ${YELLOW}⚠️ PARTIAL${NC} ($found_count/$client_count client results found, ${coverage_percent}% coverage)"
+    else
+        echo -e "  Q4: ${RED}❌ FAIL${NC} (Only $found_count/$client_count client results found, ${coverage_percent}% coverage)"
+    fi
+    
+    echo "    Client: $client_count rows"
+    echo "    Source: $source_count rows"
+    echo "    Found: $found_count rows"
+    echo "    Coverage: ${coverage_percent}%"
+    
+    # Show missing rows if any
+    local missing_count=$((client_count - found_count))
+    if [ "$missing_count" -gt 0 ]; then
+        echo "    Missing $missing_count rows:"
+        comm -23 "${client_file}.extracted" "${source_file}.sorted" | while read -r line; do
+            echo "      $line"
+        done
+    fi
+    
+    # Clean up: keep only the extracted version, remove original and temporary files
+    mv "${client_file}.extracted" "$client_file"
+    rm -f "${source_file}.sorted"
+}
+
+
+# Main comparison function
+compare_client() {
+    local client_id="$1"
+    
+    echo -e "${BLUE}=== Processing $client_id ===${NC}"
+    
+    # Extract data for all queries (using exact source of truth naming)
+    extract_client_data "$client_id" "1" "$TEMP_DIR/${client_id}_q1_transactions.csv"
+    extract_client_data "$client_id" "2" "$TEMP_DIR/${client_id}_q2_categories.csv"  # Will be split into best_selling and most_profits
+    extract_client_data "$client_id" "3" "$TEMP_DIR/${client_id}_q3_tpv.csv"
+    extract_client_data "$client_id" "4" "$TEMP_DIR/${client_id}_q4_most_purchases.csv"
+    
+    echo ""
+    echo -e "${BLUE}=== Comparison Results for $client_id ===${NC}"
+    
+    # Compare each query
+    compare_q1 "$client_id"
+    compare_q2 "$client_id"
+    compare_q3 "$client_id"
+    compare_q4 "$client_id"
+    
+    echo ""
+}
+
+# Check if required files exist
+check_files() {
+    local missing_files=()
+    
+    for client in CLI1 CLI2; do
+        if [ ! -f "$CLIENT_RESULTS_DIR/results_$client.txt" ]; then
+            missing_files+=("$CLIENT_RESULTS_DIR/results_$client.txt")
+        fi
+    done
+    
+    for query_file in q1_transactions.csv q2_best_selling.csv q2_most_profits.csv q3_tpv.csv q4_most_purchases.csv; do
+        if [ ! -f "$SOURCE_OF_TRUTH_DIR/$query_file" ]; then
+            missing_files+=("$SOURCE_OF_TRUTH_DIR/$query_file")
+        fi
+    done
+    
+    if [ ${#missing_files[@]} -gt 0 ]; then
+        echo -e "${RED}ERROR: Missing required files:${NC}"
+        for file in "${missing_files[@]}"; do
+            echo "  - $file"
+        done
+        exit 1
+    fi
+}
+
+# Main execution
+main() {
+    echo "Checking required files..."
+    check_files
+    
+    echo "Starting comparison..."
+    echo ""
+    
+    # Compare both clients
+    compare_client "CLI1"
+    compare_client "CLI2"
+    
+    echo -e "${BLUE}=== SUMMARY ===${NC}"
+    echo "Comparison completed!"
+    echo "Detailed results saved in: $TEMP_DIR/"
+    echo "Use 'ls -la $TEMP_DIR/' to see extracted data files"
+    
+    # Cleanup option
+    echo ""
+    read -p "Clean up temporary files? (y/N): " cleanup
+    if [[ $cleanup =~ ^[Yy]$ ]]; then
+        rm -rf "$TEMP_DIR"
+        echo "Temporary files cleaned up."
+    else
+        echo "Temporary files preserved in: $TEMP_DIR/"
+    fi
+}
+
+# Run main function
+main "$@"
