@@ -626,7 +626,7 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 	t.Logf("Total initial size: %s", formatBytes(initialSize))
 
 	chunkIdx := 0
-	for clientNum, clientID := range clients {
+	for _, clientID := range clients {
 		for fileNum := 0; fileNum < filesPerClient; fileNum++ {
 			startIdx := chunkIdx
 			endIdx := chunkIdx + chunksPerFile
@@ -645,7 +645,7 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 				chunkData.ChunkNumber = i + 1
 				chunkData.IsLastChunk = (i == len(fileChunks)-1)
 				// Only last chunk of last file is LastFromTable
-				chunkData.IsLastFromTable = (i == len(fileChunks)-1) && (fileNum == filesPerClient)
+				chunkData.IsLastFromTable = (i == len(fileChunks)-1) && (fileNum+1 == filesPerClient)
 
 				chunkMsg := chunk.NewChunkMessage(chunkData)
 				serialized, err := chunk.SerializeChunkMessage(chunkMsg)

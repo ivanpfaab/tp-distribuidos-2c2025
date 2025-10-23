@@ -1,6 +1,6 @@
 # Simple Makefile for Docker Compose Management
 
-.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore
+.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup
 
 # Default target
 help: ## Show this help message
@@ -14,6 +14,7 @@ help: ## Show this help message
 	@echo "  docker-compose-logs-data-flow    - Show logs for data-flow services only"
 	@echo "  docker-compose-build             - Build all Docker images"
 	@echo "  docker-compose-rebuild           - Rebuild everything from scratch (no cache)"
+	@echo "  docker-compose-cleanup           - Cleanup services, images, and volumes"
 	@echo "  docker-rebuild                   - Full Docker cleanup and rebuild (stops all containers, prunes images)"
 	@echo "  docker-compose-test              - Run tests"
 	@echo "  docker-compose-generate          - Generate docker-compose.yaml (scale: filters, gateways, join workers, clients)"
@@ -56,6 +57,16 @@ docker-compose-up-quick: ## Start all services quickly (alternative method)
 # Stop all services
 docker-compose-down: ## Stop all services
 	docker compose down
+
+# Cleanup services, images, and volumes
+cleanup: ## Cleanup services, images, and volumes
+	@echo "Stopping all services..."
+	docker compose down
+	docker stop $(docker ps -q) 2>/dev/null || true
+	@echo "Removing all containers and images..."
+	docker rm $(docker ps -aq) 2>/dev/null || true
+	docker system prune -a -f --volumes
+	@echo "Cleanup complete!"
 
 # Force stop all services (stops containers with restart policies)
 docker-compose-down-force: ## Force stop all services
