@@ -25,9 +25,23 @@ func NewPartitionerWorker(config *PartitionerConfig) (*PartitionerWorker, error)
 		return nil, fmt.Errorf("failed to create queue consumer")
 	}
 
+	// Declare the input queue (following the pattern from time-filter/worker.go)
+	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(config.QueueName, config.ConnectionConfig)
+	if queueDeclarer == nil {
+		consumer.Close()
+		return nil, fmt.Errorf("failed to create queue declarer")
+	}
+	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+		consumer.Close()
+		queueDeclarer.Close()
+		return nil, fmt.Errorf("failed to declare input queue: %v", err)
+	}
+	queueDeclarer.Close() // Close the declarer as we don't need it anymore
+
 	// Create processor with partitioning configuration
 	processor, err := NewPartitionerProcessor(config.QueryType, config.NumPartitions, config.NumWorkers, config.ConnectionConfig)
 	if err != nil {
+		consumer.Close()
 		return nil, fmt.Errorf("failed to create processor: %v", err)
 	}
 
