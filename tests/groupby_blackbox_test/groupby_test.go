@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +66,7 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 		t.Fatalf("Failed to load test data: %v", err)
 	}
 
-	testing_utils.LogQuiet("Test", "Loaded %d chunks from test data", len(chunks))
+	testing_utils.LogQuiet("Loaded %d chunks from test data", len(chunks))
 
 	// Measure initial client directory size BEFORE sending any data
 	clientDir := getClientDirectory(TestClientID)
@@ -93,7 +92,7 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 		}
 	}
 
-	testing_utils.LogInfo("All %d chunks sent successfully", len(chunks))
+	testing_utils.LogInfo("Test", "All %d chunks sent successfully", len(chunks))
 
 	// Wait for workers to process and create files (actively monitor orchestrator logs)
 	testing_utils.LogStep("Waiting for workers to process chunks and orchestrator to detect files...")
@@ -118,7 +117,7 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 	}
 
 	// Report results
-	testing_utils.LogInfo("\n=== CLEANUP VERIFICATION RESULTS ===")
+	testing_utils.LogInfo("Test", "\n=== CLEANUP VERIFICATION RESULTS ===")
 	testing_utils.LogStep("\n[Volume Size Progression]\n")
 	testing_utils.LogStep("  Initial:                      %s (%d bytes)\n", formatBytes(initialSize), initialSize)
 	testing_utils.LogStep("  Mid (at first notification):  %s (%d bytes)\n", formatBytes(midSizeAtNotification), midSizeAtNotification)
@@ -146,7 +145,7 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 	if finalSize == 0 {
 		testing_utils.LogSuccess("  ✓ Volume is completely clean (0 bytes)\n")
 	} else if finalSize < 1024*1024 {
-		testing_utils.LogWarn("  ⚠ Volume is reasonably clean (%s remaining)\n", formatBytes(finalSize))
+		testing_utils.LogWarn("Test", "  ⚠ Volume is reasonably clean (%s remaining)\n", formatBytes(finalSize))
 	} else {
 		testing_utils.LogFailure("  ✗ Volume still has significant data (%s)\n", formatBytes(finalSize))
 		testPassed = false
@@ -159,17 +158,18 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 	} else if midSizeWhenReady == 0 && cleanupEvents.FilesDeleted > 0 {
 		testing_utils.LogSuccess("  ✓ Cleanup confirmed via logs (files too transient to measure)\n")
 	} else {
-		testing_utils.LogWarn("  ⚠ Volume size did not decrease\n")
+		testing_utils.LogWarn("Test", "  ⚠ Volume size did not decrease\n")
 	}
 
 	// Final verdict
 	fmt.Printf("\n[Final Verdict]\n")
 	if testPassed {
-		testing_utils.LogSuccess("TEST PASSED: File cleanup is working correctly!")
+		testing_utils.LogSuccess("✓ TEST PASSED: File cleanup is working correctly!")
 	} else {
-		testing_utils.LogFailure("TEST FAILED: Cleanup issues detected")
+		testing_utils.LogFailure("✗ TEST FAILED: Cleanup issues detected")
 		t.FailNow()
 	}
+	fmt.Println() // Add spacing after test completion
 }
 
 // loadTestDataAsChunks reads a CSV file and converts it into chunks
@@ -248,7 +248,6 @@ type CleanupEvents struct {
 	FilesDeleted int
 	DirsDeleted  int
 }
-
 
 // waitForFilesReadyAndMeasure waits for the orchestrator to indicate files are ready, then measures directory size
 // Measures at two points: (1) first chunk notification, (2) when files are ready
@@ -366,74 +365,6 @@ func getDirectorySize(path string) (int64, error) {
 	return totalSize, err
 }
 
-// getDockerVolumeSize gets the size of a docker volume using docker system df
-func getDockerVolumeSize(volumeName string) (int64, error) {
-	cmd := exec.Command("docker", "system", "df", "-v", "--format", "{{.Name}}\t{{.Size}}")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return 0, fmt.Errorf("failed to run docker command: %v, output: %s", err, string(output))
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, volumeName) {
-			parts := strings.Split(line, "\t")
-			if len(parts) >= 2 {
-				sizeStr := strings.TrimSpace(parts[1])
-				// Parse size (could be in various formats like "10.5MB", "1.2GB", etc.)
-				return parseDockerSize(sizeStr)
-			}
-		}
-	}
-
-	return 0, fmt.Errorf("volume %s not found in docker system df output", volumeName)
-}
-
-// parseDockerSize parses Docker size strings like "10.5MB", "1.2GB" to bytes
-func parseDockerSize(sizeStr string) (int64, error) {
-	sizeStr = strings.TrimSpace(sizeStr)
-	if sizeStr == "" || sizeStr == "0B" {
-		return 0, nil
-	}
-
-	// Extract numeric part and unit
-	var numStr string
-	var unit string
-
-	for i, char := range sizeStr {
-		if char >= '0' && char <= '9' || char == '.' {
-			numStr += string(char)
-		} else {
-			unit = sizeStr[i:]
-			break
-		}
-	}
-
-	num, err := strconv.ParseFloat(numStr, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse size number: %v", err)
-	}
-
-	// Convert to bytes based on unit
-	multiplier := int64(1)
-	switch strings.ToUpper(unit) {
-	case "B":
-		multiplier = 1
-	case "KB":
-		multiplier = 1024
-	case "MB":
-		multiplier = 1024 * 1024
-	case "GB":
-		multiplier = 1024 * 1024 * 1024
-	case "TB":
-		multiplier = 1024 * 1024 * 1024 * 1024
-	default:
-		return 0, fmt.Errorf("unknown size unit: %s", unit)
-	}
-
-	return int64(num * float64(multiplier)), nil
-}
-
 // formatBytes formats a byte count into a human-readable string
 func formatBytes(bytes int64) string {
 	const unit = 1024
@@ -453,6 +384,9 @@ func formatBytes(bytes int64) string {
 
 // TestSingleClientMultipleFilesGroupBy tests cleanup with multiple files from same client
 func TestSingleClientMultipleFilesGroupBy(t *testing.T) {
+	fmt.Println() // Add spacing before test
+	testing_utils.LogTest("=== Multiple Files GroupBy Test ===")
+
 	// Connect to RabbitMQ FIRST and declare the queue
 	config := &middleware.ConnectionConfig{
 		Host:     "rabbitmq",
@@ -557,15 +491,19 @@ func TestSingleClientMultipleFilesGroupBy(t *testing.T) {
 
 	// Verify
 	if cleanupEvents.CleanupCount >= 1 && cleanupEvents.FilesDeleted > 0 && finalSize == 0 {
-		t.Logf("✓ TEST PASSED: Multiple files cleaned up correctly")
+		testing_utils.LogSuccess("✓ TEST PASSED: Multiple files cleaned up correctly")
 	} else {
-		t.Logf("✗ TEST FAILED: Expected at least %d cleanup operations and 0 final size", 1)
+		testing_utils.LogFailure("✗ TEST FAILED: Expected at least %d cleanup operations and 0 final size", 1)
 		t.FailNow()
 	}
+	fmt.Println() // Add spacing after test completion
 }
 
 // TestMultipleClientsMultipleFilesGroupBy tests cleanup with multiple clients, each with multiple files
 func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
+	fmt.Println() // Add spacing before test
+	testing_utils.LogTest("=== Multiple Clients GroupBy Test ===")
+
 	// Connect to RabbitMQ
 	config := &middleware.ConnectionConfig{
 		Host:     "rabbitmq",
@@ -695,12 +633,13 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 
 	// Verify
 	if cleanupEvents.CleanupCount >= expectedCleanupOps &&
-	   cleanupEvents.DirsDeleted >= len(clients) &&
-	   finalSize == 0 {
-		t.Logf("✓ TEST PASSED: Multiple clients cleaned up correctly")
+		cleanupEvents.DirsDeleted >= len(clients) &&
+		finalSize == 0 {
+		testing_utils.LogSuccess("✓ TEST PASSED: Multiple clients cleaned up correctly")
 	} else {
-		t.Logf("✗ TEST FAILED: Expected at least %d cleanup ops, %d dirs deleted, and 0 final size (got %s)",
+		testing_utils.LogFailure("✗ TEST FAILED: Expected at least %d cleanup ops, %d dirs deleted, and 0 final size (got %s)",
 			expectedCleanupOps, len(clients), formatBytes(finalSize))
 		t.FailNow()
 	}
+	fmt.Println() // Add spacing after test completion
 }

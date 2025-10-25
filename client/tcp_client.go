@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -355,25 +354,11 @@ func (c *TCPClient) StartServerReader() {
 	}()
 }
 
-// gracefulShutdown stops the Docker container gracefully
+// gracefulShutdown exits the client gracefully
 func (c *TCPClient) gracefulShutdown() {
-	// Get container ID from environment (Docker sets HOSTNAME automatically)
-	containerID := os.Getenv("HOSTNAME")
-	if containerID == "" {
-		log.Printf("Container ID not found, using os.Exit(0)")
-		os.Exit(0)
-		return
-	}
-
-	log.Printf("Stopping container: %s", containerID)
-
-	// Stop the container
-	cmd := exec.Command("docker", "stop", containerID)
-	if err := cmd.Run(); err != nil {
-		log.Printf("Failed to stop container: %v", err)
-		// Fallback to os.Exit(0)
-		os.Exit(0)
-	}
+	log.Printf("Client shutting down gracefully...")
+	// Simply exit with code 0 - let Docker handle container termination
+	os.Exit(0)
 }
 
 // KeepConnectionOpen keeps the connection open after processing all files

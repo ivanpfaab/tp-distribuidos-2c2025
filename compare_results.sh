@@ -35,13 +35,40 @@ extract_client_data() {
     grep "Q$query |" "$CLIENT_RESULTS_DIR/results_$client_id.txt" | \
     sed "s/^$client_id | Q$query | //" > "${output_file}.raw"
     
-    # Keep only the first header and remove all subsequent headers
-    # Get the first line (header)
-    head -1 "${output_file}.raw" > "$output_file"
-    
-    # Get all data lines (skip lines that match the header pattern)
-    local header=$(head -1 "${output_file}.raw")
-    grep -v "^$header$" "${output_file}.raw" >> "$output_file"
+    # Remove ALL header lines that could appear anywhere in the file
+    # Use a more comprehensive pattern that detects CSV headers by looking for:
+    # 1. Lines with multiple field names separated by commas
+    # 2. Lines that contain common field name patterns
+    awk '
+    BEGIN { 
+        # Define header patterns for different query types
+        q1_header = /transaction_id.*store_id.*payment_method_id/
+        q2_header = /year.*month.*item_id.*quantity/
+        q3_header = /year.*semester.*store_id.*total_final_amount/
+        q4_header = /user_id.*store_id.*purchase_count.*rank/
+    }
+    {
+        # Check if this line looks like a header
+        is_header = 0
+        
+        # Q1 pattern: transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at
+        if ($0 ~ /transaction_id.*store_id.*payment_method_id/) is_header = 1
+        
+        # Q2 pattern: year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal
+        if ($0 ~ /year.*month.*item_id.*quantity/) is_header = 1
+        
+        # Q3 pattern: year,semester,store_id,total_final_amount,count,store_name,street,postal_code,city,state,latitude,longitude
+        if ($0 ~ /year.*semester.*store_id.*total_final_amount/) is_header = 1
+        
+        # Q4 pattern: user_id,store_id,purchase_count,rank,gender,birthdate,registered_at
+        if ($0 ~ /user_id.*store_id.*purchase_count.*rank/) is_header = 1
+        
+        # Additional checks for common field names that indicate headers
+        if ($0 ~ /^(transaction_id|year|user_id|item_id|store_name|purchase_count)[,]/) is_header = 1
+        
+        # Only print non-header lines
+        if (!is_header) print $0
+    }' "${output_file}.raw" > "$output_file"
     
     # Clean up
     rm "${output_file}.raw"
@@ -58,7 +85,7 @@ compare_q1() {
     # Extract only relevant columns: transaction_id,final_amount
     # Client format: transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at
     # We need: transaction_id (col 1), final_amount (col 8)
-    tail -n +2 "$client_file" | awk -F',' '{print $1","$8}' | sort > "${client_file}.extracted"
+    awk -F',' '{print $1","$8}' "$client_file" | sort > "${client_file}.extracted"
     tail -n +2 "$source_file" | sort > "${source_file}.sorted"
     
     if diff -q "${client_file}.extracted" "${source_file}.sorted" > /dev/null 2>&1; then
@@ -89,14 +116,14 @@ compare_q2() {
     # Category 1 (best selling) = coffee category
     # Category 2 (most profits) = non-coffee category
     
-    # Extract coffee category (best selling) - skip header
+    # Extract coffee category (best selling)
     # Client format: year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal
     # We need: year_month_created_at (col1-col2), item_name (col7), sellings_qty (col4)
-    tail -n +2 "$client_file" | awk -F',' '$8=="coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, $4}' | sort > "$TEMP_DIR/${client_id}_q2_best_selling.csv"
+    awk -F',' '$8=="coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, $4}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_best_selling.csv"
     
-    # Extract non-coffee category (most profits) - skip header
+    # Extract non-coffee category (most profits)
     # We need: year_month_created_at (col1-col2), item_name (col7), profit_sum (col5) - treat as integer
-    tail -n +2 "$client_file" | awk -F',' '$8=="non-coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, int($5)}' | sort > "$TEMP_DIR/${client_id}_q2_most_profits.csv"
+    awk -F',' '$8=="non-coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, int($5)}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_most_profits.csv"
     
     # Compare coffee category against best_selling
     local coffee_source="$SOURCE_OF_TRUTH_DIR/q2_best_selling.csv"
@@ -137,7 +164,7 @@ compare_q3() {
     # Transform year,semester to year-H{semester} format
     # Client format: year,semester,store_id,total_final_amount,count,store_name,street,postal_code,city,state,latitude,longitude
     # We need: year_half_created_at (col1-col2), store_name (col6), tpv (col4) - treat as integer
-    tail -n +2 "$client_file" | awk -F',' '{printf "%s-H%d,%s,%d\n", $1, $2, $6, int($4)}' | sort > "${client_file}.transformed"
+    awk -F',' '{printf "%s-H%d,%s,%d\n", $1, $2, $6, int($4)}' "$client_file" | sort > "${client_file}.transformed"
     
     # Sort source file (skip header) and treat TPV as integer
     tail -n +2 "$source_file" | awk -F',' '{printf "%s,%s,%d\n", $1, $2, int($3)}' | sort > "${source_file}.sorted"
@@ -170,7 +197,7 @@ compare_q4() {
     # Extract relevant columns: store_id,birthdate,purchases_qty
     # Client format: user_id,store_id,purchase_count,rank,gender,birthdate,registered_at
     # We need: store_id (col2), birthdate (col6), purchases_qty (col3)
-    tail -n +2 "$client_file" | awk -F',' '{print $2","$6","$3}' | sort > "${client_file}.extracted"
+    awk -F',' '{print $2","$6","$3}' "$client_file" | sort > "${client_file}.extracted"
     
     # Sort source file (skip header)
     tail -n +2 "$source_file" | sort > "${source_file}.sorted"
