@@ -170,10 +170,18 @@ func (w *GroupByWorker) getPartitionsForWorker() []int {
 		return []int{w.config.WorkerID}
 	}
 
-	// For Q4: worker handles multiple partitions (partition % NUM_WORKERS == workerID)
+	// For Q4: worker handles multiple partitions based on modulo
+	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
+	// Since workerID starts from 1:
+	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
+	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
+	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
 	partitions := []int{}
-	for partition := w.config.WorkerID; partition < w.config.NumPartitions; partition += w.config.NumWorkers {
-		partitions = append(partitions, partition)
+	targetRemainder := w.config.WorkerID % w.config.NumWorkers
+	for partition := 0; partition < w.config.NumPartitions; partition++ {
+		if partition%w.config.NumWorkers == targetRemainder {
+			partitions = append(partitions, partition)
+		}
 	}
 	return partitions
 }

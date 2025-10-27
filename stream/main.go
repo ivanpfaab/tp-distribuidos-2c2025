@@ -1,14 +1,18 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+
+	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 )
 
 func main() {
-	fmt.Println("Starting Streaming Service...")
+	// Initialize logger
+	testing_utils.InitLogger()
+
+	testing_utils.LogInfo("Streaming Service", "Starting Streaming Service...")
 
 	// Load configuration
 	config := LoadConfig()
@@ -17,7 +21,7 @@ func main() {
 	// Create streaming worker
 	worker, err := NewStreamingWorker(middlewareConfig)
 	if err != nil {
-		fmt.Printf("Failed to create streaming worker: %v\n", err)
+		testing_utils.LogError("Streaming Service", "Failed to create streaming worker: %v", err)
 		os.Exit(1)
 	}
 
@@ -28,19 +32,19 @@ func main() {
 	// Start the worker in a goroutine
 	go func() {
 		if err := worker.Start(); err != 0 {
-			fmt.Printf("Failed to start streaming worker: %v\n", err)
+			testing_utils.LogError("Streaming Service", "Failed to start streaming worker: %v", err)
 			os.Exit(1)
 		}
 	}()
 
-	fmt.Println("Streaming Service started successfully. Waiting for messages...")
+	testing_utils.LogInfo("Streaming Service", "Streaming Service started successfully. Waiting for messages...")
 
 	// Wait for shutdown signal
 	<-sigChan
-	fmt.Println("Shutting down Streaming Service...")
+	testing_utils.LogInfo("Streaming Service", "Shutting down Streaming Service...")
 
 	// Close the worker
 	worker.Close()
 
-	fmt.Println("Streaming Service stopped.")
+	testing_utils.LogInfo("Streaming Service", "Streaming Service stopped.")
 }

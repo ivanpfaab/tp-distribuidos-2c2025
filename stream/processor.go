@@ -77,13 +77,13 @@ func (sw *StreamingWorker) handleSingleChunkCompletion(clientID string, queryTyp
 	switch queryType {
 	case 2:
 		clientQueryStatus.Query2Completed = true
-		fmt.Printf("Streaming Worker: ✅ Query2 completed for client %s (single chunk)\n", clientID)
+		testing.LogInfo("Streaming Worker", "✅ Query2 completed for client %s (single chunk)", clientID)
 	case 3:
 		clientQueryStatus.Query3Completed = true
-		fmt.Printf("Streaming Worker: ✅ Query3 completed for client %s (single chunk)\n", clientID)
+		testing.LogInfo("Streaming Worker", "✅ Query3 completed for client %s (single chunk)", clientID)
 	case 4:
 		clientQueryStatus.Query4Completed = true
-		fmt.Printf("Streaming Worker: ✅ Query4 completed for client %s (single chunk)\n", clientID)
+		testing.LogInfo("Streaming Worker", "✅ Query4 completed for client %s (single chunk)", clientID)
 	}
 
 	// Check if all queries are completed

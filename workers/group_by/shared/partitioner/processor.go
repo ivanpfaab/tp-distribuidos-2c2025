@@ -87,22 +87,30 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 	// Partition records into temporary buffers (one per partition)
 	partitionedRecords := make(map[int][]Record)
 	for _, record := range records {
+		testing_utils.LogInfo("Partitioner Processor", "Getting partition for record: %v", record.Fields)
 		partition, err := p.GetPartition(record)
 		if err != nil {
-			testing_utils.LogWarn("Partitioner Processor", "Failed to get partition for record: %v", err)
+			testing_utils.LogWarn("Partitioner Processor", "Failed to get partition for record: %v", record.Fields)
 			continue
 		}
 		partitionedRecords[partition] = append(partitionedRecords[partition], record)
 	}
 
 	// Group partitions by worker and send one chunk per worker
-	// Worker i gets partitions: i, i+numWorkers, i+2*numWorkers, ...
-	for workerID := 0; workerID < p.NumWorkers; workerID++ {
+	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
+	// Note: workerID starts from 1 (not 0) to match docker-compose configuration
+	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
+	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
+	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
+	for workerID := 1; workerID <= p.NumWorkers; workerID++ {
 		// Collect all records for this worker from its assigned partitions
 		workerRecords := []Record{}
-		for partition := workerID; partition < p.NumPartitions; partition += p.NumWorkers {
-			if records, exists := partitionedRecords[partition]; exists {
-				workerRecords = append(workerRecords, records...)
+		targetRemainder := workerID % p.NumWorkers
+		for partition := 0; partition < p.NumPartitions; partition++ {
+			if partition%p.NumWorkers == targetRemainder {
+				if records, exists := partitionedRecords[partition]; exists {
+					workerRecords = append(workerRecords, records...)
+				}
 			}
 		}
 
@@ -271,13 +279,15 @@ func (p *PartitionerProcessor) sendToWorker(workerID int, records []Record, orig
 
 	// Calculate chunk metadata
 	// chunkNumber = (original_chunk.ChunkNumber - 1) * numWorkers + workerID
+	// With workerID starting from 1: chunk 1, 2, 3, 4, 5, 6, ...
 	newChunkNumber := (originalChunk.ChunkNumber-1)*p.NumWorkers + workerID
 
-	// isLastChunk = original_chunk.isLastChunk && workerID == numWorkers - 1
-	isLastChunk := originalChunk.IsLastChunk && (workerID == p.NumWorkers-1)
+	// isLastChunk = original_chunk.isLastChunk && workerID == numWorkers
+	// Since workerID starts from 1, the last worker has workerID == numWorkers
+	isLastChunk := originalChunk.IsLastChunk && (workerID == p.NumWorkers)
 
-	// isLastFromTable = original_chunk.isLastFromTable && workerID == numWorkers - 1
-	isLastFromTable := originalChunk.IsLastFromTable && (workerID == p.NumWorkers-1)
+	// isLastFromTable = original_chunk.isLastFromTable && workerID == numWorkers
+	isLastFromTable := originalChunk.IsLastFromTable && (workerID == p.NumWorkers)
 
 	// Create chunk for this worker
 	workerChunk := chunk.NewChunk(
