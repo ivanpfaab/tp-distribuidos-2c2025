@@ -27,8 +27,8 @@ func NewChunkProcessor(queryType int) *ChunkProcessor {
 // For Q4, filters records to only process those belonging to the specified partition
 // Returns the updated data map
 func (cp *ChunkProcessor) ProcessChunk(chunkMsg *chunk.Chunk, currentData map[string]interface{}, partition int, numPartitions int) (map[string]interface{}, error) {
-	testing_utils.LogInfo("ChunkProcessor", "Processing chunk %d for query %d, partition %d (%d bytes)",
-		chunkMsg.ChunkNumber, cp.queryType, partition, len(chunkMsg.ChunkData))
+	// testing_utils.LogInfo("ChunkProcessor", "Processing chunk %d for query %d, partition %d (%d bytes)",
+	//	chunkMsg.ChunkNumber, cp.queryType, partition, len(chunkMsg.ChunkData))
 
 	switch cp.queryType {
 	case 2:

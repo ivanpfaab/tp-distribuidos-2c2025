@@ -72,13 +72,12 @@ func LoadConfig() (*WorkerConfig, error) {
 		}
 	}
 
-	// Validate worker ID (1-based input: 1, 2, 3, ...)
+	// Validate worker ID (1-based: 1, 2, 3, ...)
 	if workerID < 1 || workerID > numWorkers {
 		return nil, fmt.Errorf("WORKER_ID must be between 1 and %d (got %d)", numWorkers, workerID)
 	}
 
-	// Convert to 0-based for internal use (0, 1, 2, ...)
-	workerID = workerID - 1
+	// Keep workerID as 1-based (no conversion needed)
 
 	// Load number of partitions
 	numPartitionsStr := os.Getenv("NUM_PARTITIONS")

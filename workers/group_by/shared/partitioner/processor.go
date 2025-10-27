@@ -76,7 +76,7 @@ func NewPartitionerProcessor(queryType, numPartitions, numWorkers int, connectio
 
 // ProcessChunk processes a chunk and sends partitioned data to workers
 func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
-	testing_utils.LogInfo("Partitioner Processor", "Processing chunk %d for query type %d", chunkMessage.ChunkNumber, p.QueryType)
+	// testing_utils.LogInfo("Partitioner Processor", "Processing chunk %d for query type %d", chunkMessage.ChunkNumber, p.QueryType)
 
 	// Parse the chunk data (assuming CSV format)
 	records, err := p.ParseChunkData(chunkMessage.ChunkData)
@@ -89,20 +89,26 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 	for _, record := range records {
 		partition, err := p.GetPartition(record)
 		if err != nil {
-			testing_utils.LogWarn("Partitioner Processor", "Failed to get partition for record: %v", err)
 			continue
 		}
 		partitionedRecords[partition] = append(partitionedRecords[partition], record)
 	}
 
 	// Group partitions by worker and send one chunk per worker
-	// Worker i gets partitions: i, i+numWorkers, i+2*numWorkers, ...
-	for workerID := 0; workerID < p.NumWorkers; workerID++ {
+	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
+	// Note: workerID starts from 1 (not 0) to match docker-compose configuration
+	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
+	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
+	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
+	for workerID := 1; workerID <= p.NumWorkers; workerID++ {
 		// Collect all records for this worker from its assigned partitions
 		workerRecords := []Record{}
-		for partition := workerID; partition < p.NumPartitions; partition += p.NumWorkers {
-			if records, exists := partitionedRecords[partition]; exists {
-				workerRecords = append(workerRecords, records...)
+		targetRemainder := workerID % p.NumWorkers
+		for partition := 0; partition < p.NumPartitions; partition++ {
+			if partition%p.NumWorkers == targetRemainder {
+				if records, exists := partitionedRecords[partition]; exists {
+					workerRecords = append(workerRecords, records...)
+				}
 			}
 		}
 
@@ -112,8 +118,8 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 		}
 	}
 
-	testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d to %d workers (%d total records)",
-		chunkMessage.ChunkNumber, p.NumWorkers, len(records))
+	// testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d to %d workers (%d total records)",
+	// 	chunkMessage.ChunkNumber, p.NumWorkers, len(records))
 
 	return nil
 }
@@ -138,12 +144,7 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 	// If validation fails, treat it as data instead of header
 	startIndex := 0
 	if err := p.ValidateHeader(records[0]); err == nil {
-		// First row is a valid header, skip it
-		testing_utils.LogInfo("Partitioner Processor", "Found header row, skipping it")
 		startIndex = 1
-	} else {
-		// First row is not a header, treat all rows as data
-		testing_utils.LogInfo("Partitioner Processor", "No header found, processing all rows as data")
 	}
 
 	// Process data records
@@ -271,13 +272,15 @@ func (p *PartitionerProcessor) sendToWorker(workerID int, records []Record, orig
 
 	// Calculate chunk metadata
 	// chunkNumber = (original_chunk.ChunkNumber - 1) * numWorkers + workerID
+	// With workerID starting from 1: chunk 1, 2, 3, 4, 5, 6, ...
 	newChunkNumber := (originalChunk.ChunkNumber-1)*p.NumWorkers + workerID
 
-	// isLastChunk = original_chunk.isLastChunk && workerID == numWorkers - 1
-	isLastChunk := originalChunk.IsLastChunk && (workerID == p.NumWorkers-1)
+	// isLastChunk = original_chunk.isLastChunk && workerID == numWorkers
+	// Since workerID starts from 1, the last worker has workerID == numWorkers
+	isLastChunk := originalChunk.IsLastChunk && (workerID == p.NumWorkers)
 
-	// isLastFromTable = original_chunk.isLastFromTable && workerID == numWorkers - 1
-	isLastFromTable := originalChunk.IsLastFromTable && (workerID == p.NumWorkers-1)
+	// isLastFromTable = original_chunk.isLastFromTable && workerID == numWorkers
+	isLastFromTable := originalChunk.IsLastFromTable && (workerID == p.NumWorkers)
 
 	// Create chunk for this worker
 	workerChunk := chunk.NewChunk(
@@ -311,8 +314,8 @@ func (p *PartitionerProcessor) sendToWorker(workerID int, records []Record, orig
 		if sendErr := p.ExchangeProducer.Send(serializedChunk, []string{routingKey}); sendErr != 0 {
 			return fmt.Errorf("failed to send chunk to worker %d: error code %v", workerID, sendErr)
 		}
-		testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d (%d records) to worker %d with routing key '%s' (IsLastChunk=%t, IsLastFromTable=%t)",
-			newChunkNumber, len(records), workerID, routingKey, isLastChunk, isLastFromTable)
+		// testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d (%d records) to worker %d with routing key '%s' (IsLastChunk=%t, IsLastFromTable=%t)",
+		// 	newChunkNumber, len(records), workerID, routingKey, isLastChunk, isLastFromTable)
 	}
 
 	return nil

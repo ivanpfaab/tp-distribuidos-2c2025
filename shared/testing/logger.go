@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // LogLevel represents the logging level
@@ -56,57 +57,62 @@ func shouldLog(level LogLevel) bool {
 	return level >= currentLogLevel
 }
 
+// getTimestamp returns the current timestamp in a consistent format
+func getTimestamp() string {
+	return time.Now().Format("2006/01/02 15:04:05")
+}
+
 // LogDebug logs a debug message
 func LogDebug(component, message string, args ...interface{}) {
 	if shouldLog(DEBUG) {
-		fmt.Printf("[DEBUG] %s: %s\n", component, fmt.Sprintf(message, args...))
+		fmt.Printf("%s [DEBUG] %s: %s\n", getTimestamp(), component, fmt.Sprintf(message, args...))
 	}
 }
 
 // LogInfo logs an info message
 func LogInfo(component, message string, args ...interface{}) {
 	if shouldLog(INFO) {
-		fmt.Printf("[INFO] %s: %s\n", component, fmt.Sprintf(message, args...))
+		fmt.Printf("%s [INFO] %s: %s\n", getTimestamp(), component, fmt.Sprintf(message, args...))
 	}
 }
 
 // LogWarn logs a warning message
 func LogWarn(component, message string, args ...interface{}) {
 	if shouldLog(WARN) {
-		fmt.Printf("%s[WARN] %s: %s%s\n", Yellow, component, fmt.Sprintf(message, args...), Reset)
+		fmt.Printf("%s %s[WARN] %s: %s%s\n", getTimestamp(), Yellow, component, fmt.Sprintf(message, args...), Reset)
 	}
 }
 
 // LogError logs an error message
 func LogError(component, message string, args ...interface{}) {
 	if shouldLog(ERROR) {
-		fmt.Printf("%s[ERROR] %s: %s%s\n", Red, component, fmt.Sprintf(message, args...), Reset)
+		fmt.Printf("%s %s[ERROR] %s: %s%s\n", getTimestamp(), Red, component, fmt.Sprintf(message, args...), Reset)
 	}
 }
 
 // LogTest logs a test-specific message (always shown)
 func LogTest(message string, args ...interface{}) {
-	fmt.Printf("%s[TEST] %s%s\n", Blue, fmt.Sprintf(message, args...), Reset)
+	fmt.Printf("%s %s[TEST] %s%s\n", getTimestamp(), Blue, fmt.Sprintf(message, args...), Reset)
 }
 
 // LogSuccess logs a success message (always shown)
 func LogSuccess(message string, args ...interface{}) {
-	fmt.Printf("%s[SUCCESS] %s%s\n", Green, fmt.Sprintf(message, args...), Reset)
+	fmt.Printf("%s %s[SUCCESS] %s%s\n", getTimestamp(), Green, fmt.Sprintf(message, args...), Reset)
 }
 
 // LogFailure logs a failure message (always shown)
 func LogFailure(message string, args ...interface{}) {
-	fmt.Printf("%s[FAILURE] %s%s\n", Red, fmt.Sprintf(message, args...), Reset)
+	fmt.Printf("%s %s[FAILURE] %s%s\n", getTimestamp(), Red, fmt.Sprintf(message, args...), Reset)
 }
 
 // LogStep logs a test step message (always shown)
 func LogStep(message string, args ...interface{}) {
-	fmt.Printf("  → %s\n", fmt.Sprintf(message, args...))
+	fmt.Printf("%s   → %s\n", getTimestamp(), fmt.Sprintf(message, args...))
 }
 
 // LogQuiet logs a quiet message (always shown, grey color)
 func LogQuiet(message string, args ...interface{}) {
-	fmt.Printf("%s%s%s\n", Gray, fmt.Sprintf(message, args...), Reset)
+	fmt.Printf("%s %s%s%s\n", getTimestamp(), Gray, fmt.Sprintf(message, args...), Reset)
 }
 
 // InitLogger initializes the logger with environment variables
