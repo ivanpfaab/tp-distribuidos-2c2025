@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	TestClientID       = "TEST"
+	TestClientIDTest1       = "TST1"
+	TestClientIDTest2       = "TST2"
+	TestClient1IDTest3       = "TST3"
+	TestClient2IDTest3       = "TST4"
 	TestFileID         = "TI01"
 	GroupByDataDir     = "/app/groupby-data"
 	QueryType          = 2
@@ -61,7 +64,7 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 	// Load test data
 	testDataPath := "/app/testdata/transaction_items.csv"
 
-	chunks, err := loadTestDataAsChunks(testDataPath, t)
+	chunks, err := loadTestDataAsChunks(testDataPath, TestClientIDTest1, t)
 	if err != nil {
 		t.Fatalf("Failed to load test data: %v", err)
 	}
@@ -69,15 +72,13 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 	testing_utils.LogQuiet("Loaded %d chunks from test data", len(chunks))
 
 	// Measure initial client directory size BEFORE sending any data
-	clientDir := getClientDirectory(TestClientID)
+	clientDir := getClientDirectory(TestClientIDTest1)
 	initialSize, err := getDirectorySize(clientDir)
 	if err != nil {
 		testing_utils.LogWarn("Test", "Failed to get initial directory size: %v", err)
 		initialSize = 0
 	}
 	testing_utils.LogInfo("Test", "Initial client directory size: %s", formatBytes(initialSize))
-
-	testing_utils.LogStep("Sending %d chunks to queue: %s", len(chunks), queues.Query2GroupByQueue)
 
 	// Send all chunks to the queue
 	for i, chunkData := range chunks {
@@ -95,19 +96,19 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 	testing_utils.LogInfo("Test", "All %d chunks sent successfully", len(chunks))
 
 	// Wait for workers to process and create files (actively monitor orchestrator logs)
-	testing_utils.LogStep("Waiting for workers to process chunks and orchestrator to detect files...")
-	midSizeAtNotification, midSizeWhenReady, err := waitForFilesReadyAndMeasure(t, TestClientID, 60*time.Second)
+	testing_utils.LogInfo("Test", "Waiting for workers to process chunks and orchestrator to detect files...")
+	midSizeAtNotification, midSizeWhenReady, err := waitForFilesReadyAndMeasure(t, TestClientIDTest1, 60*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to measure mid-processing size: %v", err)
 	}
 
 	// Wait for orchestrator to complete cleanup
-	testing_utils.LogStep("Waiting for orchestrator to complete cleanup (20 seconds)...")
+	testing_utils.LogInfo("Test", "Waiting for orchestrator to complete cleanup (20 seconds)...")
 	time.Sleep(20 * time.Second)
 
 	// Check orchestrator logs for cleanup completion
-	testing_utils.LogStep("Checking orchestrator logs for cleanup evidence...")
-	cleanupEvents := parseOrchestratorLogs(t)
+	testing_utils.LogInfo("Test", "Checking orchestrator logs for cleanup evidence...")
+	cleanupEvents := parseOrchestratorLogs(t, []string{TestClientIDTest1})
 
 	// Measure final client directory size
 	finalSize, err := getDirectorySize(clientDir)
@@ -117,52 +118,52 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 	}
 
 	// Report results
-	testing_utils.LogInfo("Test", "\n=== CLEANUP VERIFICATION RESULTS ===")
-	testing_utils.LogStep("\n[Volume Size Progression]\n")
-	testing_utils.LogStep("  Initial:                      %s (%d bytes)\n", formatBytes(initialSize), initialSize)
-	testing_utils.LogStep("  Mid (at first notification):  %s (%d bytes)\n", formatBytes(midSizeAtNotification), midSizeAtNotification)
-	testing_utils.LogStep("  Mid (when files ready):       %s (%d bytes)\n", formatBytes(midSizeWhenReady), midSizeWhenReady)
-	testing_utils.LogStep("  Final:                        %s (%d bytes)\n", formatBytes(finalSize), finalSize)
+	testing_utils.LogInfo("Test", "=== CLEANUP VERIFICATION RESULTS ===")
+	testing_utils.LogInfo("Test", "Volume Size Progression")
+	testing_utils.LogInfo("Test", "  Initial:                      %s (%d bytes)", formatBytes(initialSize), initialSize)
+	testing_utils.LogInfo("Test", "  Mid (at first notification):  %s (%d bytes)", formatBytes(midSizeAtNotification), midSizeAtNotification)
+	testing_utils.LogInfo("Test", "  Mid (when files ready):       %s (%d bytes)", formatBytes(midSizeWhenReady), midSizeWhenReady)
+	testing_utils.LogInfo("Test", "  Final:                        %s (%d bytes)", formatBytes(finalSize), finalSize)
 
-	testing_utils.LogStep("\n[Orchestrator Cleanup Activity]\n")
-	testing_utils.LogStep("  Cleanup operations:   %d\n", cleanupEvents.CleanupCount)
-	testing_utils.LogStep("  Files deleted:        %d\n", cleanupEvents.FilesDeleted)
-	testing_utils.LogStep("  Directories deleted:  %d\n", cleanupEvents.DirsDeleted)
+	testing_utils.LogInfo("Test", "Orchestrator Cleanup Activity")
+	testing_utils.LogInfo("Test", "  Cleanup operations:   %d", cleanupEvents.CleanupCount)
+	testing_utils.LogInfo("Test", "  Files deleted:        %d", cleanupEvents.FilesDeleted)
+	testing_utils.LogInfo("Test", "  Directories deleted:  %d", cleanupEvents.DirsDeleted)
 
 	// Verify cleanup
-	testing_utils.LogStep("\n[Verification]\n")
+	testing_utils.LogInfo("Test", "Verification")
 	testPassed := true
 
 	// Check 2: Cleanup happened
 	if cleanupEvents.CleanupCount > 0 && cleanupEvents.FilesDeleted > 0 {
-		testing_utils.LogSuccess("  ✓ Orchestrator performed cleanup (%d files deleted)\n", cleanupEvents.FilesDeleted)
+		testing_utils.LogSuccess("  ✓ Orchestrator performed cleanup (%d files deleted)", cleanupEvents.FilesDeleted)
 	} else {
-		testing_utils.LogFailure("  ✗ No cleanup detected in orchestrator logs\n")
+		testing_utils.LogFailure("  ✗ No cleanup detected in orchestrator logs")
 		testPassed = false
 	}
 
 	// Check 3: Volume is clean
 	if finalSize == 0 {
-		testing_utils.LogSuccess("  ✓ Volume is completely clean (0 bytes)\n")
+		testing_utils.LogSuccess("  ✓ Volume is completely clean (0 bytes)")
 	} else if finalSize < 1024*1024 {
-		testing_utils.LogWarn("Test", "  ⚠ Volume is reasonably clean (%s remaining)\n", formatBytes(finalSize))
+		testing_utils.LogWarn("Test", "  ⚠ Volume is reasonably clean (%s remaining)", formatBytes(finalSize))
 	} else {
-		testing_utils.LogFailure("  ✗ Volume still has significant data (%s)\n", formatBytes(finalSize))
+		testing_utils.LogFailure("  ✗ Volume still has significant data (%s)", formatBytes(finalSize))
 		testPassed = false
 	}
 
 	// Check 4: Size decreased
 	if finalSize < midSizeWhenReady {
 		reduction := float64(midSizeWhenReady-finalSize) / float64(midSizeWhenReady) * 100
-		testing_utils.LogSuccess("  ✓ Volume size decreased by %.1f%%\n", reduction)
+		testing_utils.LogSuccess("  ✓ Volume size decreased by %.1f%%", reduction)
 	} else if midSizeWhenReady == 0 && cleanupEvents.FilesDeleted > 0 {
-		testing_utils.LogSuccess("  ✓ Cleanup confirmed via logs (files too transient to measure)\n")
+		testing_utils.LogSuccess("  ✓ Cleanup confirmed via logs (files too transient to measure)")
 	} else {
-		testing_utils.LogWarn("Test", "  ⚠ Volume size did not decrease\n")
+		testing_utils.LogWarn("Test", "  ⚠ Volume size did not decrease")
 	}
 
 	// Final verdict
-	fmt.Printf("\n[Final Verdict]\n")
+	testing_utils.LogInfo("Test", "Final Verdict")
 	if testPassed {
 		testing_utils.LogSuccess("✓ TEST PASSED: File cleanup is working correctly!")
 	} else {
@@ -173,7 +174,7 @@ func TestSingleClientSingleFileGroupBy(t *testing.T) {
 }
 
 // loadTestDataAsChunks reads a CSV file and converts it into chunks
-func loadTestDataAsChunks(filePath string, t *testing.T) ([]*chunk.Chunk, error) {
+func loadTestDataAsChunks(filePath string, clientID string, t *testing.T) ([]*chunk.Chunk, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open test data file: %w", err)
@@ -193,8 +194,6 @@ func loadTestDataAsChunks(filePath string, t *testing.T) ([]*chunk.Chunk, error)
 	// First row is header
 	header := records[0]
 	dataRecords := records[1:]
-
-	t.Logf("CSV has %d data records with schema: %v", len(dataRecords), header)
 
 	// Split data into chunks (e.g., 10 records per chunk)
 	chunkSize := 10
@@ -224,7 +223,7 @@ func loadTestDataAsChunks(filePath string, t *testing.T) ([]*chunk.Chunk, error)
 
 		// Create chunk
 		chunkObj := chunk.NewChunk(
-			TestClientID,
+			clientID,
 			TestFileID,
 			2, // QueryType 2
 			chunkNumber,
@@ -280,10 +279,10 @@ func waitForFilesReadyAndMeasure(t *testing.T, clientID string, timeout time.Dur
 			// Measure size at first notification
 			size, err := getDirectorySize(clientDir)
 			if err != nil {
-				t.Logf("First chunk notification received, but failed to measure size: %v", err)
+				testing_utils.LogWarn("Test", "First chunk notification received, but failed to measure size: %v", err)
 			} else {
 				sizeAtFirstNotification = size
-				t.Logf("First chunk notification received by orchestrator, directory size: %s", formatBytes(size))
+				testing_utils.LogInfo("Test", "First chunk notification received by orchestrator, directory size: %s", formatBytes(size))
 			}
 		}
 
@@ -295,7 +294,7 @@ func waitForFilesReadyAndMeasure(t *testing.T, clientID string, timeout time.Dur
 			if err != nil {
 				return 0, 0, fmt.Errorf("failed to measure directory size: %v", err)
 			}
-			t.Logf("Files detected for client %s (workers finished writing), measured size: %s", clientID, formatBytes(size))
+			testing_utils.LogInfo("Test", "Files detected for client %s (workers finished writing), measured size: %s", clientID, formatBytes(size))
 			return sizeAtFirstNotification, size, nil
 		}
 
@@ -305,11 +304,11 @@ func waitForFilesReadyAndMeasure(t *testing.T, clientID string, timeout time.Dur
 }
 
 // parseOrchestratorLogs parses orchestrator container logs to find cleanup events
-func parseOrchestratorLogs(t *testing.T) CleanupEvents {
+func parseOrchestratorLogs(t *testing.T, clientIDs []string) CleanupEvents {
 	cmd := exec.Command("docker", "logs", "groupby-orchestrator-test")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Logf("Warning: Failed to get orchestrator logs: %v", err)
+		testing_utils.LogWarn("Test", "Warning: Failed to get orchestrator logs: %v", err)
 		return CleanupEvents{}
 	}
 
@@ -318,28 +317,39 @@ func parseOrchestratorLogs(t *testing.T) CleanupEvents {
 
 	events := CleanupEvents{}
 
+	// Helper function to check if a line contains any of the client IDs
+	containsAnyClientID := func(line string) bool {
+		// Check the required clientID first
+		for _, cid := range clientIDs {
+			if strings.Contains(line, cid) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Log orchestrator output for visibility
-	t.Logf("\n=== ORCHESTRATOR LOGS ===")
+	testing_utils.LogInfo("Test", "=== ORCHESTRATOR LOGS ===")
 	for _, line := range lines {
 		// Filter to only show important lines to avoid spam
 		if strings.Contains(line, "completed") ||
 			strings.Contains(line, "cleaning up") ||
 			strings.Contains(line, "cleaned up") {
-			t.Logf("  %s", line)
+			testing_utils.LogInfo("Test", "  %s", line)
 		}
 
 		// Count cleanup events
-		if strings.Contains(line, "All") && strings.Contains(line, "chunks sent, now cleaning up files") {
+		if strings.Contains(line, "All") && strings.Contains(line, "chunks sent, now cleaning up files") && containsAnyClientID(line) {
 			events.CleanupCount++
 		}
-		if strings.Contains(line, "Deleted file:") {
+		if strings.Contains(line, "Deleted file:") && containsAnyClientID(line) {
 			events.FilesDeleted++
 		}
-		if strings.Contains(line, "Deleted client directory:") {
+		if strings.Contains(line, "Deleted client directory:") && containsAnyClientID(line) {
 			events.DirsDeleted++
 		}
 	}
-	t.Logf("\n=== END ORCHESTRATOR LOGS ===\n")
+	testing_utils.LogInfo("Test", "=== END ORCHESTRATOR LOGS ===")
 
 	return events
 }
@@ -395,7 +405,7 @@ func TestSingleClientMultipleFilesGroupBy(t *testing.T) {
 		Password: "password",
 	}
 
-	t.Log("Declaring queue before services start...")
+	testing_utils.LogQuiet("Declaring queue before services start...")
 	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2GroupByQueue, config)
 	if producer == nil {
 		t.Fatal("Failed to create queue producer")
@@ -405,17 +415,17 @@ func TestSingleClientMultipleFilesGroupBy(t *testing.T) {
 	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
 		t.Fatalf("Failed to declare queue: %v", err)
 	}
-	t.Log("Queue declared successfully!")
+	testing_utils.LogInfo("Test", "Queue declared successfully!")
 
 	// Wait for services to be ready
-	t.Log("Waiting for services to be ready...")
+	testing_utils.LogInfo("Test", "Waiting for services to be ready...")
 	time.Sleep(10 * time.Second)
 
 	// Load test data
 	testDataPath := "/app/testdata/transaction_items.csv"
-	t.Logf("Loading test data from: %s", testDataPath)
+	testing_utils.LogInfo("Test", "Loading test data from: %s", testDataPath)
 
-	allChunks, err := loadTestDataAsChunks(testDataPath, t)
+	allChunks, err := loadTestDataAsChunks(testDataPath, TestClientIDTest2, t)
 	if err != nil {
 		t.Fatalf("Failed to load test data: %v", err)
 	}
@@ -424,12 +434,12 @@ func TestSingleClientMultipleFilesGroupBy(t *testing.T) {
 	numFiles := 3
 	chunksPerFile := len(allChunks) / numFiles
 
-	t.Logf("Simulating %d files with ~%d chunks each", numFiles, chunksPerFile)
+	testing_utils.LogInfo("Test", "Simulating %d files with ~%d chunks each", numFiles, chunksPerFile)
 
 	// Measure initial client directory size BEFORE sending any data
-	clientDir := getClientDirectory(TestClientID)
+	clientDir := getClientDirectory(TestClientIDTest2)
 	initialSize, _ := getDirectorySize(clientDir)
-	t.Logf("Initial client directory size: %s", formatBytes(initialSize))
+	testing_utils.LogInfo("Test", "Initial client directory size: %s", formatBytes(initialSize))
 
 	// Send chunks for each file
 	for fileNum := 0; fileNum < numFiles; fileNum++ {
@@ -442,7 +452,7 @@ func TestSingleClientMultipleFilesGroupBy(t *testing.T) {
 		fileID := fmt.Sprintf("TI%02d", fileNum+1)
 		fileChunks := allChunks[startIdx:endIdx]
 
-		t.Logf("Sending file %s with %d chunks", fileID, len(fileChunks))
+		testing_utils.LogInfo("Test", "Sending file %s with %d chunks", fileID, len(fileChunks))
 
 		for i, chunkData := range fileChunks {
 			// Update chunk metadata for this file
@@ -463,31 +473,32 @@ func TestSingleClientMultipleFilesGroupBy(t *testing.T) {
 		}
 	}
 
-	t.Logf("All %d files sent successfully!", numFiles)
+	testing_utils.LogInfo("Test", "All %d files sent successfully!", numFiles)
 
 	// Wait for workers to process and create files (actively monitor orchestrator logs)
-	t.Log("Waiting for workers to process chunks and orchestrator to detect files...")
-	midSizeAtNotification, midSizeWhenReady, err := waitForFilesReadyAndMeasure(t, TestClientID, 60*time.Second)
+	testing_utils.LogInfo("Test", "Waiting for workers to process chunks and orchestrator to detect files...")
+	midSizeAtNotification, midSizeWhenReady, err := waitForFilesReadyAndMeasure(t, TestClientIDTest2, 60*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to measure mid-processing size: %v", err)
 	}
 
 	// Wait for cleanup
-	t.Log("Waiting for orchestrator to complete cleanup (20 seconds)...")
+	testing_utils.LogInfo("Test", "Waiting for orchestrator to complete cleanup (20 seconds)...")
 	time.Sleep(20 * time.Second)
 
-	cleanupEvents := parseOrchestratorLogs(t)
+	cleanupEvents := parseOrchestratorLogs(t, []string{TestClientIDTest2})
 	finalSize, _ := getDirectorySize(clientDir)
 
 	// Report results
-	t.Logf("\n=== MULTIPLE FILES CLEANUP TEST ===")
-	t.Logf("[Volume Size Progression]")
-	t.Logf("  Initial:                      %s", formatBytes(initialSize))
-	t.Logf("  Mid (at first notification):  %s", formatBytes(midSizeAtNotification))
-	t.Logf("  Mid (when files ready):       %s", formatBytes(midSizeWhenReady))
-	t.Logf("  Final:                        %s", formatBytes(finalSize))
-	t.Logf("[Cleanup] Operations: %d, Files deleted: %d, Dirs deleted: %d",
-		cleanupEvents.CleanupCount, cleanupEvents.FilesDeleted, cleanupEvents.DirsDeleted)
+	testing_utils.LogInfo("Test", "=== MULTIPLE FILES CLEANUP TEST ===")
+	testing_utils.LogInfo("Test", "Volume Size Progression")
+	testing_utils.LogInfo("Test", "  Initial:                      %s", formatBytes(initialSize))
+	testing_utils.LogInfo("Test", "  Mid (at first notification):  %s", formatBytes(midSizeAtNotification))
+	testing_utils.LogInfo("Test", "  Mid (when files ready):       %s", formatBytes(midSizeWhenReady))
+	testing_utils.LogInfo("Test", "  Final:                        %s", formatBytes(finalSize))
+	testing_utils.LogInfo("Test", "  Cleanup operations:   %d", cleanupEvents.CleanupCount)
+	testing_utils.LogInfo("Test", "  Files deleted:        %d", cleanupEvents.FilesDeleted)
+	testing_utils.LogInfo("Test", "  Directories deleted:  %d", cleanupEvents.DirsDeleted)
 
 	// Verify
 	if cleanupEvents.CleanupCount >= 1 && cleanupEvents.FilesDeleted > 0 && finalSize == 0 {
@@ -512,7 +523,7 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 		Password: "password",
 	}
 
-	t.Log("Declaring queue...")
+	testing_utils.LogQuiet("Declaring queue...")
 	producer := workerqueue.NewMessageMiddlewareQueue(queues.Query2GroupByQueue, config)
 	if producer == nil {
 		t.Fatal("Failed to create queue producer")
@@ -522,24 +533,24 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
 		t.Fatalf("Failed to declare queue: %v", err)
 	}
-	t.Log("Queue declared successfully!")
+	testing_utils.LogQuiet("Queue declared successfully!")
 
-	t.Log("Waiting for services...")
+	testing_utils.LogQuiet("Waiting for services...")
 	time.Sleep(10 * time.Second)
 
 	// Load test data
 	testDataPath := "/app/testdata/transaction_items.csv"
-	allChunks, err := loadTestDataAsChunks(testDataPath, t)
+	allChunks, err := loadTestDataAsChunks(testDataPath, TestClient1IDTest3, t)
 	if err != nil {
 		t.Fatalf("Failed to load test data: %v", err)
 	}
 
 	// Simulate 2 clients, each with 2 files
-	clients := []string{"CLI1", "CLI2"}
+	clients := []string{TestClient1IDTest3, TestClient2IDTest3}
 	filesPerClient := 2
 	chunksPerFile := len(allChunks) / (len(clients) * filesPerClient)
 
-	t.Logf("Simulating %d clients with %d files each", len(clients), filesPerClient)
+	testing_utils.LogInfo("Test", "Simulating %d clients with %d files each", len(clients), filesPerClient)
 
 	// Measure initial sizes for each client BEFORE sending any data
 	var initialSize, midSizeAtNotification, midSizeWhenReady, finalSize int64
@@ -547,9 +558,9 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 		clientDir := getClientDirectory(clientID)
 		size, _ := getDirectorySize(clientDir)
 		initialSize += size
-		t.Logf("Initial size for client %s: %s", clientID, formatBytes(size))
+		testing_utils.LogInfo("Test", "Initial size for client %s: %s", clientID, formatBytes(size))
 	}
-	t.Logf("Total initial size: %s", formatBytes(initialSize))
+	testing_utils.LogInfo("Test", "Total initial size: %s", formatBytes(initialSize))
 
 	chunkIdx := 0
 	for _, clientID := range clients {
@@ -563,7 +574,7 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 			fileID := fmt.Sprintf("TI%02d", fileNum+1)
 			fileChunks := allChunks[startIdx:endIdx]
 
-			t.Logf("Sending client %s, file %s with %d chunks", clientID, fileID, len(fileChunks))
+			testing_utils.LogInfo("Test", "Sending client %s, file %s with %d chunks", clientID, fileID, len(fileChunks))
 
 			for i, chunkData := range fileChunks {
 				chunkData.ClientID = clientID
@@ -588,10 +599,10 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 		}
 	}
 
-	t.Log("All clients and files sent!")
+	testing_utils.LogInfo("Test", "All clients and files sent!")
 
 	// Wait for workers to process and create files for each client (actively monitor)
-	t.Log("Waiting for workers to process chunks and orchestrator to detect files for all clients...")
+	testing_utils.LogInfo("Test", "Waiting for workers to process chunks and orchestrator to detect files for all clients...")
 	for _, clientID := range clients {
 		sizeAtNotif, sizeWhenReady, err := waitForFilesReadyAndMeasure(t, clientID, 60*time.Second)
 		if err != nil {
@@ -599,34 +610,34 @@ func TestMultipleClientsMultipleFilesGroupBy(t *testing.T) {
 		}
 		midSizeAtNotification += sizeAtNotif
 		midSizeWhenReady += sizeWhenReady
-		t.Logf("Mid-processing sizes for client %s - At notification: %s, When ready: %s",
+		testing_utils.LogInfo("Test", "Mid-processing sizes for client %s - At notification: %s, When ready: %s",
 			clientID, formatBytes(sizeAtNotif), formatBytes(sizeWhenReady))
 	}
-	t.Logf("Total mid-processing size (at notification): %s", formatBytes(midSizeAtNotification))
-	t.Logf("Total mid-processing size (when ready): %s", formatBytes(midSizeWhenReady))
+	testing_utils.LogInfo("Test", "Total mid-processing size (at notification): %s", formatBytes(midSizeAtNotification))
+	testing_utils.LogInfo("Test", "Total mid-processing size (when ready): %s", formatBytes(midSizeWhenReady))
 
-	t.Log("Waiting for cleanup (30 seconds)...")
+	testing_utils.LogInfo("Test", "Waiting for cleanup (30 seconds)...")
 	time.Sleep(30 * time.Second)
 
-	cleanupEvents := parseOrchestratorLogs(t)
+	cleanupEvents := parseOrchestratorLogs(t, []string{TestClient1IDTest3, TestClient2IDTest3})
 
 	// Measure final sizes
 	for _, clientID := range clients {
 		clientDir := getClientDirectory(clientID)
 		size, _ := getDirectorySize(clientDir)
 		finalSize += size
-		t.Logf("Final size for client %s: %s", clientID, formatBytes(size))
+		testing_utils.LogInfo("Test", "Final size for client %s: %s", clientID, formatBytes(size))
 	}
-	t.Logf("Total final size: %s", formatBytes(finalSize))
+	testing_utils.LogInfo("Test", "Total final size: %s", formatBytes(finalSize))
 
 	// Report
-	t.Logf("\n=== MULTIPLE CLIENTS CLEANUP TEST ===")
-	t.Logf("[Client Directory Sizes]")
-	t.Logf("  Initial:                      %s", formatBytes(initialSize))
-	t.Logf("  Mid (at first notification):  %s", formatBytes(midSizeAtNotification))
-	t.Logf("  Mid (when files ready):       %s", formatBytes(midSizeWhenReady))
-	t.Logf("  Final:                        %s", formatBytes(finalSize))
-	t.Logf("[Cleanup] Operations: %d, Files deleted: %d, Dirs deleted: %d",
+	testing_utils.LogInfo("Test", "=== MULTIPLE CLIENTS CLEANUP TEST ===")
+	testing_utils.LogInfo("Test", "[Client Directory Sizes]")
+	testing_utils.LogInfo("Test", "  Initial:                      %s", formatBytes(initialSize))
+	testing_utils.LogInfo("Test", "  Mid (at first notification):  %s", formatBytes(midSizeAtNotification))
+	testing_utils.LogInfo("Test", "  Mid (when files ready):       %s", formatBytes(midSizeWhenReady))
+	testing_utils.LogInfo("Test", "  Final:                        %s", formatBytes(finalSize))
+	testing_utils.LogInfo("Test", "[Cleanup] Operations: %d, Files deleted: %d, Dirs deleted: %d",
 		cleanupEvents.CleanupCount, cleanupEvents.FilesDeleted, cleanupEvents.DirsDeleted)
 
 	expectedCleanupOps := len(clients)

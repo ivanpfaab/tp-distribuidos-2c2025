@@ -89,14 +89,11 @@ func TestMultipleClientsInFileJoin(t *testing.T) {
 
 	// Load and send user data for each client
 	for _, clientID := range clients {
-		testing_utils.LogStep("Processing user data for client: %s", clientID)
 
 		userChunks, err := loadTestDataAsChunks(userTestDataPath, clientID, t)
 		if err != nil {
 			t.Fatalf("Failed to load user test data for client %s: %v", clientID, err)
 		}
-
-		testing_utils.LogInfo("Test", "Loaded %d user chunks for client %s", len(userChunks), clientID)
 
 		// Send all user chunks to the partitioner queue
 		for i, chunkData := range userChunks {
@@ -110,14 +107,12 @@ func TestMultipleClientsInFileJoin(t *testing.T) {
 				t.Fatalf("Failed to send user chunk %d for client %s: %v", i, clientID, err)
 			}
 		}
-
-		testing_utils.LogInfo("Test", "Sent %d user chunks for client %s", len(userChunks), clientID)
 	}
 
-	testing_utils.LogSuccess("All user chunks sent for all clients")
+	testing_utils.LogInfo("Test", "All user chunks sent for all clients")
 
 	// Wait for workers to process and create files for each client (actively monitor)
-	testing_utils.LogStep("Waiting for workers to process chunks and orchestrator to detect files for all clients...")
+	testing_utils.LogInfo("Test", "Waiting for workers to process chunks and orchestrator to detect files for all clients...")
 	for _, clientID := range clients {
 		sizeAtNotif, sizeWhenReady, err := waitForFilesReadyAndMeasure(t, clientID, 60*time.Second)
 		if err != nil {
@@ -132,7 +127,7 @@ func TestMultipleClientsInFileJoin(t *testing.T) {
 	testing_utils.LogInfo("Test", "Total mid-processing size (when ready): %s", formatBytes(midSizeWhenReady))
 
 	// Now send join data chunks for each client
-	testing_utils.LogStep("Sending join data chunks for all clients...")
+	testing_utils.LogInfo("Test", "Sending join data chunks for all clients...")
 	for _, clientID := range clients {
 		joinChunk, err := loadJoinDataAsChunk(joinTestDataPath, clientID, t)
 		if err != nil {
@@ -148,17 +143,15 @@ func TestMultipleClientsInFileJoin(t *testing.T) {
 		if err := joinProducer.Send(serialized); err != 0 {
 			t.Fatalf("Failed to send join chunk for client %s: %v", clientID, err)
 		}
-
-		testing_utils.LogInfo("Test", "Sent join chunk for client %s", clientID)
 	}
 	testing_utils.LogInfo("Test", "All join chunks sent for all clients")
 
 	// Wait for orchestrator to complete signaling
-	testing_utils.LogStep("Waiting for orchestrator to complete signaling (10 seconds)...")
+	testing_utils.LogInfo("Test", "Waiting for orchestrator to complete signaling (10 seconds)...")
 	time.Sleep(10 * time.Second)
 
 	// Check orchestrator logs
-	testing_utils.LogStep("Checking orchestrator logs...")
+	testing_utils.LogInfo("Test", "Checking orchestrator logs...")
 	completionEvents := parseOrchestratorLogs(t)
 
 	// Measure final sizes (files are NOT deleted by orchestrator, join worker handles that)
@@ -170,34 +163,32 @@ func TestMultipleClientsInFileJoin(t *testing.T) {
 	testing_utils.LogInfo("Test", "Total final size: %s", formatBytes(finalSize))
 
 	// Report
-	testing_utils.LogInfo("Test", "\n=== IN-FILE JOIN TEST RESULTS ===")
-	testing_utils.LogStep("\n[File Size Progression]\n")
-	testing_utils.LogStep("  Initial:                      %s\n", formatBytes(initialSize))
-	testing_utils.LogStep("  Mid (at first notification):  %s\n", formatBytes(midSizeAtNotification))
-	testing_utils.LogStep("  Mid (when files ready):       %s\n", formatBytes(midSizeWhenReady))
-	testing_utils.LogStep("  Final:                        %s\n", formatBytes(finalSize))
+	testing_utils.LogInfo("Test", "=== IN-FILE JOIN VOLUME SIZE RESULTS ===")
+	testing_utils.LogInfo("Test", "  Initial:                      %s", formatBytes(initialSize))
+	testing_utils.LogInfo("Test", "  Mid (at first notification):  %s", formatBytes(midSizeAtNotification))
+	testing_utils.LogInfo("Test", "  Mid (when files ready):       %s", formatBytes(midSizeWhenReady))
+	testing_utils.LogInfo("Test", "  Final:                        %s", formatBytes(finalSize))
 
-	testing_utils.LogStep("\n[Orchestrator Activity]\n")
-	testing_utils.LogStep("  Completion signals sent: %d\n", completionEvents.CompletionCount)
+	testing_utils.LogInfo("Test", "  Completion signals sent: %d\n", completionEvents.CompletionCount)
 
 	// Verify
-	testing_utils.LogStep("\n[Verification]\n")
+	testing_utils.LogInfo("Test", "FINAL RESULTS")
 	testPassed := true
 
 	// Check 1: Files were created
 	if midSizeWhenReady > 0 {
-		testing_utils.LogSuccess("  ✓ Files were created during processing (%s)\n", formatBytes(midSizeWhenReady))
+		testing_utils.LogSuccess("  ✓ Files were created during processing (%s)", formatBytes(midSizeWhenReady))
 	} else {
-		testing_utils.LogFailure("  ✗ No files observed during processing\n")
+		testing_utils.LogFailure("  ✗ No files observed during processing")
 		testPassed = false
 	}
 
 	// Check 2: Orchestrator sent completion signals
 	expectedCompletions := len(clients)
 	if completionEvents.CompletionCount >= expectedCompletions {
-		testing_utils.LogSuccess("  ✓ Orchestrator sent completion signals (%d)\n", completionEvents.CompletionCount)
+		testing_utils.LogSuccess("  ✓ Orchestrator sent completion signals (%d)", completionEvents.CompletionCount)
 	} else {
-		testing_utils.LogFailure("  ✗ Expected %d completion signals, got %d\n", expectedCompletions, completionEvents.CompletionCount)
+		testing_utils.LogFailure("  ✗ Expected %d completion signals, got %d", expectedCompletions, completionEvents.CompletionCount)
 		testPassed = false
 	}
 
@@ -210,7 +201,7 @@ func TestMultipleClientsInFileJoin(t *testing.T) {
 	}
 
 	// Final verdict
-	fmt.Printf("\n[Final Verdict]\n")
+	testing_utils.LogInfo("Test", "FINAL VERDICT")
 	if testPassed {
 		testing_utils.LogSuccess("TEST PASSED: In-file join pipeline is working correctly!")
 	} else {
@@ -486,13 +477,13 @@ func parseOrchestratorLogs(t *testing.T) CompletionEvents {
 	events := CompletionEvents{}
 
 	// Log orchestrator output for visibility
-	t.Logf("\n=== ORCHESTRATOR LOGS ===")
+	testing_utils.LogInfo("Test", "=== ORCHESTRATOR LOGS ===")
 	for _, line := range lines {
 		// Filter to only show important lines to avoid spam
 		if strings.Contains(line, "completed") ||
 			strings.Contains(line, "completion") ||
 			strings.Contains(line, "Sent completion signal") {
-			t.Logf("  %s", line)
+			testing_utils.LogInfo("Test", "  %s", line)
 		}
 
 		// Count completion events
@@ -500,7 +491,7 @@ func parseOrchestratorLogs(t *testing.T) CompletionEvents {
 			events.CompletionCount++
 		}
 	}
-	t.Logf("=== END ORCHESTRATOR LOGS ===\n")
+	testing_utils.LogInfo("Test", "=== END ORCHESTRATOR LOGS ===")
 
 	return events
 }

@@ -99,7 +99,7 @@ func (fm *FileManager) LoadData(clientID string, partition int) (map[string]inte
 		return nil, fmt.Errorf("failed to unmarshal JSON from %s: %v", filePath, err)
 	}
 
-	testing_utils.LogInfo("FileManager", "Loaded data from %s (%d top-level keys)", filePath, len(result))
+	// testing_utils.LogInfo("FileManager", "Loaded data from %s (%d top-level keys)", filePath, len(result))
 	return result, nil
 }
 

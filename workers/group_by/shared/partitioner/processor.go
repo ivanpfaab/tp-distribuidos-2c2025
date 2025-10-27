@@ -76,7 +76,7 @@ func NewPartitionerProcessor(queryType, numPartitions, numWorkers int, connectio
 
 // ProcessChunk processes a chunk and sends partitioned data to workers
 func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
-	testing_utils.LogInfo("Partitioner Processor", "Processing chunk %d for query type %d", chunkMessage.ChunkNumber, p.QueryType)
+	// testing_utils.LogInfo("Partitioner Processor", "Processing chunk %d for query type %d", chunkMessage.ChunkNumber, p.QueryType)
 
 	// Parse the chunk data (assuming CSV format)
 	records, err := p.ParseChunkData(chunkMessage.ChunkData)
@@ -87,10 +87,8 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 	// Partition records into temporary buffers (one per partition)
 	partitionedRecords := make(map[int][]Record)
 	for _, record := range records {
-		testing_utils.LogInfo("Partitioner Processor", "Getting partition for record: %v", record.Fields)
 		partition, err := p.GetPartition(record)
 		if err != nil {
-			testing_utils.LogWarn("Partitioner Processor", "Failed to get partition for record: %v", record.Fields)
 			continue
 		}
 		partitionedRecords[partition] = append(partitionedRecords[partition], record)
@@ -120,8 +118,8 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 		}
 	}
 
-	testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d to %d workers (%d total records)",
-		chunkMessage.ChunkNumber, p.NumWorkers, len(records))
+	// testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d to %d workers (%d total records)",
+	// 	chunkMessage.ChunkNumber, p.NumWorkers, len(records))
 
 	return nil
 }
@@ -146,12 +144,7 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 	// If validation fails, treat it as data instead of header
 	startIndex := 0
 	if err := p.ValidateHeader(records[0]); err == nil {
-		// First row is a valid header, skip it
-		testing_utils.LogInfo("Partitioner Processor", "Found header row, skipping it")
 		startIndex = 1
-	} else {
-		// First row is not a header, treat all rows as data
-		testing_utils.LogInfo("Partitioner Processor", "No header found, processing all rows as data")
 	}
 
 	// Process data records
@@ -321,8 +314,8 @@ func (p *PartitionerProcessor) sendToWorker(workerID int, records []Record, orig
 		if sendErr := p.ExchangeProducer.Send(serializedChunk, []string{routingKey}); sendErr != 0 {
 			return fmt.Errorf("failed to send chunk to worker %d: error code %v", workerID, sendErr)
 		}
-		testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d (%d records) to worker %d with routing key '%s' (IsLastChunk=%t, IsLastFromTable=%t)",
-			newChunkNumber, len(records), workerID, routingKey, isLastChunk, isLastFromTable)
+		// testing_utils.LogInfo("Partitioner Processor", "Sent chunk %d (%d records) to worker %d with routing key '%s' (IsLastChunk=%t, IsLastFromTable=%t)",
+		// 	newChunkNumber, len(records), workerID, routingKey, isLastChunk, isLastFromTable)
 	}
 
 	return nil
