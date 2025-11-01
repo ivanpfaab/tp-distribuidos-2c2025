@@ -25,19 +25,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Start the worker (non-blocking - returns immediately)
+	if err := worker.Start(); err != 0 {
+		testing_utils.LogError("Streaming Service", "Failed to start streaming worker: %v", err)
+		os.Exit(1)
+	}
+
+	testing_utils.LogInfo("Streaming Service", "Streaming Service started successfully. Waiting for messages...")
+
 	// Set up graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start the worker in a goroutine
-	go func() {
-		if err := worker.Start(); err != 0 {
-			testing_utils.LogError("Streaming Service", "Failed to start streaming worker: %v", err)
-			os.Exit(1)
-		}
-	}()
-
-	testing_utils.LogInfo("Streaming Service", "Streaming Service started successfully. Waiting for messages...")
 
 	// Wait for shutdown signal
 	<-sigChan
