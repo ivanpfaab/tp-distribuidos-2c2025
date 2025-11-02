@@ -31,7 +31,7 @@ func (rd *ResultsDispatcherWorker) processMessage(delivery amqp.Delivery, queryT
 	rd.sendFormattedDataToClient(chunkData)
 
 	// Handle completion tracking based on query type
-	if queryType == 1 {
+	if queryType == QueryType1 {
 		// Query1: Use completion tracker (may receive multiple chunks)
 		chunkNotification := signals.NewChunkNotification(
 			chunkData.ClientID,
@@ -75,13 +75,13 @@ func (rd *ResultsDispatcherWorker) handleSingleChunkCompletion(clientID string, 
 
 	// Mark the specific query as completed
 	switch queryType {
-	case 2:
+	case QueryType2:
 		clientQueryStatus.Query2Completed = true
 		testing.LogInfo("Results Dispatcher", "✅ Query2 completed for client %s (single chunk)", clientID)
-	case 3:
+	case QueryType3:
 		clientQueryStatus.Query3Completed = true
 		testing.LogInfo("Results Dispatcher", "✅ Query3 completed for client %s (single chunk)", clientID)
-	case 4:
+	case QueryType4:
 		clientQueryStatus.Query4Completed = true
 		testing.LogInfo("Results Dispatcher", "✅ Query4 completed for client %s (single chunk)", clientID)
 	}
@@ -100,7 +100,7 @@ func (rd *ResultsDispatcherWorker) handleSingleChunkCompletion(clientID string, 
 // processChunkNotification processes chunk notifications for completion tracking (Query1 only)
 func (rd *ResultsDispatcherWorker) processChunkNotification(notification *signals.ChunkNotification, queryType int) middleware.MessageMiddlewareError {
 	// Only handle Query1 with completion tracker
-	if queryType == 1 {
+	if queryType == QueryType1 {
 		if err := rd.query1Tracker.ProcessChunkNotification(notification); err != nil {
 			testing.LogError("Results Dispatcher", "Failed to process Query1 chunk notification: %v", err)
 			return middleware.MessageMiddlewareMessageError
