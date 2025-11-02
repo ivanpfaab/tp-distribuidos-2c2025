@@ -230,7 +230,6 @@ func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk
 		ChunkNumber:     (originalChunk.ChunkNumber-1) * ups.splitterConfig.NumWriters + (writerID+1),
 		IsLastChunk:     originalChunk.IsLastChunk && writerID == ups.splitterConfig.NumWriters-1,
 		IsLastFromTable: originalChunk.IsLastFromTable && writerID == ups.splitterConfig.NumWriters-1,
-		Step:            originalChunk.Step,
 		ChunkSize:       len(ups.buffers[writerID]),
 		TableID:         originalChunk.TableID,
 		ChunkData:       csvData,

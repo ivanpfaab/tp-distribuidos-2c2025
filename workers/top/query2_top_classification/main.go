@@ -255,7 +255,6 @@ func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState
 		1,      // Chunk Number
 		true,   // Is Last Chunk
 		true,   // Is Last File (final results)
-		3,      // Step 3 (after map and reduce)
 		len(csvData),
 		2, // Table ID 2
 		csvData,

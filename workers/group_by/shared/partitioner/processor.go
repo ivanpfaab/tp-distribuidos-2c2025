@@ -290,7 +290,6 @@ func (p *PartitionerProcessor) sendToWorker(workerID int, records []Record, orig
 		newChunkNumber,
 		isLastChunk,
 		isLastFromTable,
-		originalChunk.Step,
 		len(csvData),
 		originalChunk.TableID,
 		csvData,

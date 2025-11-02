@@ -71,8 +71,8 @@ func (afw *AmountFilterWorker) processMessage(delivery amqp.Delivery) middleware
 	}
 
 	// Process the chunk (amount filter logic)
-	fmt.Printf("Amount Filter Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
-		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber)
+	fmt.Printf("Amount Filter Worker: Processing chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d\n",
+		chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber)
 
 	responseChunk, msgErr := AmountFilterLogic(chunkMsg)
 	if msgErr != 0 {

@@ -197,7 +197,6 @@ func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, 
 		chunkNumber,                // ChunkNumber
 		isLastChunk,                // IsLastChunk
 		isLastChunk,                // IsLastFromTable - same as isLastChunk since we only have one "file"
-		0,                          // Step
 		len(csvData),               // ChunkSize
 		0,                          // TableID
 		csvData,                    // ChunkData - CSV formatted data
