@@ -22,7 +22,7 @@ services:
   server:
     build:
       context: ..
-      dockerfile: ./server/Dockerfile
+      dockerfile: ./proxy/Dockerfile
     container_name: test-server
     ports:
       - "8081:8080"   # TCP port for client connections

@@ -30,8 +30,8 @@ docker-compose-up: ## Start all services in proper order
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
 	@echo "2. Starting all orchestration services (workers, gateways, etc.)..."
 	docker compose --profile orchestration up -d
-	@echo "3. Starting Server..."
-	docker compose --profile orchestration --profile data-flow up -d server
+	@echo "3. Starting Proxy..."
+	docker compose --profile orchestration --profile data-flow up -d proxy
 	@echo "4. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d
 	@echo "All services started successfully!"
@@ -44,8 +44,8 @@ docker-compose-up-build: ## Start all services in proper order with build
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
 	@echo "2. Starting all orchestration services (workers, gateways, etc.)..."
 	docker compose --profile orchestration up -d --build
-	@echo "3. Starting Server..."
-	docker compose --profile orchestration --profile data-flow up -d --build server
+	@echo "3. Starting Proxy..."
+	docker compose --profile orchestration --profile data-flow up -d --build proxy
 	@echo "4. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d --build
 	@echo "All services started successfully!"

@@ -9,13 +9,13 @@ COPY go.mod go.sum ./
 # Copy all necessary directories
 COPY protocol/ ./protocol/
 COPY shared/ ./shared/
-COPY server/ ./server/
+COPY proxy/ ./proxy/
 
 # Download dependencies
 RUN go mod download
 
-# Change to server directory and build
-WORKDIR /app/server
+# Change to proxy directory and build
+WORKDIR /app/proxy
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
@@ -29,7 +29,7 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 # Copy the binary from builder stage
-COPY --from=builder /app/server/main .
+COPY --from=builder /app/proxy/main .
 
 # Expose port
 EXPOSE 8080

@@ -806,11 +806,11 @@ services:
     profiles: ["orchestration"]
 
   # Core application (data flow services)
-  server:
+  proxy:
     build:
       context: .
-      dockerfile: ./server/Dockerfile
-    container_name: server
+      dockerfile: ./proxy/Dockerfile
+    container_name: proxy
     ports:
       - "8081:8080"  # TCP port for client connections
     depends_on:
@@ -905,7 +905,7 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client-1
     depends_on:
-      server:
+      proxy:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -913,7 +913,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI1
-    command: ["./main", "/app/data", "server:8080"]
+    command: ["./main", "/app/data", "proxy:8080"]
     profiles: ["data-flow"]
 
   # Client 2
@@ -923,7 +923,7 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client-2
     depends_on:
-      server:
+      proxy:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -931,7 +931,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI2
-    command: ["./main", "/app/data", "server:8080"]
+    command: ["./main", "/app/data", "proxy:8080"]
     profiles: ["data-flow"]
 
   # Testing (optional, can be run with profile)
@@ -944,7 +944,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      server:
+      proxy:
         condition: service_started
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
