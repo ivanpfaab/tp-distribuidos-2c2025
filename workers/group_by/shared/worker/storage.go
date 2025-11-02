@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -40,8 +41,10 @@ func (fm *FileManager) GetFilePath(clientID string, partition int) string {
 		year, semester := fm.partitionToSemester(partition)
 		filename = fmt.Sprintf("%d-%d.json", year, semester)
 	case 4:
-		// For Query 4: partition is just the partition number
-		filename = fmt.Sprintf("%d.json", partition)
+		// For Query 4: CSV file following naming convention (no locks needed)
+		filename = fmt.Sprintf("%s-q4-partition-%03d.csv", clientID, partition)
+		// Files are stored in baseDir, not clientDir (like in-file join pattern)
+		return filepath.Join(fm.baseDir, filename)
 	default:
 		filename = fmt.Sprintf("%d.json", partition)
 	}
@@ -133,4 +136,106 @@ func (fm *FileManager) FileExists(clientID string, partition int) bool {
 	filePath := fm.GetFilePath(clientID, partition)
 	_, err := os.Stat(filePath)
 	return err == nil
+}
+
+// AppendToPartitionCSV appends a user_id,store_id record to a Query 4 partition CSV file
+// This follows the in-file join pattern: each worker writes to its owned partitions
+func (fm *FileManager) AppendToPartitionCSV(clientID string, partition int, userID string, storeID string) error {
+	// Only for Query 4
+	if fm.queryType != 4 {
+		return fmt.Errorf("AppendToPartitionCSV only supports Query 4")
+	}
+
+	filePath := fm.GetFilePath(clientID, partition)
+
+	// Check if file exists to determine if we need to write header
+	fileExists := true
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		fileExists = false
+	}
+
+	// Ensure base directory exists (for Query 4, files are in baseDir, not clientDir)
+	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
+		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
+	}
+
+	// Open file in append mode
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write header if this is a new file
+	if !fileExists {
+		header := []string{"user_id", "store_id"}
+		if err := writer.Write(header); err != nil {
+			return fmt.Errorf("failed to write header: %v", err)
+		}
+	}
+
+	// Write the record
+	record := []string{userID, storeID}
+	if err := writer.Write(record); err != nil {
+		return fmt.Errorf("failed to write record: %v", err)
+	}
+
+	return nil
+}
+
+// AppendRecordsToPartitionCSV appends multiple user_id,store_id records to a Query 4 partition CSV file
+// More efficient than calling AppendToPartitionCSV multiple times
+func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition int, records []struct{ UserID, StoreID string }) error {
+	if len(records) == 0 {
+		return nil
+	}
+
+	// Only for Query 4
+	if fm.queryType != 4 {
+		return fmt.Errorf("AppendRecordsToPartitionCSV only supports Query 4")
+	}
+
+	filePath := fm.GetFilePath(clientID, partition)
+
+	// Check if file exists to determine if we need to write header
+	fileExists := true
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		fileExists = false
+	}
+
+	// Ensure base directory exists
+	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
+		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
+	}
+
+	// Open file in append mode
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write header if this is a new file
+	if !fileExists {
+		header := []string{"user_id", "store_id"}
+		if err := writer.Write(header); err != nil {
+			return fmt.Errorf("failed to write header: %v", err)
+		}
+	}
+
+	// Write all records
+	for _, rec := range records {
+		record := []string{rec.UserID, rec.StoreID}
+		if err := writer.Write(record); err != nil {
+			return fmt.Errorf("failed to write record: %v", err)
+		}
+	}
+
+	return nil
 }

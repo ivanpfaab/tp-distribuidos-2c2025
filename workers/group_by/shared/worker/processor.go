@@ -16,6 +16,13 @@ type ChunkProcessor struct {
 	queryType int
 }
 
+// UserStoreRecord represents a user_id, store_id pair for Query 4
+type UserStoreRecord struct {
+	UserID  string
+	StoreID string
+	Partition int
+}
+
 // NewChunkProcessor creates a new chunk processor for a specific query type
 func NewChunkProcessor(queryType int) *ChunkProcessor {
 	return &ChunkProcessor{
@@ -157,17 +164,34 @@ func (cp *ChunkProcessor) processQuery3(chunkMsg *chunk.Chunk, currentData map[s
 }
 
 // processQuery4 processes Query 4 chunks (group by user_id + store_id)
-// Filters records to only process those belonging to the specified partition
-// Data structure: { "user_id|store_id": { "user_id": string, "store_id": string, "count": int } }
+// For Query 4, we now use CSV append strategy - this method is kept for compatibility but returns empty data
+// The actual processing is done by ProcessQuery4ChunkForCSV
 func (cp *ChunkProcessor) processQuery4(chunkMsg *chunk.Chunk, currentData map[string]interface{}, targetPartition int, numPartitions int) (map[string]interface{}, error) {
+	// For Query 4, we use CSV append strategy, so we don't need to aggregate in memory
+	// Return empty data to maintain compatibility
+	return make(map[string]interface{}), nil
+}
+
+// ProcessQuery4ChunkForCSV extracts user_id, store_id pairs from chunk for CSV append strategy
+// Returns records that should be appended to CSV files, grouped by partition
+func (cp *ChunkProcessor) ProcessQuery4ChunkForCSV(chunkMsg *chunk.Chunk, workerPartitions []int, numPartitions int) (map[int][]UserStoreRecord, error) {
 	// Parse CSV data
 	records, err := cp.parseCSV(chunkMsg.ChunkData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse CSV: %v", err)
 	}
 
+	// Map partition -> []UserStoreRecord
+	partitionRecords := make(map[int][]UserStoreRecord)
+	
 	processedCount := 0
 	skippedCount := 0
+
+	// Create a set of worker partitions for fast lookup
+	workerPartitionSet := make(map[int]bool)
+	for _, p := range workerPartitions {
+		workerPartitionSet[p] = true
+	}
 
 	// Expected schema: transaction_id, store_id, payment_method_id, voucher_id, user_id,
 	//                  original_amount, discount_applied, final_amount, created_at
@@ -194,35 +218,24 @@ func (cp *ChunkProcessor) processQuery4(chunkMsg *chunk.Chunk, currentData map[s
 			continue
 		}
 
-		// Only process records belonging to the target partition
-		if recordPartition != targetPartition {
+		// Only process records belonging to partitions this worker owns
+		if !workerPartitionSet[recordPartition] {
 			skippedCount++
 			continue
 		}
 
-		// Create composite key
-		key := fmt.Sprintf("%s|%s", userID, storeID)
-
-		// Get or create user-store data
-		userData, exists := currentData[key]
-		if !exists {
-			userData = map[string]interface{}{
-				"user_id":  userID,
-				"store_id": storeID,
-				"count":    0,
-			}
-			currentData[key] = userData
-		}
-		user := userData.(map[string]interface{})
-
-		// Aggregate (handle both int and float64 from JSON unmarshaling)
-		user["count"] = cp.toInt(user["count"]) + 1
+		// Add to partition records
+		partitionRecords[recordPartition] = append(partitionRecords[recordPartition], UserStoreRecord{
+			UserID:    userID,
+			StoreID:   storeID,
+			Partition: recordPartition,
+		})
 		processedCount++
 	}
 
-	testing_utils.LogInfo("ChunkProcessor", "Query 4 partition %d: Processed %d records, skipped %d records",
-		targetPartition, processedCount, skippedCount)
-	return currentData, nil
+	testing_utils.LogInfo("ChunkProcessor", "Query 4: Extracted %d records across %d partitions, skipped %d records",
+		processedCount, len(partitionRecords), skippedCount)
+	return partitionRecords, nil
 }
 
 // calculatePartition calculates the partition number for a user_id

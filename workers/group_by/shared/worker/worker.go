@@ -136,7 +136,12 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 	// For Q4: worker handles multiple partitions
 	partitions := w.getPartitionsForWorker()
 
-	// Process each partition
+	// Query 4 uses CSV append strategy (no JSON load/save)
+	if w.config.QueryType == 4 {
+		return w.processQuery4Chunk(chunkMessage, partitions)
+	}
+
+	// Process each partition (Query 2 and 3 use JSON aggregation)
 	for _, partition := range partitions {
 		// Load existing data from file
 		currentData, err := w.fileManager.LoadData(chunkMessage.ClientID, partition)
@@ -160,6 +165,34 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 	}
 
 	// Send chunk notification to orchestrator AFTER successful file writes
+	return w.sendChunkNotification(chunkMessage)
+}
+
+// processQuery4Chunk processes Query 4 chunks using CSV append strategy
+func (w *GroupByWorker) processQuery4Chunk(chunkMessage *chunk.Chunk, workerPartitions []int) error {
+	// Extract records to append (no aggregation in memory)
+	partitionRecords, err := w.processor.ProcessQuery4ChunkForCSV(chunkMessage, workerPartitions, w.config.NumPartitions)
+	if err != nil {
+		return fmt.Errorf("failed to extract records: %v", err)
+	}
+
+	// Append records to CSV files for each partition (batch write per partition)
+	for partition, records := range partitionRecords {
+		// Convert to struct slice for batch append
+		recs := make([]struct{ UserID, StoreID string }, len(records))
+		for i, rec := range records {
+			recs[i] = struct{ UserID, StoreID string }{UserID: rec.UserID, StoreID: rec.StoreID}
+		}
+
+		if err := w.fileManager.AppendRecordsToPartitionCSV(chunkMessage.ClientID, partition, recs); err != nil {
+			return fmt.Errorf("failed to append to partition %d CSV: %v", partition, err)
+		}
+
+		testing_utils.LogInfo("GroupBy Worker", "Appended %d records to partition %d CSV for chunk %d",
+			len(records), partition, chunkMessage.ChunkNumber)
+	}
+
+	// Send chunk notification to orchestrator AFTER successful CSV writes
 	return w.sendChunkNotification(chunkMessage)
 }
 
