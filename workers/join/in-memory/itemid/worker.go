@@ -287,8 +287,8 @@ func (w *ItemIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewar
 
 // processChunk processes a single chunk for joining
 func (w *ItemIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
-	fmt.Printf("ItemID Join Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
-		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
+	fmt.Printf("ItemID Join Worker: Processing chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
+		chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
 
 	// Perform join
 	joinedChunk, err := w.performJoin(chunkMsg)
@@ -357,7 +357,6 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 		ChunkNumber:     chunkMsg.ChunkNumber,
 		IsLastChunk:     chunkMsg.IsLastChunk,
 		IsLastFromTable: chunkMsg.IsLastFromTable,
-		Step:            chunkMsg.Step,
 		ChunkSize:       len(joinedData),
 		TableID:         chunkMsg.TableID,
 		ChunkData:       joinedData,

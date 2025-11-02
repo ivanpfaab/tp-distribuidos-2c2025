@@ -77,8 +77,8 @@ func (tfw *TimeFilterWorker) processMessage(delivery amqp.Delivery) middleware.M
 	}
 
 	// Process the chunk (time filter logic)
-	fmt.Printf("Time Filter Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d\n",
-		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber)
+	fmt.Printf("Time Filter Worker: Processing chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d\n",
+		chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber)
 
 	responseChunk, msgErr := TimeFilterLogic(chunkMsg)
 	if msgErr != 0 {

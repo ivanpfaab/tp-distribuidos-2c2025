@@ -152,7 +152,6 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 			batchMsg.BatchNumber,     // chunkNumber
 			batchMsg.IsEOF,           // isLastChunk
 			batchMsg.IsLastFromTable, // isLastFromTable (maintained from batch)
-			0,                        // step (hardcoded to 0 as requested)
 			batchMsg.BatchSize,       // chunkSize (number of rows from batch)
 			1,                        // tableID (hardcoded for now)
 			batchMsg.BatchData,       // chunkData
@@ -181,7 +180,6 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 					batchMsg.BatchNumber,     // chunkNumber
 					batchMsg.IsEOF,           // isLastChunk
 					batchMsg.IsLastFromTable, // isLastFromTable (maintained from batch)
-					0,                        // step (hardcoded to 0 as requested)
 					batchMsg.BatchSize,       // chunkSize (number of rows from batch)
 					1,                        // tableID (hardcoded for now)
 					batchMsg.BatchData,       // chunkData
@@ -207,7 +205,6 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 				batchMsg.BatchNumber,     // chunkNumber
 				batchMsg.IsEOF,           // isLastChunk
 				batchMsg.IsLastFromTable, // isLastFromTable (maintained from batch)
-				0,                        // step (hardcoded to 0 as requested)
 				batchMsg.BatchSize,       // chunkSize (number of rows from batch)
 				1,                        // tableID (hardcoded for now)
 				batchMsg.BatchData,       // chunkData

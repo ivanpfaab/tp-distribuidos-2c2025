@@ -341,7 +341,6 @@ func loadTestDataAsChunks(filePath string, clientID string, t *testing.T) ([]*ch
 			chunkNumber,
 			isLastChunk,
 			isLastChunk, // isLastFromTable - same as isLastChunk for this test
-			1,           // step
 			len(chunkData),
 			1, // tableID
 			chunkData,
@@ -395,7 +394,6 @@ func loadJoinDataAsChunk(filePath string, clientID string, t *testing.T) (*chunk
 		1, // chunkNumber 1
 		true, // isLastChunk = true
 		true, // isLastFromTable = true
-		1,    // step
 		len(chunkData),
 		2, // tableID 2 for join data
 		chunkData,

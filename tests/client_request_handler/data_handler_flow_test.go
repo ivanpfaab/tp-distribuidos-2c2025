@@ -203,8 +203,8 @@ func testDataHandlerChunkProcessing(t *testing.T) {
 					continue
 				}
 
-				testing_utils.LogStep("Received chunk - ClientID: %s, ChunkNumber: %d, Step: %d, IsLastChunk: %t, IsLastFromTable: %t",
-					chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.Step, chunkMsg.IsLastChunk, chunkMsg.IsLastFromTable)
+				testing_utils.LogStep("Received chunk - ClientID: %s, ChunkNumber: %d, IsLastChunk: %t, IsLastFromTable: %t",
+					chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk, chunkMsg.IsLastFromTable)
 
 				receivedChunks <- chunkMsg
 				chunkCount++
@@ -296,13 +296,10 @@ func testDataHandlerChunkProcessing(t *testing.T) {
 		select {
 		case chunk := <-receivedChunks:
 			receivedCount++
-			testing_utils.LogStep("Received chunk %d/%d: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
-				receivedCount, expectedChunks, chunk.ClientID, chunk.ChunkNumber, chunk.Step, chunk.IsLastChunk)
+			testing_utils.LogStep("Received chunk %d/%d: ClientID=%s, ChunkNumber=%d, IsLastChunk=%t",
+				receivedCount, expectedChunks, chunk.ClientID, chunk.ChunkNumber, chunk.IsLastChunk)
 
 			// Verify chunk properties
-			if chunk.Step != 0 {
-				t.Errorf("Expected chunk step to be 0, got %d", chunk.Step)
-			}
 			if chunk.QueryType != 1 {
 				t.Errorf("Expected query type to be 1, got %d", chunk.QueryType)
 			}

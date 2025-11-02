@@ -98,7 +98,6 @@ func (bm *Manager) CombineChunks(clientID string) (*chunk.Chunk, error) {
 		1,    // ChunkNumber - single chunk
 		true, // IsLastChunk
 		true, // IsLastFromTable
-		firstChunk.Step,
 		totalChunkSize,
 		firstChunk.TableID,
 		combinedData.String(),

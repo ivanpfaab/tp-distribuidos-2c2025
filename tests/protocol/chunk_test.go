@@ -17,19 +17,19 @@ func TestNewChunk(t *testing.T) {
 	queryType := uint8(1)
 	chunkNumber := 5
 	isLastChunk := true
-	step := 2
+	isLastFromTable := true
 	chunkSize := 100
 	tableID := 3
 	chunkData := "test chunk data"
 
-	c := chunk.NewChunk(clientID, fileID, queryType, chunkNumber, isLastChunk, step, chunkSize, tableID, chunkData)
+	c := chunk.NewChunk(clientID, fileID, queryType, chunkNumber, isLastChunk, isLastFromTable, chunkSize, tableID, chunkData)
 
 	assert.Equal(t, clientID, c.ClientID)
 	assert.Equal(t, fileID, c.FileID)
 	assert.Equal(t, queryType, c.QueryType)
 	assert.Equal(t, chunkNumber, c.ChunkNumber)
 	assert.Equal(t, isLastChunk, c.IsLastChunk)
-	assert.Equal(t, step, c.Step)
+	assert.Equal(t, isLastFromTable, c.IsLastFromTable)
 	assert.Equal(t, chunkSize, c.ChunkSize)
 	assert.Equal(t, tableID, c.TableID)
 	assert.Equal(t, chunkData, c.ChunkData)
@@ -41,12 +41,12 @@ func TestNewChunkMessage(t *testing.T) {
 	queryType := uint8(2)
 	chunkNumber := 3
 	isLastChunk := false
-	step := 1
+	isLastFromTable := false
 	chunkSize := 50
 	tableID := 1
 	chunkData := "chunk data"
 
-	c := chunk.NewChunk(clientID, fileID, queryType, chunkNumber, isLastChunk, step, chunkSize, tableID, chunkData)
+	c := chunk.NewChunk(clientID, fileID, queryType, chunkNumber, isLastChunk, isLastFromTable, chunkSize, tableID, chunkData)
 	msg := chunk.NewChunkMessage(c)
 
 	assert.Equal(t, uint16(0), msg.Header.HeaderLength) // Will be calculated during serialization
@@ -57,7 +57,7 @@ func TestNewChunkMessage(t *testing.T) {
 	assert.Equal(t, queryType, msg.Chunk.QueryType)
 	assert.Equal(t, chunkNumber, msg.Chunk.ChunkNumber)
 	assert.Equal(t, isLastChunk, msg.Chunk.IsLastChunk)
-	assert.Equal(t, step, msg.Chunk.Step)
+	assert.Equal(t, isLastFromTable, msg.Chunk.IsLastFromTable)
 	assert.Equal(t, chunkSize, msg.Chunk.ChunkSize)
 	assert.Equal(t, tableID, msg.Chunk.TableID)
 	assert.Equal(t, chunkData, msg.Chunk.ChunkData)
@@ -79,15 +79,15 @@ func TestSerializeChunkMessage(t *testing.T) {
 					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
-					ClientID:    "1234",
-					FileID:      "0001",
-					QueryType:   1,
-					ChunkNumber: 5,
-					IsLastChunk: true,
-					Step:        2,
-					ChunkSize:   100,
-					TableID:     3,
-					ChunkData:   "test chunk data",
+					ClientID:        "1234",
+					FileID:          "0001",
+					QueryType:       1,
+					ChunkNumber:     5,
+					IsLastChunk:     true,
+					IsLastFromTable: true,
+					ChunkSize:       100,
+					TableID:         3,
+					ChunkData:       "test chunk data",
 				},
 			},
 			wantErr: false,
@@ -101,15 +101,15 @@ func TestSerializeChunkMessage(t *testing.T) {
 					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
-					ClientID:    "1234",
-					FileID:      "0002",
-					QueryType:   2,
-					ChunkNumber: 1,
-					IsLastChunk: false,
-					Step:        0,
-					ChunkSize:   50,
-					TableID:     1,
-					ChunkData:   "more chunk data",
+					ClientID:        "1234",
+					FileID:          "0002",
+					QueryType:       2,
+					ChunkNumber:     1,
+					IsLastChunk:     false,
+					IsLastFromTable: false,
+					ChunkSize:       50,
+					TableID:         1,
+					ChunkData:       "more chunk data",
 				},
 			},
 			wantErr: false,
@@ -123,15 +123,15 @@ func TestSerializeChunkMessage(t *testing.T) {
 					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
-					ClientID:    "12345", // 5 bytes, max is 4
-					FileID:      "0001",
-					QueryType:   1,
-					ChunkNumber: 5,
-					IsLastChunk: true,
-					Step:        2,
-					ChunkSize:   100,
-					TableID:     3,
-					ChunkData:   "test chunk data",
+					ClientID:        "12345", // 5 bytes, max is 4
+					FileID:          "0001",
+					QueryType:       1,
+					ChunkNumber:     5,
+					IsLastChunk:     true,
+					IsLastFromTable: true,
+					ChunkSize:       100,
+					TableID:         3,
+					ChunkData:       "test chunk data",
 				},
 			},
 			wantErr: true,
@@ -164,15 +164,15 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 			MsgTypeID:    chunk.MessageType,
 		},
 		Chunk: chunk.Chunk{
-			ClientID:    "1234",
-			FileID:      "0001",
-			QueryType:   1,
-			ChunkNumber: 5,
-			IsLastChunk: true,
-			Step:        2,
-			ChunkSize:   100,
-			TableID:     3,
-			ChunkData:   "test chunk data",
+			ClientID:        "1234",
+			FileID:          "0001",
+			QueryType:       1,
+			ChunkNumber:     5,
+			IsLastChunk:     true,
+			IsLastFromTable: true,
+			ChunkSize:       100,
+			TableID:         3,
+			ChunkData:       "test chunk data",
 		},
 	}
 
@@ -184,7 +184,7 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 
 	// Check header_length (2 bytes)
 	headerLength := binary.BigEndian.Uint16(data[offset:])
-	expectedHeaderLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.FileIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.StepSize
+	expectedHeaderLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.FileIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.IsLastFromTableSize
 	assert.Equal(t, uint16(expectedHeaderLength), headerLength)
 	offset += common.HeaderLengthSize
 
@@ -228,9 +228,9 @@ func TestSerializeChunkMessageStructure(t *testing.T) {
 	assert.Equal(t, byte(1), data[offset]) // true should be 1
 	offset += chunk.IsLastChunkSize
 
-	// Check step (1 byte)
-	assert.Equal(t, byte(2), data[offset])
-	offset += chunk.StepSize
+	// Check is_last_from_table (1 byte)
+	assert.Equal(t, byte(1), data[offset]) // true should be 1
+	offset += chunk.IsLastFromTableSize
 
 	// Check chunk_data (variable length)
 	assert.Equal(t, []byte("test chunk data"), data[offset:])
@@ -244,15 +244,15 @@ func TestSerializeChunkMessageWithEmptyData(t *testing.T) {
 			MsgTypeID:    chunk.MessageType,
 		},
 		Chunk: chunk.Chunk{
-			ClientID:    "1234",
-			FileID:      "0001",
-			QueryType:   1,
-			ChunkNumber: 1,
-			IsLastChunk: false,
-			Step:        0,
-			ChunkSize:   0,
-			TableID:     1,
-			ChunkData:   "", // Empty data
+			ClientID:        "1234",
+			FileID:          "0001",
+			QueryType:       1,
+			ChunkNumber:     1,
+			IsLastChunk:     false,
+			IsLastFromTable: false,
+			ChunkSize:       0,
+			TableID:         1,
+			ChunkData:       "", // Empty data
 		},
 	}
 
@@ -261,7 +261,7 @@ func TestSerializeChunkMessageWithEmptyData(t *testing.T) {
 
 	// Should still serialize successfully with empty data
 	assert.NotNil(t, data)
-	expectedLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.FileIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.StepSize
+	expectedLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + chunk.ClientIDSize + chunk.FileIDSize + chunk.QueryTypeSize + chunk.TableIDSize + chunk.ChunkSizeSize + chunk.ChunkNumberSize + chunk.IsLastChunkSize + chunk.IsLastFromTableSize
 	assert.Equal(t, expectedLength, len(data))
 }
 
@@ -278,15 +278,15 @@ func TestQueryTypes(t *testing.T) {
 					MsgTypeID:    chunk.MessageType,
 				},
 				Chunk: chunk.Chunk{
-					ClientID:    "1234",
-					FileID:      "0001",
-					QueryType:   queryType,
-					ChunkNumber: 1,
-					IsLastChunk: false,
-					Step:        0,
-					ChunkSize:   10,
-					TableID:     1,
-					ChunkData:   "test",
+					ClientID:        "1234",
+					FileID:          "0001",
+					QueryType:       queryType,
+					ChunkNumber:     1,
+					IsLastChunk:     false,
+					IsLastFromTable: false,
+					ChunkSize:       10,
+					TableID:         1,
+					ChunkData:       "test",
 				},
 			}
 
@@ -306,15 +306,15 @@ func TestChunkMessageWithLargeNumbers(t *testing.T) {
 			MsgTypeID:    chunk.MessageType,
 		},
 		Chunk: chunk.Chunk{
-			ClientID:    "1234",
-			FileID:      "0001",
-			QueryType:   1,
-			ChunkNumber: 9223372036854775807, // Max int64
-			IsLastChunk: true,
-			Step:        255,                 // Max uint8
-			ChunkSize:   9223372036854775807, // Max int64
-			TableID:     255,                 // Max uint8
-			ChunkData:   "large number test",
+			ClientID:        "1234",
+			FileID:          "0001",
+			QueryType:       1,
+			ChunkNumber:     9223372036854775807, // Max int64
+			IsLastChunk:     true,
+			IsLastFromTable: true,
+			ChunkSize:       9223372036854775807, // Max int64
+			TableID:         255,                 // Max uint8
+			ChunkData:       "large number test",
 		},
 	}
 
