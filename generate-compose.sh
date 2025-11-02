@@ -365,12 +365,12 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       - query4-groupby-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  # Streaming service (NOT SCALABLE - outputs to stdout)
-  streaming-service:
+  # Results dispatcher (NOT SCALABLE - outputs to stdout)
+  results-dispatcher:
     build:
       context: .
-      dockerfile: ./stream/Dockerfile
-    container_name: streaming-service
+      dockerfile: ./dispatcher/Dockerfile
+    container_name: results-dispatcher
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -887,7 +887,7 @@ generate_server_dependencies() {
     echo "      query4-top-users-worker:"
     echo "        condition: service_started"
 
-    echo "      streaming-service:"
+    echo "      results-dispatcher:"
     echo "        condition: service_started"
     echo "      in-memory-join-orchestrator:"
     echo "        condition: service_started"

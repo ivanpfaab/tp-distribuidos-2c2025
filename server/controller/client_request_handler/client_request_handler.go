@@ -225,7 +225,7 @@ func (h *ClientRequestHandler) extractClientID(data []byte) (*batch.Batch, bool)
 	return nil, false
 }
 
-// StartClientResultsConsumer starts consuming formatted results from streaming service
+// StartClientResultsConsumer starts consuming formatted results from results dispatcher
 func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	if h.clientResultsConsumer == nil {
 		log.Printf("Client Request Handler: Client results consumer not initialized")

@@ -491,7 +491,7 @@ func DeserializeJoinCleanupSignal(data []byte) (*JoinCleanupSignal, error) {
 	}, nil
 }
 
-// ClientCompletionSignal represents a signal sent by the streaming service to the server
+// ClientCompletionSignal represents a signal sent by the results dispatcher to the server
 // indicating that all queries have been completed for a specific client
 type ClientCompletionSignal struct {
 	Header   common.Header

@@ -60,12 +60,16 @@ docker-compose-down: ## Stop all services
 
 # Cleanup services, images, and volumes
 cleanup: ## Cleanup services, images, and volumes
-	@echo "Stopping all services..."
-	docker compose down
-	docker stop $(docker ps -q) 2>/dev/null || true
-	@echo "Removing all containers and images..."
-	docker rm $(docker ps -aq) 2>/dev/null || true
-	docker system prune -a -f --volumes
+	@echo "Starting cleanup..."
+	@echo "1. Stopping docker-compose services and removing project volumes..."
+	docker compose down -v --remove-orphans || true
+	@echo "2. Stopping all Docker containers..."
+	docker stop $$(docker ps -aq) 2>/dev/null || true
+	@echo "3. Removing all Docker containers..."
+	docker rm $$(docker ps -aq) 2>/dev/null || true
+	@echo "4. Pruning Docker images and volumes..."
+	docker image prune -a -f || true
+	docker volume prune -f || true
 	@echo "Cleanup complete!"
 
 # Force stop all services (stops containers with restart policies)
@@ -111,7 +115,7 @@ docker-compose-rebuild: ## Rebuild everything from scratch (no cache)
 	@echo "   Waiting for RabbitMQ to be healthy..."
 	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
 	@echo "   Starting Workers..."
-	docker compose --profile orchestration up -d year-filter-worker-1 year-filter-worker-2 year-filter-worker-3 time-filter-worker-1 time-filter-worker-2 amount-filter-worker-1 join-data-handler-1 itemid-join-worker-1 itemid-join-worker-2 storeid-join-worker-1 user-partition-splitter user-partition-writer-1 user-partition-writer-2 user-partition-writer-3 user-partition-writer-4 user-partition-writer-5 user-join-reader-1 user-join-reader-2 query2-orchestrator query2-partitioner query2-groupby-worker-1 query2-groupby-worker-2 query2-groupby-worker-3 query2-top-items-worker query3-orchestrator query3-partitioner query3-groupby-worker-1 query3-groupby-worker-2 query3-groupby-worker-3 query4-orchestrator query4-partitioner query4-groupby-worker-1 query4-groupby-worker-2 query4-groupby-worker-3 query4-top-users-worker streaming-service query-gateway-1
+	docker compose --profile orchestration up -d year-filter-worker-1 year-filter-worker-2 year-filter-worker-3 time-filter-worker-1 time-filter-worker-2 amount-filter-worker-1 join-data-handler-1 itemid-join-worker-1 itemid-join-worker-2 storeid-join-worker-1 user-partition-splitter user-partition-writer-1 user-partition-writer-2 user-partition-writer-3 user-partition-writer-4 user-partition-writer-5 user-join-reader-1 user-join-reader-2 query2-orchestrator query2-partitioner query2-groupby-worker-1 query2-groupby-worker-2 query2-groupby-worker-3 query2-top-items-worker query3-orchestrator query3-partitioner query3-groupby-worker-1 query3-groupby-worker-2 query3-groupby-worker-3 query4-orchestrator query4-partitioner query4-groupby-worker-1 query4-groupby-worker-2 query4-groupby-worker-3 query4-top-users-worker results-dispatcher query-gateway-1
 	@echo "   Starting Server..."
 	docker compose --profile orchestration --profile data-flow up -d server
 	@echo "   Starting Clients..."
