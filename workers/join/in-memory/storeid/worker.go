@@ -1,37 +1,23 @@
 package main
 
 import (
-	"encoding/csv"
 	"fmt"
 	"os"
-	"strings"
-	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
-	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	"github.com/tp-distribuidos-2c2025/workers/join/shared/batch"
+	joinchunk "github.com/tp-distribuidos-2c2025/workers/join/shared/chunk"
+	"github.com/tp-distribuidos-2c2025/workers/join/shared/dictionary"
+	"github.com/tp-distribuidos-2c2025/workers/join/shared/handler"
+	"github.com/tp-distribuidos-2c2025/workers/join/shared/joiner"
+	"github.com/tp-distribuidos-2c2025/workers/join/shared/notifier"
+	"github.com/tp-distribuidos-2c2025/workers/join/shared/parser"
 )
-
-// Store represents a store record
-type Store struct {
-	StoreID    string
-	StoreName  string
-	Street     string
-	PostalCode string
-	City       string
-	State      string
-	Latitude   string
-	Longitude  string
-}
-
-// ClientState holds the state for a specific client's batch processing
-type ClientState struct {
-	chunks []*chunk.Chunk // Store chunks for batch processing
-}
 
 // StoreIdJoinWorker encapsulates the StoreID join worker state and dependencies
 type StoreIdJoinWorker struct {
@@ -44,28 +30,27 @@ type StoreIdJoinWorker struct {
 	config               *StoreIdConfig
 	workerID             string
 
-	// Dictionary state - now client-aware
-	dictionaryReady map[string]bool              // client_id -> ready status
-	stores          map[string]map[string]*Store // client_id -> store_id -> Store
-
-	// Client batching state - similar to Query 2 top classification
-	clientStates map[string]*ClientState // key: ClientID
-	mutex        sync.RWMutex
+	// Shared components
+	dictManager          *dictionary.Manager[*Store]
+	dictHandler          *handler.DictionaryHandler[*Store]
+	completionHandler    *handler.CompletionHandler[*Store]
+	batchManager         *batch.Manager
+	chunkSender          *joinchunk.Sender
+	completionNotifier   *notifier.CompletionNotifier
+	orchestratorNotifier *notifier.OrchestratorNotifier
 }
 
 // NewStoreIdJoinWorker creates a new StoreIdJoinWorker instance
 func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
-	// Get worker instance ID from environment (defaults to "1" for single-worker setups)
 	instanceID := os.Getenv("WORKER_INSTANCE_ID")
 	if instanceID == "" {
 		instanceID = "1"
 	}
 
-	// Create instance-specific routing key for this worker
 	instanceRoutingKey := fmt.Sprintf("%s-instance-%s", queues.StoreIdDictionaryRoutingKey, instanceID)
 	fmt.Printf("StoreID Join Worker: Initializing with instance ID: %s, routing key: %s\n", instanceID, instanceRoutingKey)
 
-	// Create dictionary consumer (exchange for broadcasting to all workers)
+	// Create consumers and producers
 	dictionaryConsumer := exchange.NewExchangeConsumer(
 		queues.StoreIdDictionaryExchange,
 		[]string{instanceRoutingKey},
@@ -75,7 +60,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create dictionary consumer")
 	}
 
-	// Create chunk consumer
 	chunkConsumer := workerqueue.NewQueueConsumer(
 		queues.StoreIdChunkQueue,
 		config.ConnectionConfig,
@@ -85,7 +69,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create chunk consumer")
 	}
 
-	// Create output producer
 	outputProducer := workerqueue.NewMessageMiddlewareQueue(
 		queues.Query3ResultsQueue,
 		config.ConnectionConfig,
@@ -96,7 +79,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create output producer")
 	}
 
-	// Create completion signal consumer (exchange for completion signals)
 	completionConsumer := exchange.NewExchangeConsumer(
 		queues.StoreIdCompletionExchange,
 		[]string{queues.StoreIdCompletionRoutingKey},
@@ -106,10 +88,9 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
 		outputProducer.Close()
-		return nil, fmt.Errorf("failed to create cleanup consumer")
+		return nil, fmt.Errorf("failed to create completion consumer")
 	}
 
-	// Create completion producer
 	completionProducer := workerqueue.NewMessageMiddlewareQueue(
 		queues.InMemoryJoinCompletionQueue,
 		config.ConnectionConfig,
@@ -122,7 +103,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create completion producer")
 	}
 
-	// Create orchestrator producer
 	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(
 		queues.InMemoryJoinCompletionQueue,
 		config.ConnectionConfig,
@@ -136,7 +116,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create orchestrator producer")
 	}
 
-	// Declare input queue (StoreIdChunkQueue)
+	// Declare queues
 	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(queues.StoreIdChunkQueue, config.ConnectionConfig)
 	if inputQueueDeclarer == nil {
 		dictionaryConsumer.Close()
@@ -155,8 +135,8 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
 	}
+	inputQueueDeclarer.Close()
 
-	// Declare output queue
 	if err := outputProducer.DeclareQueue(false, false, false, false); err != 0 {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
@@ -166,7 +146,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to declare output queue: %v", err)
 	}
 
-	// Declare completion queue
 	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
 		dictionaryConsumer.Close()
 		chunkConsumer.Close()
@@ -176,6 +155,20 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
 	}
 
+	workerID := fmt.Sprintf("storeid-worker-%s", instanceID)
+
+	// Initialize shared components
+	dictManager := dictionary.NewManager[*Store]()
+	parseFunc := func(csvData string, clientID string) (map[string]*Store, error) {
+		return parser.ParseStores(csvData, clientID)
+	}
+	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, "StoreID Join Worker")
+	completionHandler := handler.NewCompletionHandler(dictManager, "StoreID Join Worker")
+	batchManager := batch.NewManager()
+	chunkSender := joinchunk.NewSender(outputProducer)
+	completionNotifier := notifier.NewCompletionNotifier(completionProducer, workerID, "stores")
+	orchestratorNotifier := notifier.NewOrchestratorNotifier(orchestratorProducer, "storeid-join-worker")
+
 	return &StoreIdJoinWorker{
 		dictionaryConsumer:   dictionaryConsumer,
 		chunkConsumer:        chunkConsumer,
@@ -184,10 +177,14 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		completionProducer:   completionProducer,
 		orchestratorProducer: orchestratorProducer,
 		config:               config,
-		workerID:             fmt.Sprintf("storeid-worker-%s", instanceID),
-		dictionaryReady:      make(map[string]bool),
-		stores:               make(map[string]map[string]*Store),
-		clientStates:         make(map[string]*ClientState),
+		workerID:             workerID,
+		dictManager:          dictManager,
+		dictHandler:          dictHandler,
+		completionHandler:    completionHandler,
+		batchManager:         batchManager,
+		chunkSender:          chunkSender,
+		completionNotifier:   completionNotifier,
+		orchestratorNotifier: orchestratorNotifier,
 	}, nil
 }
 
@@ -221,9 +218,6 @@ func (w *StoreIdJoinWorker) Close() {
 	if w.completionConsumer != nil {
 		w.completionConsumer.Close()
 	}
-	if w.completionConsumer != nil {
-		w.completionConsumer.Close()
-	}
 	if w.outputProducer != nil {
 		w.outputProducer.Close()
 	}
@@ -239,7 +233,7 @@ func (w *StoreIdJoinWorker) Close() {
 func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.processDictionaryMessage(delivery)
+			err := w.dictHandler.ProcessMessage(delivery)
 			if err != 0 {
 				done <- fmt.Errorf("failed to process dictionary message: %v", err)
 				return
@@ -261,141 +255,54 @@ func (w *StoreIdJoinWorker) createChunkCallback() func(middleware.ConsumeChannel
 	}
 }
 
-// processDictionaryMessage processes dictionary messages
-func (w *StoreIdJoinWorker) processDictionaryMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	fmt.Printf("StoreID Join Worker: Received dictionary message\n")
-
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to deserialize dictionary chunk: %v\n", err)
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	fmt.Printf("StoreID Join Worker: Received dictionary message for FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
-		chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
-
-	// Parse the stores data from the chunk
-	if err := w.parseStoresData(string(chunkMsg.ChunkData), chunkMsg.ClientID); err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to parse stores data: %v\n", err)
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Check if this is the last chunk for the dictionary
-	if chunkMsg.IsLastChunk {
-		w.dictionaryReady[chunkMsg.ClientID] = true
-		fmt.Printf("StoreID Join Worker: Received last chunk for FileID: %s - Dictionary is now ready for client %s\n", chunkMsg.FileID, chunkMsg.ClientID)
-	}
-
-	delivery.Ack(false) // Acknowledge the dictionary message
-	return 0
-}
-
-// getOrCreateClientState gets or creates client state for batching
-func (w *StoreIdJoinWorker) getOrCreateClientState(clientID string) *ClientState {
-	if w.clientStates[clientID] == nil {
-		w.clientStates[clientID] = &ClientState{
-			chunks: make([]*chunk.Chunk, 0),
-		}
-	}
-	return w.clientStates[clientID]
-}
-
 // processChunkMessage processes chunk messages for joining with batching
 func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	fmt.Printf("StoreID Join Worker: Received chunk message\n")
 
-	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 	if err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to deserialize chunk: %v\n", err)
-		delivery.Nack(false, false) // Reject the message
+		delivery.Nack(false, false)
 		return middleware.MessageMiddlewareMessageError
 	}
 
 	clientID := chunkMsg.ClientID
-	clientState := w.getOrCreateClientState(clientID)
 
-	// Check if dictionary is ready for this specific client
-	dictionaryReady := w.dictionaryReady[clientID]
-	if !dictionaryReady {
+	// Check if dictionary is ready
+	if !w.dictManager.IsReady(clientID) {
 		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", clientID)
-		delivery.Nack(false, true) // Reject and requeue
+		delivery.Nack(false, true)
 		return 0
 	}
 
-	// Add chunk to client's batch
-	w.mutex.Lock()
-	clientState.chunks = append(clientState.chunks, chunkMsg)
-	w.mutex.Unlock()
+	// Add chunk to batch
+	w.batchManager.AddChunk(clientID, chunkMsg)
 
-	// Check if this is the last chunk (EOS marker)
+	// Check if this is the last chunk
 	if chunkMsg.IsLastChunk {
 		fmt.Printf("StoreID Join Worker: Received last chunk for client %s, processing batch...\n", clientID)
-		fmt.Printf("StoreID Join Worker: Chunks: %d\n", len(clientState.chunks))
-		if err := w.processBatch(clientID, clientState); err != 0 {
+
+		// Combine and process batch
+		combinedChunk, err := w.batchManager.CombineChunks(clientID)
+		if err != nil {
+			fmt.Printf("StoreID Join Worker: Failed to combine chunks: %v\n", err)
+			delivery.Nack(false, true)
+			return middleware.MessageMiddlewareMessageError
+		}
+
+		// Process the combined chunk
+		if err := w.processChunk(combinedChunk); err != 0 {
 			fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
 			delivery.Nack(false, true)
 			return err
 		}
-		// Clear client state
-		w.mutex.Lock()
-		delete(w.clientStates, clientID)
-		w.mutex.Unlock()
+
+		// Clear batch
+		w.batchManager.ClearClient(clientID)
+		fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
 	}
 
-	delivery.Ack(false) // Acknowledge the chunk message
-	return 0
-}
-
-// processBatch processes all chunks for a client in batch
-func (w *StoreIdJoinWorker) processBatch(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
-	fmt.Printf("StoreID Join Worker: Processing batch for client %s with %d chunks\n", clientID, len(clientState.chunks))
-
-	// Combine all chunk data into a single chunk
-	var combinedData strings.Builder
-	var totalChunkSize int
-	var queryType byte
-	var tableID int
-	var fileID string
-
-	// Use metadata from the first chunk
-	if len(clientState.chunks) > 0 {
-		firstChunk := clientState.chunks[0]
-		queryType = firstChunk.QueryType
-		tableID = firstChunk.TableID
-		fileID = firstChunk.FileID
-	}
-
-	// Combine all chunk data
-	for _, chunkMsg := range clientState.chunks {
-		combinedData.WriteString(chunkMsg.ChunkData)
-		totalChunkSize += chunkMsg.ChunkSize
-	}
-
-	// Create a single combined chunk
-	combinedChunk := chunk.NewChunk(
-		clientID,              // ClientID
-		fileID,                // FileID
-		queryType,             // QueryType
-		1,                     // ChunkNumber - single chunk
-		true,                  // IsLastChunk
-		true,                  // IsLastFromTable
-		4,                     // Step
-		totalChunkSize,        // ChunkSize
-		tableID,               // TableID
-		combinedData.String(), // ChunkData - combined data
-	)
-
-	// Process the single combined chunk
-	if err := w.processChunk(combinedChunk); err != 0 {
-		fmt.Printf("StoreID Join Worker: Failed to process combined chunk: %v\n", err)
-		return err
-	}
-
-	fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s as single chunk\n", clientID)
+	delivery.Ack(false)
 	return 0
 }
 
@@ -404,31 +311,27 @@ func (w *StoreIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messa
 	fmt.Printf("StoreID Join Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
 		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
 
-	// Perform the join operation
+	// Perform join
 	joinedChunk, err := w.performJoin(chunkMsg)
 	if err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to perform join: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send joined chunk to output queue
-	chunkMessage := chunk.NewChunkMessage(joinedChunk)
-	serializedData, err := chunk.SerializeChunkMessage(chunkMessage)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to serialize joined chunk: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	if err := w.outputProducer.Send(serializedData); err != 0 {
+	// Send joined chunk
+	if err := w.chunkSender.SendChunkObject(joinedChunk); err != 0 {
 		fmt.Printf("StoreID Join Worker: Failed to send joined chunk: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// SUCCESS: Data sent successfully - send completion notification to garbage collector
-	w.sendCompletionNotification(chunkMsg.ClientID)
+	// Send completion notifications
+	if err := w.completionNotifier.SendCompletionNotification(chunkMsg.ClientID); err != nil {
+		fmt.Printf("StoreID Join Worker: Failed to send completion notification: %v\n", err)
+	}
 
-	// Send chunk to orchestrator for completion tracking
-	w.sendToOrchestrator(chunkMsg)
+	if err := w.orchestratorNotifier.SendChunkNotification(chunkMsg); err != nil {
+		fmt.Printf("StoreID Join Worker: Failed to send orchestrator notification: %v\n", err)
+	}
 
 	fmt.Printf("StoreID Join Worker: Successfully processed and sent joined chunk\n")
 	return 0
@@ -439,393 +342,60 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 	fmt.Printf("StoreID Join Worker: Performing join for QueryType: %d, FileID: %s\n",
 		chunkMsg.QueryType, chunkMsg.FileID)
 
-	// Check if this is grouped data from GroupBy (Step 3) or raw data
-	if w.isGroupedData(chunkMsg.ChunkData) {
+	// Get client's stores dictionary
+	stores, exists := w.dictManager.GetClientDictionary(chunkMsg.ClientID)
+	if !exists {
+		stores = make(map[string]*Store)
+	}
+
+	var joinedData string
+
+	// Check if this is grouped data from GroupBy
+	if parser.IsGroupedData(chunkMsg.ChunkData, "year", "count", "store_id") {
 		fmt.Printf("StoreID Join Worker: Received grouped data, joining with stores\n")
-		// Parse the grouped data from GroupBy
-		groupedData, err := w.parseGroupedTransactionData(string(chunkMsg.ChunkData))
+
+		groupedData, err := parser.ParseGroupedTransactions(chunkMsg.ChunkData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse grouped transaction data: %w", err)
 		}
 
-		// Perform the join with grouped data
-		joinedData := w.performGroupedTransactionStoreJoin(groupedData, chunkMsg.ClientID)
-
-		// Create new chunk with joined data
-		joinedChunk := &chunk.Chunk{
-			ClientID:    chunkMsg.ClientID,
-			FileID:      chunkMsg.FileID,
-			QueryType:   chunkMsg.QueryType,
-			ChunkNumber: chunkMsg.ChunkNumber,
-			IsLastChunk: chunkMsg.IsLastChunk,
-			Step:        chunkMsg.Step,
-			ChunkSize:   len(joinedData),
-			TableID:     chunkMsg.TableID,
-			ChunkData:   joinedData,
+		joinedData = joiner.BuildGroupedTransactionStoreJoin(groupedData, stores)
+	} else {
+		// Parse transaction data
+		transactionData, err := parser.ParseTransactions(chunkMsg.ChunkData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse transaction data: %w", err)
 		}
 
-		return joinedChunk, nil
+		joinedData = joiner.BuildTransactionStoreJoin(transactionData, stores)
 	}
-
-	// Parse the transaction data
-	transactionData, err := w.parseTransactionData(string(chunkMsg.ChunkData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse transaction data: %w", err)
-	}
-
-	// Perform the join
-	joinedData := w.performTransactionStoreJoin(transactionData, chunkMsg.ClientID)
 
 	// Create new chunk with joined data
 	joinedChunk := &chunk.Chunk{
-		ClientID:    chunkMsg.ClientID,
-		FileID:      chunkMsg.FileID,
-		QueryType:   chunkMsg.QueryType,
-		ChunkNumber: chunkMsg.ChunkNumber,
-		IsLastChunk: chunkMsg.IsLastChunk,
-		Step:        chunkMsg.Step,
-		ChunkSize:   len(joinedData),
-		TableID:     chunkMsg.TableID,
-		ChunkData:   joinedData,
+		ClientID:        chunkMsg.ClientID,
+		FileID:          chunkMsg.FileID,
+		QueryType:       chunkMsg.QueryType,
+		ChunkNumber:     chunkMsg.ChunkNumber,
+		IsLastChunk:     chunkMsg.IsLastChunk,
+		IsLastFromTable: chunkMsg.IsLastFromTable,
+		Step:            chunkMsg.Step,
+		ChunkSize:       len(joinedData),
+		TableID:         chunkMsg.TableID,
+		ChunkData:       joinedData,
 	}
 
 	return joinedChunk, nil
-}
-
-// parseStoresData parses stores CSV data and stores it client-specifically
-func (w *StoreIdJoinWorker) parseStoresData(csvData string, clientID string) error {
-	reader := csv.NewReader(strings.NewReader(csvData))
-	records, err := reader.ReadAll()
-	if err != nil {
-		return fmt.Errorf("failed to parse CSV: %w", err)
-	}
-
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
-	// Initialize client-specific dictionary if needed
-	if w.stores[clientID] == nil {
-		w.stores[clientID] = make(map[string]*Store)
-	}
-
-	// Skip header row
-	for i := 0; i < len(records); i++ {
-		record := records[i]
-		if strings.Contains(record[0], "store_id") {
-			continue
-		}
-		if len(record) >= 8 {
-			store := &Store{
-				StoreID:    record[0],
-				StoreName:  record[1],
-				Street:     record[2],
-				PostalCode: record[3],
-				City:       record[4],
-				State:      record[5],
-				Latitude:   record[6],
-				Longitude:  record[7],
-			}
-			w.stores[clientID][store.StoreID] = store
-		}
-	}
-
-	fmt.Printf("StoreID Join Worker: Parsed %d stores for client %s\n", len(records)-1, clientID)
-	return nil
-}
-
-// parseTransactionData parses transactions CSV data
-func (w *StoreIdJoinWorker) parseTransactionData(csvData string) ([]map[string]string, error) {
-	reader := csv.NewReader(strings.NewReader(csvData))
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse CSV: %w", err)
-	}
-
-	var transactions []map[string]string
-
-	for i := 0; i < len(records); i++ {
-		record := records[i]
-		if strings.Contains(record[0], "transaction_id") {
-			continue
-		}
-		if len(record) >= 9 {
-			transaction := map[string]string{
-				"transaction_id":    record[0],
-				"store_id":          record[1],
-				"payment_method_id": record[2],
-				"voucher_id":        record[3],
-				"user_id":           record[4],
-				"original_amount":   record[5],
-				"discount_applied":  record[6],
-				"final_amount":      record[7],
-				"created_at":        record[8],
-			}
-			transactions = append(transactions, transaction)
-		}
-	}
-
-	return transactions, nil
-}
-
-// performTransactionStoreJoin performs the join between transactions and stores
-func (w *StoreIdJoinWorker) performTransactionStoreJoin(transactions []map[string]string, clientID string) string {
-	var result strings.Builder
-
-	// Write header
-	result.WriteString("transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at,store_name,street,postal_code,city,state,latitude,longitude\n")
-
-	w.mutex.RLock()
-	defer w.mutex.RUnlock()
-
-	// Get client-specific stores dictionary
-	clientStores := w.stores[clientID]
-	fmt.Printf("StoreID Join Worker: Looking up stores for client %s, found %d stores\n", clientID, len(clientStores))
-	if clientStores == nil {
-		fmt.Printf("StoreID Join Worker: No stores dictionary found for client %s\n", clientID)
-		// No stores for this client, write original data with empty joined fields
-		for _, transaction := range transactions {
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,,,,,,,\n",
-				transaction["transaction_id"],
-				transaction["store_id"],
-				transaction["payment_method_id"],
-				transaction["voucher_id"],
-				transaction["user_id"],
-				transaction["original_amount"],
-				transaction["discount_applied"],
-				transaction["final_amount"],
-				transaction["created_at"],
-			))
-		}
-		return result.String()
-	}
-
-	for _, transaction := range transactions {
-		storeID := transaction["store_id"]
-		if store, exists := clientStores[storeID]; exists {
-			// Join successful - write all fields
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
-				transaction["transaction_id"],
-				transaction["store_id"],
-				transaction["payment_method_id"],
-				transaction["voucher_id"],
-				transaction["user_id"],
-				transaction["original_amount"],
-				transaction["discount_applied"],
-				transaction["final_amount"],
-				transaction["created_at"],
-				store.StoreName,
-				store.Street,
-				store.PostalCode,
-				store.City,
-				store.State,
-				store.Latitude,
-				store.Longitude,
-			))
-		} else {
-			// Join failed - write original data with empty joined fields
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,,,,,,,\n",
-				transaction["transaction_id"],
-				transaction["store_id"],
-				transaction["payment_method_id"],
-				transaction["voucher_id"],
-				transaction["user_id"],
-				transaction["original_amount"],
-				transaction["discount_applied"],
-				transaction["final_amount"],
-				transaction["created_at"],
-			))
-		}
-	}
-
-	return result.String()
-}
-
-// isGroupedData checks if the data is grouped data from GroupBy
-func (w *StoreIdJoinWorker) isGroupedData(data string) bool {
-	// Check if the data has the grouped schema (year,semester,store_id,total_final_amount,count)
-	lines := strings.Split(data, "\n")
-	if len(lines) < 1 {
-		return false
-	}
-
-	header := lines[0]
-	// Check for grouped data headers: year,semester,store_id,total_final_amount,count
-	return strings.Contains(header, "year") && strings.Contains(header, "count") && strings.Contains(header, "store_id")
-}
-
-// parseGroupedTransactionData parses grouped transaction data from GroupBy (Query Type 3)
-func (w *StoreIdJoinWorker) parseGroupedTransactionData(csvData string) ([]map[string]string, error) {
-	reader := csv.NewReader(strings.NewReader(csvData))
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse CSV: %w", err)
-	}
-
-	var groupedTransactions []map[string]string
-
-	for i := 0; i < len(records); i++ {
-		record := records[i]
-		if strings.Contains(record[0], "year") {
-			continue
-		}
-		if len(record) >= 5 {
-			transaction := map[string]string{
-				"year":               record[0],
-				"semester":           record[1],
-				"store_id":           record[2],
-				"total_final_amount": record[3],
-				"count":              record[4],
-			}
-			groupedTransactions = append(groupedTransactions, transaction)
-		}
-	}
-
-	return groupedTransactions, nil
-}
-
-// performGroupedTransactionStoreJoin performs the join between grouped transactions and stores
-func (w *StoreIdJoinWorker) performGroupedTransactionStoreJoin(groupedTransactions []map[string]string, clientID string) string {
-	var result strings.Builder
-
-	// Write header for joined grouped data
-	result.WriteString("year,semester,store_id,total_final_amount,count,store_name,street,postal_code,city,state,latitude,longitude\n")
-
-	w.mutex.RLock()
-	defer w.mutex.RUnlock()
-
-	// Get client-specific stores dictionary
-	clientStores := w.stores[clientID]
-	fmt.Printf("StoreID Join Worker: Looking up stores for client %s, found %d stores\n", clientID, len(clientStores))
-	if clientStores == nil {
-		fmt.Printf("StoreID Join Worker: No stores dictionary found for client %s\n", clientID)
-		// No stores for this client, write original data with empty joined fields
-		for _, transaction := range groupedTransactions {
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,,,,,,,\n",
-				transaction["year"],
-				transaction["semester"],
-				transaction["store_id"],
-				transaction["total_final_amount"],
-				transaction["count"],
-			))
-		}
-		return result.String()
-	}
-
-	for _, transaction := range groupedTransactions {
-		storeID := transaction["store_id"]
-		if store, exists := clientStores[storeID]; exists {
-			// Join successful - write all fields
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
-				transaction["year"],
-				transaction["semester"],
-				transaction["store_id"],
-				transaction["total_final_amount"],
-				transaction["count"],
-				store.StoreName,
-				store.Street,
-				store.PostalCode,
-				store.City,
-				store.State,
-				store.Latitude,
-				store.Longitude,
-			))
-		} else {
-			// Join failed - write original data with empty joined fields
-			result.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,,,,,,,\n",
-				transaction["year"],
-				transaction["semester"],
-				transaction["store_id"],
-				transaction["total_final_amount"],
-				transaction["count"],
-			))
-		}
-	}
-
-	return result.String()
-}
-
-// sendCompletionNotification sends a completion signal to the garbage collector
-func (w *StoreIdJoinWorker) sendCompletionNotification(clientID string) {
-	completionSignal := signals.NewJoinCompletionSignal(clientID, "stores", w.workerID)
-
-	messageData, err := signals.SerializeJoinCompletionSignal(completionSignal)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to serialize completion signal: %v\n", err)
-		return
-	}
-
-	if err := w.completionProducer.Send(messageData); err != 0 {
-		fmt.Printf("StoreID Join Worker: Failed to send completion signal: %v\n", err)
-	} else {
-		fmt.Printf("StoreID Join Worker: Sent completion signal for client %s\n", clientID)
-	}
-}
-
-// sendToOrchestrator sends chunk to orchestrator for completion tracking
-func (w *StoreIdJoinWorker) sendToOrchestrator(chunkMsg *chunk.Chunk) {
-	notification := signals.NewChunkNotification(
-		chunkMsg.ClientID,
-		chunkMsg.FileID,
-		"storeid-join-worker",
-		int(chunkMsg.TableID),
-		int(chunkMsg.ChunkNumber),
-		chunkMsg.IsLastChunk,
-		chunkMsg.IsLastFromTable,
-	)
-
-	messageData, err := signals.SerializeChunkNotification(notification)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to serialize chunk notification for orchestrator: %v\n", err)
-		return
-	}
-
-	if err := w.orchestratorProducer.Send(messageData); err != 0 {
-		fmt.Printf("StoreID Join Worker: Failed to send chunk notification to orchestrator: %v\n", err)
-	} else {
-		fmt.Printf("StoreID Join Worker: Sent chunk notification to orchestrator for client %s\n", chunkMsg.ClientID)
-	}
 }
 
 // createCompletionCallback creates the completion signal processing callback
 func (w *StoreIdJoinWorker) createCompletionCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.processCompletionSignal(delivery)
+			err := w.completionHandler.ProcessMessage(delivery)
 			if err != 0 {
 				done <- fmt.Errorf("failed to process completion signal: %v", err)
 				return
 			}
 		}
 	}
-}
-
-// processCompletionSignal processes a completion signal from the orchestrator
-func (w *StoreIdJoinWorker) processCompletionSignal(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the completion signal
-	completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to deserialize completion signal: %v\n", err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	fmt.Printf("StoreID Join Worker: Received completion signal for client %s\n", completionSignal.ClientID)
-
-	// Clean up client data
-	w.cleanupClientStores(completionSignal.ClientID)
-
-	delivery.Ack(false) // Acknowledge the message
-	return 0
-}
-
-// cleanupClientStores deletes all store dictionary data for a specific client
-func (w *StoreIdJoinWorker) cleanupClientStores(clientID string) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
-	// Delete client-specific store dictionary
-	delete(w.stores, clientID)
-	delete(w.dictionaryReady, clientID)
-
-	fmt.Printf("StoreID Join Worker: Cleaned up stores for client %s\n", clientID)
 }
