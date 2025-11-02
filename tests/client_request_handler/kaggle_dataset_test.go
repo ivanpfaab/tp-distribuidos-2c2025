@@ -208,7 +208,7 @@ func setupTestConnection(t *testing.T) (*TestConnection, error) {
 
 	// Connect to server
 	testing_utils.LogStep("Connecting to server")
-	conn, err := net.Dial("tcp", "server:8080")
+	conn, err := net.Dial("tcp", "proxy:8080")
 	if err != nil {
 		consumer.Close()
 		return nil, fmt.Errorf("test server not available: %v", err)
@@ -303,7 +303,7 @@ func processDatasetWithConnection(t *testing.T, testConn *TestConnection, transa
 			// Try to reconnect if connection was lost
 			testing_utils.LogStep("Attempting to reconnect...")
 			testConn.conn.Close()
-			conn, err := net.Dial("tcp", "server:8080")
+			conn, err := net.Dial("tcp", "proxy:8080")
 			if err != nil {
 				testing_utils.LogStep("Failed to reconnect: %v", err)
 				continue
@@ -616,7 +616,7 @@ func processDataset(t *testing.T, transactions []CoffeeShopTransaction, fileID s
 
 	// Connect to server
 	testing_utils.LogStep("Connecting to server")
-	conn, err := net.Dial("tcp", "server:8080")
+	conn, err := net.Dial("tcp", "proxy:8080")
 	if err != nil {
 		t.Skipf("Skipping test - test server not available: %v", err)
 		return

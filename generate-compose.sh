@@ -757,11 +757,11 @@ generate_top_worker 4 "users" $Q4_GROUPBY_WORKER_COUNT
 # Generate server service with dependencies on all filter workers
 generate_server_dependencies() {
     echo "  # Core application (data flow services)"
-    echo "  server:"
+    echo "  proxy:"
     echo "    build:"
     echo "      context: ."
-    echo "      dockerfile: ./server/Dockerfile"
-    echo "    container_name: server"
+    echo "      dockerfile: ./proxy/Dockerfile"
+    echo "    container_name: proxy"
     echo "    ports:"
     echo "      - \"8081:8080\"  # TCP port for client connections"
     echo "    depends_on:"
@@ -923,7 +923,7 @@ generate_clients() {
       dockerfile: ./client/Dockerfile
     container_name: ${container_name}
     depends_on:
-      server:
+      proxy:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -931,7 +931,7 @@ generate_clients() {
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=${client_id}
-    command: ["./main", "/app/data", "server:8080"]
+    command: ["./main", "/app/data", "proxy:8080"]
     profiles: ["data-flow"]
 
 EOF
@@ -954,7 +954,7 @@ cat >> docker-compose.yaml << 'EOF_FOOTER'
     depends_on:
       rabbitmq:
         condition: service_healthy
-      server:
+      proxy:
         condition: service_started
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
