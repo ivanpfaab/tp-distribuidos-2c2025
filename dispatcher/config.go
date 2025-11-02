@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	StreamingExchangeName = "streaming-exchange"
-	StreamingRoutingKey   = "streaming"
+	ResultsDispatcherExchangeName = "streaming-exchange"
+	ResultsDispatcherRoutingKey   = "streaming"
 
 	// Result queues for all query types
 	Query1ResultsQueue = queues.Query1ResultsQueue
@@ -18,7 +18,7 @@ const (
 	Query4ResultsQueue = queues.Query4ResultsQueue
 )
 
-// Config holds the configuration for the streaming service
+// Config holds the configuration for the results dispatcher
 type Config struct {
 	RabbitMQHost string
 	RabbitMQPort string

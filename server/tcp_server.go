@@ -40,7 +40,7 @@ func NewTCPServer(port string) *TCPServer {
 	// Create client request handler
 	clientRequestHandler := client_request_handler.NewClientRequestHandler(config)
 
-	// Start consuming formatted results from streaming service
+	// Start consuming formatted results from results dispatcher
 	clientRequestHandler.StartClientResultsConsumer()
 
 	return &TCPServer{

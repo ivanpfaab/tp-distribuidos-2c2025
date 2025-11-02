@@ -27,7 +27,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Query Gateway started successfully. Waiting for messages from streaming exchange...")
+	fmt.Println("Query Gateway started successfully. Waiting for messages from results dispatcher exchange...")
 
 	// Set up graceful shutdown
 	sigChan := make(chan os.Signal, 1)

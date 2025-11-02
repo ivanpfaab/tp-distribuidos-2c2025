@@ -102,9 +102,9 @@ const (
 	Query4ResultsQueue = "query4-results-chunks"
 
 	// ============================================================================
-	// Streaming Service Queues
+	// Results Dispatcher Queues
 	// ============================================================================
-	StreamingServiceQueue = "streaming-service-queue"
+	ResultsDispatcherQueue = "streaming-service-queue"
 
 	// ============================================================================
 	// In-File Join Orchestrator Queues

@@ -556,12 +556,12 @@ services:
       RABBITMQ_PASS: password
     profiles: ["orchestration"]
 
-  # Streaming service (NOT SCALABLE - outputs to stdout)
-  streaming-service:
+  # Results dispatcher (NOT SCALABLE - outputs to stdout)
+  results-dispatcher:
     build:
       context: .
-      dockerfile: ./stream/Dockerfile
-    container_name: streaming-service
+      dockerfile: ./dispatcher/Dockerfile
+    container_name: results-dispatcher
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -888,7 +888,7 @@ services:
         condition: service_started
       query4-top-users-worker:
         condition: service_started
-      streaming-service:
+      results-dispatcher:
         condition: service_started
     environment:
       - SERVER_PORT=8080
