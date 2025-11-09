@@ -21,14 +21,14 @@ const (
 
 // WorkerConfig holds configuration for the group by worker
 type WorkerConfig struct {
-	QueryType          int
-	WorkerID           int
-	NumWorkers         int
-	NumPartitions      int
-	ExchangeName       string
-	RoutingKeys        []string
-	OrchestratorQueue  string
-	ConnectionConfig   *middleware.ConnectionConfig
+	QueryType           int
+	WorkerID            int
+	NumWorkers          int
+	NumPartitions       int
+	ExchangeName        string
+	RoutingKeys         []string
+	OrchestratorExchange string
+	ConnectionConfig    *middleware.ConnectionConfig
 }
 
 // LoadConfig loads configuration from environment variables
@@ -107,8 +107,11 @@ func LoadConfig() (*WorkerConfig, error) {
 	}
 	routingKeys := []string{routingKey}
 
-	// Get orchestrator queue name
-	orchestratorQueue := getOrchestratorQueueName(queryType)
+	// Get orchestrator exchange name (fanout)
+	orchestratorExchange := queues.GetOrchestratorChunksExchangeName(queryType)
+	if orchestratorExchange == "" {
+		return nil, fmt.Errorf("no orchestrator exchange found for query type %d", queryType)
+	}
 
 	// Parse port to int
 	port, err := strconv.Atoi(rabbitMQPort)
@@ -124,14 +127,14 @@ func LoadConfig() (*WorkerConfig, error) {
 	}
 
 	return &WorkerConfig{
-		QueryType:          queryType,
-		WorkerID:           workerID,
-		NumWorkers:         numWorkers,
-		NumPartitions:      numPartitions,
-		ExchangeName:       exchangeName,
+		QueryType:           queryType,
+		WorkerID:            workerID,
+		NumWorkers:          numWorkers,
+		NumPartitions:       numPartitions,
+		ExchangeName:        exchangeName,
 		RoutingKeys:        routingKeys,
-		OrchestratorQueue:  orchestratorQueue,
-		ConnectionConfig:   connectionConfig,
+		OrchestratorExchange: orchestratorExchange,
+		ConnectionConfig:    connectionConfig,
 	}, nil
 }
 
@@ -150,19 +153,6 @@ func getNumWorkersForQuery(queryType int) int {
 	}
 }
 
-// getOrchestratorQueueName returns the orchestrator queue name for chunk notifications
-func getOrchestratorQueueName(queryType int) string {
-	switch queryType {
-	case 2:
-		return queues.Query2OrchestratorChunksQueue
-	case 3:
-		return queues.Query3OrchestratorChunksQueue
-	case 4:
-		return queues.Query4OrchestratorChunksQueue
-	default:
-		return ""
-	}
-}
 
 // getEnv gets an environment variable with a default value
 func getEnv(key, defaultValue string) string {

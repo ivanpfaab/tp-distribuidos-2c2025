@@ -21,14 +21,17 @@ const (
 // FileProcessor handles reading and converting grouped data files
 type FileProcessor struct {
 	queryType int
+	workerID  int
 	baseDir   string
 }
 
-// NewFileProcessor creates a new file processor for a specific query type
-func NewFileProcessor(queryType int) *FileProcessor {
-	baseDir := filepath.Join(GroupByDataDir, fmt.Sprintf("q%d", queryType))
+// NewFileProcessor creates a new file processor for a specific query type and worker
+func NewFileProcessor(queryType int, workerID int) *FileProcessor {
+	// Each orchestrator reads from its worker's volume: /app/groupby-data/q{queryType}/worker-{id}/
+	baseDir := filepath.Join(GroupByDataDir, fmt.Sprintf("q%d", queryType), fmt.Sprintf("worker-%d", workerID))
 	return &FileProcessor{
 		queryType: queryType,
+		workerID:  workerID,
 		baseDir:   baseDir,
 	}
 }

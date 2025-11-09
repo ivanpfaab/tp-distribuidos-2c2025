@@ -14,14 +14,17 @@ const (
 // FileManager handles file I/O operations for group by results
 type FileManager struct {
 	queryType int
+	workerID  int
 	baseDir   string
 }
 
-// NewFileManager creates a new file manager for a specific query type
-func NewFileManager(queryType int) *FileManager {
-	baseDir := filepath.Join(GroupByDataDir, fmt.Sprintf("q%d", queryType))
+// NewFileManager creates a new file manager for a specific query type and worker
+func NewFileManager(queryType int, workerID int) *FileManager {
+	// Each worker has its own volume: /app/groupby-data/q{queryType}/worker-{id}/
+	baseDir := filepath.Join(GroupByDataDir, fmt.Sprintf("q%d", queryType), fmt.Sprintf("worker-%d", workerID))
 	return &FileManager{
 		queryType: queryType,
+		workerID:  workerID,
 		baseDir:   baseDir,
 	}
 }

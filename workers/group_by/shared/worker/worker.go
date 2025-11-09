@@ -8,7 +8,6 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 )
 
@@ -16,7 +15,7 @@ import (
 type GroupByWorker struct {
 	config               *WorkerConfig
 	consumer             *exchange.ExchangeConsumer
-	orchestratorProducer *workerqueue.QueueMiddleware
+	orchestratorProducer *exchange.ExchangeMiddleware
 	workerIDStr          string
 	fileManager          *FileManager
 	processor            *ChunkProcessor
@@ -43,25 +42,25 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 	}
 	exchangeDeclarer.Close()
 
-	// Create producer for orchestrator chunk notifications
-	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(config.OrchestratorQueue, config.ConnectionConfig)
+	// Create producer for orchestrator chunk notifications (fanout exchange)
+	orchestratorProducer := exchange.NewMessageMiddlewareExchange(config.OrchestratorExchange, []string{}, config.ConnectionConfig)
 	if orchestratorProducer == nil {
 		consumer.Close()
-		return nil, fmt.Errorf("failed to create orchestrator producer")
+		return nil, fmt.Errorf("failed to create orchestrator exchange producer")
 	}
 
-	// Declare orchestrator queue
-	if err := orchestratorProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare fanout exchange for orchestrator notifications
+	if err := orchestratorProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
 		consumer.Close()
 		orchestratorProducer.Close()
-		return nil, fmt.Errorf("failed to declare orchestrator queue: %v", err)
+		return nil, fmt.Errorf("failed to declare orchestrator fanout exchange: %v", err)
 	}
 
 	// Generate worker ID string
 	workerIDStr := fmt.Sprintf("query%d-groupby-worker-%d", config.QueryType, config.WorkerID)
 
 	// Create file manager and processor
-	fileManager := NewFileManager(config.QueryType)
+	fileManager := NewFileManager(config.QueryType, config.WorkerID)
 	processor := NewChunkProcessor(config.QueryType)
 
 	return &GroupByWorker{
@@ -287,8 +286,8 @@ func (w *GroupByWorker) sendChunkNotification(chunkMessage *chunk.Chunk) error {
 		return fmt.Errorf("failed to serialize chunk notification: %v", err)
 	}
 
-	// Send to orchestrator
-	if sendErr := w.orchestratorProducer.Send(serializedNotification); sendErr != 0 {
+	// Send to orchestrator via fanout exchange (empty routing keys = fanout)
+	if sendErr := w.orchestratorProducer.Send(serializedNotification, []string{}); sendErr != 0 {
 		return fmt.Errorf("failed to send chunk notification to orchestrator: %v", sendErr)
 	}
 

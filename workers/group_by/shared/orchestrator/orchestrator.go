@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
@@ -26,51 +27,60 @@ type TerminationSignal struct {
 type GroupByOrchestrator struct {
 	config              *OrchestratorConfig
 	completionTracker   *shared.CompletionTracker
-	chunkConsumer       *workerqueue.QueueConsumer
+	chunkConsumer       *exchange.ExchangeConsumer
 	terminationProducer *exchange.ExchangeMiddleware
 	completionProducer  *workerqueue.QueueMiddleware // For sending completion chunks to next step
 	fileProcessor       *FileProcessor               // For reading and converting grouped data files
 }
 
 // NewGroupByOrchestrator creates a new group by orchestrator
-func NewGroupByOrchestrator(queryType int) *GroupByOrchestrator {
+func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 	log.Printf("NewGroupByOrchestrator: Query Type %d", queryType)
-	config := NewOrchestratorConfig(queryType)
+	config, err := NewOrchestratorConfig(queryType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create orchestrator config: %v", err)
+	}
+
+	log.Printf("NewGroupByOrchestrator: Worker ID %d", config.WorkerID)
 
 	orchestrator := &GroupByOrchestrator{
 		config:        config,
-		fileProcessor: NewFileProcessor(queryType),
+		fileProcessor: NewFileProcessor(queryType, config.WorkerID),
 	}
 
 	// Create completion tracker with callback to send termination signals
-	trackerName := fmt.Sprintf("Query%d-Orchestrator", queryType)
+	trackerName := fmt.Sprintf("Query%d-Orchestrator-Worker%d", queryType, config.WorkerID)
 	orchestrator.completionTracker = shared.NewCompletionTracker(trackerName, orchestrator.onClientCompleted)
 
 	orchestrator.initializeQueues()
-	return orchestrator
+	return orchestrator, nil
 }
 
 // initializeQueues sets up all necessary queues and exchanges
 func (gbo *GroupByOrchestrator) initializeQueues() {
-	// Create consumer for chunk notifications from map workers
-	queueName := getChunkNotificationQueueName(gbo.config.QueryType)
-	gbo.chunkConsumer = workerqueue.NewQueueConsumer(queueName, gbo.config.RabbitMQConfig)
-	if gbo.chunkConsumer == nil {
-		log.Fatalf("Failed to create chunk notification consumer for queue: %s", queueName)
+	// Create consumer for chunk notifications from map workers (fanout exchange)
+	exchangeName := queues.GetOrchestratorChunksExchangeName(gbo.config.QueryType)
+	if exchangeName == "" {
+		log.Fatalf("No orchestrator chunks exchange found for query type %d", gbo.config.QueryType)
 	}
 
-	// Declare the chunk notification queue
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(queueName, gbo.config.RabbitMQConfig)
-	if queueDeclarer == nil {
-		gbo.chunkConsumer.Close()
-		log.Fatalf("Failed to create queue declarer for queue: %s", queueName)
+	gbo.chunkConsumer = exchange.NewExchangeConsumer(exchangeName, []string{}, gbo.config.RabbitMQConfig)
+	if gbo.chunkConsumer == nil {
+		log.Fatalf("Failed to create chunk notification consumer for exchange: %s", exchangeName)
 	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
+
+	// Declare the fanout exchange (workers will also declare it, but we ensure it exists)
+	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(exchangeName, []string{}, gbo.config.RabbitMQConfig)
+	if exchangeDeclarer == nil {
 		gbo.chunkConsumer.Close()
-		queueDeclarer.Close()
-		log.Fatalf("Failed to declare chunk notification queue %s: %v", queueName, err)
+		log.Fatalf("Failed to create exchange declarer for exchange: %s", exchangeName)
 	}
-	queueDeclarer.Close()
+	if err := exchangeDeclarer.DeclareExchange("fanout", false, false, false, false); err != 0 {
+		gbo.chunkConsumer.Close()
+		exchangeDeclarer.Close()
+		log.Fatalf("Failed to declare fanout exchange %s: %v", exchangeName, err)
+	}
+	exchangeDeclarer.Close()
 
 	// Create fanout exchange producer for termination signals to map workers
 	terminationExchangeName := getMapWorkerTerminationExchangeName(gbo.config.QueryType)
@@ -96,17 +106,18 @@ func (gbo *GroupByOrchestrator) initializeQueues() {
 		log.Fatalf("Failed to create completion chunk producer for queue: %s", completionQueueName)
 	}
 
-	log.Printf("Orchestrator initialized for Query %d (expected files will be inferred dynamically)",
-		gbo.config.QueryType)
+	log.Printf("Orchestrator initialized for Query %d, Worker %d (expected files will be inferred dynamically)",
+		gbo.config.QueryType, gbo.config.WorkerID)
 	log.Printf("Completion chunks will be sent to queue: %s", completionQueueName)
+	log.Printf("Consuming chunk notifications from fanout exchange: %s", exchangeName)
 }
 
 // onClientCompleted is called when all files for a client are completed
 func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus *shared.ClientStatus) {
-	log.Printf("Client %s: All %d files completed! Reading grouped data files and sending to next step...",
-		clientID, clientStatus.TotalExpectedFiles)
+	log.Printf("Client %s: All %d files completed! Reading grouped data files from worker %d and sending to next step...",
+		clientID, clientStatus.TotalExpectedFiles, gbo.config.WorkerID)
 
-	// Get all files for this client
+	// Get all files for this client from this worker's volume
 	files, err := gbo.fileProcessor.GetClientFiles(clientID)
 	if err != nil {
 		log.Printf("Failed to get files for client %s: %v", clientID, err)
@@ -114,14 +125,15 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 	}
 
 	if len(files) == 0 {
-		log.Printf("No files found for client %s, skipping", clientID)
+		log.Printf("No files found for client %s in worker %d volume, skipping", clientID, gbo.config.WorkerID)
 		gbo.completionTracker.ClearClientState(clientID)
 		return
 	}
 
-	log.Printf("Client %s: Found %d partition files to process", clientID, len(files))
+	log.Printf("Client %s: Found %d partition files to process in worker %d volume", clientID, len(files), gbo.config.WorkerID)
 
-	// Process each file and send as a chunk (without deleting files yet)
+	// Aggregate all partition files into a single CSV result
+	var allCSVData strings.Builder
 	for i, filePath := range files {
 		// Read and convert file to CSV
 		csvData, err := gbo.fileProcessor.ReadAndConvertFile(filePath)
@@ -130,18 +142,31 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 			continue
 		}
 
-		// Determine if this is the last chunk
-		isLastChunk := (i == len(files)-1)
-
-		// Send chunk to next step
-		if err := gbo.sendDataChunk(clientID, i+1, csvData, isLastChunk); err != nil {
-			log.Printf("Failed to send data chunk for file %s: %v", filePath, err)
-			continue
+		// Append CSV data (skip header for subsequent files)
+		if i == 0 {
+			allCSVData.WriteString(csvData)
+		} else {
+			// Skip header row for subsequent files
+			lines := strings.Split(csvData, "\n")
+			if len(lines) > 1 {
+				allCSVData.WriteString(strings.Join(lines[1:], "\n"))
+			}
 		}
 	}
 
-	// Now that all chunks have been sent, clean up files
-	log.Printf("Client %s: All %d chunks sent, now cleaning up files...", clientID, len(files))
+	// Send single chunk with worker ID as chunk number
+	// Chunk number = worker ID (1, 2, 3, ...)
+	chunkNumber := gbo.config.WorkerID
+	combinedCSV := allCSVData.String()
+
+	// Send chunk to next step (IsLastChunk=true, IsLastFromTable=true as per requirements)
+	if err := gbo.sendDataChunk(clientID, chunkNumber, combinedCSV, true); err != nil {
+		log.Printf("Failed to send data chunk for client %s: %v", clientID, err)
+		return
+	}
+
+	// Now that chunk has been sent, clean up files
+	log.Printf("Client %s: Chunk %d sent, now cleaning up files...", clientID, chunkNumber)
 
 	// Delete individual files
 	for _, filePath := range files {
@@ -160,7 +185,7 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 	// Clear client state from completion tracker
 	gbo.completionTracker.ClearClientState(clientID)
 
-	log.Printf("Client %s: All %d chunks sent and files cleaned up", clientID, len(files))
+	log.Printf("Client %s: Chunk %d sent and files cleaned up", clientID, chunkNumber)
 }
 
 // sendTerminationSignals sends termination signals to all map and reduce workers
@@ -190,13 +215,15 @@ func (gbo *GroupByOrchestrator) sendTerminationSignals(clientID string) {
 // sendDataChunk sends a data chunk with CSV data to the next processing step
 func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, csvData string, isLastChunk bool) error {
 	// Create chunk with grouped CSV data
+	// Chunk number = worker ID (1, 2, 3, ...)
+	// IsLastChunk and IsLastFromTable are always true (each orchestrator sends one chunk)
 	dataChunk := chunk.NewChunk(
 		clientID,                   // ClientID
 		"01",                       // FileID - use "01" so completion tracker can parse it
 		byte(gbo.config.QueryType), // QueryType
-		chunkNumber,                // ChunkNumber
-		isLastChunk,                // IsLastChunk
-		isLastChunk,                // IsLastFromTable - same as isLastChunk since we only have one "file"
+		chunkNumber,                // ChunkNumber = WorkerID
+		true,                       // IsLastChunk - always true (per requirements)
+		true,                       // IsLastFromTable - always true (per requirements)
 		len(csvData),               // ChunkSize
 		0,                          // TableID
 		csvData,                    // ChunkData - CSV formatted data
@@ -225,13 +252,13 @@ func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, 
 
 // Start starts the orchestrator
 func (gbo *GroupByOrchestrator) Start() {
-	log.Printf("Starting Group By Orchestrator for Query %d...", gbo.config.QueryType)
+	log.Printf("Starting Group By Orchestrator for Query %d, Worker %d...", gbo.config.QueryType, gbo.config.WorkerID)
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		log.Printf("Orchestrator started consuming chunk notifications")
+		log.Printf("Orchestrator Worker %d started consuming chunk notifications from fanout exchange", gbo.config.WorkerID)
 
 		for delivery := range *consumeChannel {
-			log.Printf("Received chunk notification: %d bytes", len(delivery.Body))
+			log.Printf("Orchestrator Worker %d received chunk notification: %d bytes", gbo.config.WorkerID, len(delivery.Body))
 
 			// Deserialize chunk notification using protocol
 			message, err := deserializer.Deserialize(delivery.Body)
@@ -249,6 +276,7 @@ func (gbo *GroupByOrchestrator) Start() {
 			}
 
 			// Process the notification using the completion tracker
+			// All orchestrators receive all notifications via fanout, so they all track the same state
 			if err := gbo.completionTracker.ProcessChunkNotification(notification); err != nil {
 				log.Printf("Failed to process chunk notification: %v", err)
 				delivery.Ack(false)
@@ -261,12 +289,12 @@ func (gbo *GroupByOrchestrator) Start() {
 		done <- nil
 	}
 
-	queueName := getChunkNotificationQueueName(gbo.config.QueryType)
+	exchangeName := queues.GetOrchestratorChunksExchangeName(gbo.config.QueryType)
 	if err := gbo.chunkConsumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming chunk notifications: %v", err)
 	}
 
-	log.Printf("Successfully started consuming from queue: %s", queueName)
+	log.Printf("Successfully started consuming from fanout exchange: %s", exchangeName)
 }
 
 // Close closes the orchestrator
@@ -280,11 +308,6 @@ func (gbo *GroupByOrchestrator) Close() {
 	if gbo.completionProducer != nil {
 		gbo.completionProducer.Close()
 	}
-}
-
-// getChunkNotificationQueueName returns the queue name for chunk notifications
-func getChunkNotificationQueueName(queryType int) string {
-	return fmt.Sprintf("query%d-orchestrator-chunks", queryType)
 }
 
 // getMapWorkerTerminationExchangeName returns the exchange name for map worker termination
