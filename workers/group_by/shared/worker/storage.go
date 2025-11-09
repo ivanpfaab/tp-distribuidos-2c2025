@@ -1,60 +1,31 @@
 package main
 
 import (
-	"encoding/csv"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
 
-const (
-	GroupByDataDir = "/app/groupby-data"
-)
-
-// FileManager handles file I/O operations for group by results
+// FileManager wraps the storage FileManager for worker-specific operations
 type FileManager struct {
-	queryType int
-	workerID  int
-	baseDir   string
+	storageManager *storage.FileManager
+	queryType      int
+	csvWriter      *storage.CSVWriter
 }
 
 // NewFileManager creates a new file manager for a specific query type and worker
 func NewFileManager(queryType int, workerID int) *FileManager {
-	// Each worker has its own volume: /app/groupby-data/q{queryType}/worker-{id}/
-	baseDir := filepath.Join(GroupByDataDir, fmt.Sprintf("q%d", queryType), fmt.Sprintf("worker-%d", workerID))
 	return &FileManager{
-		queryType: queryType,
-		workerID:  workerID,
-		baseDir:   baseDir,
+		storageManager: storage.NewFileManager(queryType, workerID),
+		queryType:      queryType,
+		csvWriter:      storage.NewCSVWriter(),
 	}
 }
 
 // GetFilePath returns the file path for a given client and partition
 func (fm *FileManager) GetFilePath(clientID string, partition int) string {
-	switch fm.queryType {
-	case 2:
-		// For Query 2: CSV file following naming convention (like Query 4)
-		filename := fmt.Sprintf("%s-q2-partition-%03d.csv", clientID, partition)
-		// Files are stored in baseDir, not clientDir (like Query 4 pattern)
-		return filepath.Join(fm.baseDir, filename)
-	case 3:
-		// For Query 3: CSV file following naming convention (like Query 4)
-		filename := fmt.Sprintf("%s-q3-partition-%03d.csv", clientID, partition)
-		// Files are stored in baseDir, not clientDir (like Query 4 pattern)
-		return filepath.Join(fm.baseDir, filename)
-	case 4:
-		// For Query 4: CSV file following naming convention (no locks needed)
-		filename := fmt.Sprintf("%s-q4-partition-%03d.csv", clientID, partition)
-		// Files are stored in baseDir, not clientDir (like in-file join pattern)
-		return filepath.Join(fm.baseDir, filename)
-	default:
-		// Fallback for other query types (shouldn't happen in practice)
-		clientDir := filepath.Join(fm.baseDir, clientID)
-		filename := fmt.Sprintf("%d.json", partition)
-		return filepath.Join(clientDir, filename)
-	}
+	return fm.storageManager.GetPartitionFilePath(clientID, partition)
 }
 
 // AppendToPartitionCSV appends a user_id,store_id record to a Query 4 partition CSV file
@@ -66,43 +37,16 @@ func (fm *FileManager) AppendToPartitionCSV(clientID string, partition int, user
 	}
 
 	filePath := fm.GetFilePath(clientID, partition)
-
-	// Check if file exists to determine if we need to write header
-	fileExists := true
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		fileExists = false
+	
+	// Ensure base directory exists
+	if err := fm.storageManager.EnsureBaseDir(); err != nil {
+		return err
 	}
 
-	// Ensure base directory exists (for Query 4, files are in baseDir, not clientDir)
-	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
-	}
-
-	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write header if this is a new file
-	if !fileExists {
-		header := []string{"user_id", "store_id"}
-		if err := writer.Write(header); err != nil {
-			return fmt.Errorf("failed to write header: %v", err)
-		}
-	}
-
-	// Write the record
+	// Append record using CSV writer
+	header := []string{"user_id", "store_id"}
 	record := []string{userID, storeID}
-	if err := writer.Write(record); err != nil {
-		return fmt.Errorf("failed to write record: %v", err)
-	}
-
-	return nil
+	return fm.csvWriter.AppendRecord(filePath, header, record)
 }
 
 // CSVRecord defines the interface for records that can be written to CSV
@@ -120,42 +64,19 @@ func (fm *FileManager) appendRecordsToPartitionCSV(clientID string, partition in
 
 	filePath := fm.GetFilePath(clientID, partition)
 
-	// Check if file exists to determine if we need to write header
-	fileExists := true
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		fileExists = false
-	}
-
 	// Ensure base directory exists
-	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
+	if err := fm.storageManager.EnsureBaseDir(); err != nil {
+		return err
 	}
 
-	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write header if this is a new file
-	if !fileExists {
-		if err := writer.Write(header); err != nil {
-			return fmt.Errorf("failed to write header: %v", err)
-		}
+	// Convert records to [][]string
+	recordRows := make([][]string, len(records))
+	for i, rec := range records {
+		recordRows[i] = rec.ToCSVRow()
 	}
 
-	// Write all records using ToCSVRow method
-	for _, rec := range records {
-		if err := writer.Write(rec.ToCSVRow()); err != nil {
-			return fmt.Errorf("failed to write record: %v", err)
-		}
-	}
-
-	return nil
+	// Append records using CSV writer
+	return fm.csvWriter.AppendRecords(filePath, header, recordRows)
 }
 
 // AppendRecordsToPartitionCSV appends multiple user_id,store_id records to a Query 4 partition CSV file

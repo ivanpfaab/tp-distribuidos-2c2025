@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 )
 
 // Query2RecordExtractor extracts Query2Record from CSV rows
@@ -30,15 +31,15 @@ func (e *Query2RecordExtractor) ExtractRecord(record []string, workerPartitions 
 	}
 
 	// Parse created_at to extract month and calculate partition
-	createdAt, err := shared.ParseDate(strings.TrimSpace(record[5]))
+	createdAt, err := common.ParseDate(strings.TrimSpace(record[5]))
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid date: %v", err)
 	}
 
 	month := fmt.Sprintf("%d", createdAt.Month())
 
-	// Calculate partition using shared utility
-	partition := shared.CalculateTimeBasedPartition(createdAt)
+	// Calculate partition using common utility
+	partition := common.CalculateTimeBasedPartition(createdAt)
 
 	// Only process records belonging to partitions this worker owns
 	if !workerPartitions[partition] {
@@ -77,14 +78,14 @@ func (e *Query3RecordExtractor) ExtractRecord(record []string, workerPartitions 
 		return 0, nil, fmt.Errorf("empty store_id or final_amount")
 	}
 
-	// Parse created_at and calculate partition using shared utility
-	createdAt, err := shared.ParseDate(strings.TrimSpace(record[8]))
+	// Parse created_at and calculate partition using common utility
+	createdAt, err := common.ParseDate(strings.TrimSpace(record[8]))
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid date: %v", err)
 	}
 
-	// Calculate partition using shared utility
-	partition := shared.CalculateTimeBasedPartition(createdAt)
+	// Calculate partition using common utility
+	partition := common.CalculateTimeBasedPartition(createdAt)
 
 	// Only process records belonging to partitions this worker owns
 	if !workerPartitions[partition] {
@@ -121,8 +122,8 @@ func (e *Query4RecordExtractor) ExtractRecord(record []string, workerPartitions 
 		return 0, nil, fmt.Errorf("empty user_id")
 	}
 
-	// Calculate partition for this record using shared utility
-	recordPartition, err := shared.CalculateUserBasedPartition(userID, numPartitions)
+	// Calculate partition for this record using common utility
+	recordPartition, err := common.CalculateUserBasedPartition(userID, numPartitions)
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid user_id %s: %v", userID, err)
 	}

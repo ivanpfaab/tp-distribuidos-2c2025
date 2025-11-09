@@ -10,6 +10,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 )
 
 // GroupByWorker handles group by operations for partitioned chunks
@@ -235,8 +236,8 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 
 // getPartitionsForWorker returns the list of partitions this worker handles
 func (w *GroupByWorker) getPartitionsForWorker() []int {
-	// Use shared partition calculation utility
-	partitions := shared.GetPartitionsForWorker(
+	// Use common partition calculation utility
+	partitions := common.GetPartitionsForWorker(
 		w.config.QueryType,
 		w.config.WorkerID,
 		w.config.NumWorkers,
