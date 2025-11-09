@@ -1,9 +1,13 @@
 package main
 
 import (
-	"encoding/json"
+	"bufio"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -16,21 +20,13 @@ import (
 	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
-// TerminationSignal represents a signal to terminate processing
-type TerminationSignal struct {
-	QueryType int
-	ClientID  string
-	Message   string
-}
-
 // GroupByOrchestrator manages the coordination of map-reduce operations
 type GroupByOrchestrator struct {
-	config              *OrchestratorConfig
-	completionTracker   *shared.CompletionTracker
-	chunkConsumer       *exchange.ExchangeConsumer
-	terminationProducer *exchange.ExchangeMiddleware
-	completionProducer  *workerqueue.QueueMiddleware // For sending completion chunks to next step
-	fileProcessor       *FileProcessor               // For reading and converting grouped data files
+	config             *OrchestratorConfig
+	completionTracker  *shared.CompletionTracker
+	chunkConsumer      *exchange.ExchangeConsumer
+	completionProducer *workerqueue.QueueMiddleware // For sending completion chunks to next step
+	fileProcessor      *FileProcessor               // For reading and converting grouped data files
 }
 
 // NewGroupByOrchestrator creates a new group by orchestrator
@@ -82,27 +78,11 @@ func (gbo *GroupByOrchestrator) initializeQueues() {
 	}
 	exchangeDeclarer.Close()
 
-	// Create fanout exchange producer for termination signals to map workers
-	terminationExchangeName := getMapWorkerTerminationExchangeName(gbo.config.QueryType)
-	gbo.terminationProducer = exchange.NewMessageMiddlewareExchange(terminationExchangeName, []string{}, gbo.config.RabbitMQConfig)
-	if gbo.terminationProducer == nil {
-		gbo.chunkConsumer.Close()
-		log.Fatalf("Failed to create termination exchange producer")
-	}
-
-	// Declare the termination exchange
-	if err := gbo.terminationProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
-		gbo.chunkConsumer.Close()
-		gbo.terminationProducer.Close()
-		log.Fatalf("Failed to declare termination exchange: %v", err)
-	}
-
 	// Create completion chunk producer for next step
 	completionQueueName := getCompletionQueueName(gbo.config.QueryType)
 	gbo.completionProducer = workerqueue.NewMessageMiddlewareQueue(completionQueueName, gbo.config.RabbitMQConfig)
 	if gbo.completionProducer == nil {
 		gbo.chunkConsumer.Close()
-		gbo.terminationProducer.Close()
 		log.Fatalf("Failed to create completion chunk producer for queue: %s", completionQueueName)
 	}
 
@@ -133,39 +113,183 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 	log.Printf("Client %s: Found %d partition files to process in worker %d volume", clientID, len(files), gbo.config.WorkerID)
 
 	// Aggregate all partition files into a single CSV result
-	var allCSVData strings.Builder
-	for i, filePath := range files {
-		// Read and convert file to CSV
-		csvData, err := gbo.fileProcessor.ReadAndConvertFile(filePath)
-		if err != nil {
-			log.Printf("Failed to read/convert file %s: %v", filePath, err)
-			continue
-		}
-
-		// Append CSV data (skip header for subsequent files)
-		if i == 0 {
-			allCSVData.WriteString(csvData)
-		} else {
-			// Skip header row for subsequent files
-			lines := strings.Split(csvData, "\n")
-			if len(lines) > 1 {
-				allCSVData.WriteString(strings.Join(lines[1:], "\n"))
-			}
-		}
+	combinedCSV, err := gbo.aggregateClientFiles(files)
+	if err != nil {
+		log.Printf("Failed to aggregate files for client %s: %v", clientID, err)
+		return
 	}
 
-	// Send single chunk with worker ID as chunk number
-	// Chunk number = worker ID (1, 2, 3, ...)
+	// Send aggregated chunk to next step
 	chunkNumber := gbo.config.WorkerID
-	combinedCSV := allCSVData.String()
-
-	// Send chunk to next step (IsLastChunk=true, IsLastFromTable=true as per requirements)
-	if err := gbo.sendDataChunk(clientID, chunkNumber, combinedCSV, true); err != nil {
+	if err := gbo.sendAggregatedChunk(clientID, chunkNumber, combinedCSV); err != nil {
 		log.Printf("Failed to send data chunk for client %s: %v", clientID, err)
 		return
 	}
 
-	// Now that chunk has been sent, clean up files
+	// Clean up files and clear state
+	gbo.cleanupClientFiles(clientID, files, chunkNumber)
+}
+
+// aggregateClientFiles reads and aggregates all partition files into a single CSV
+// This properly aggregates records with the same key across all partition files
+func (gbo *GroupByOrchestrator) aggregateClientFiles(files []string) (string, error) {
+	if len(files) == 0 {
+		return "", fmt.Errorf("no files to aggregate")
+	}
+
+	// Determine query type and create appropriate grouper
+	var grouper RecordGrouper
+	switch gbo.config.QueryType {
+	case 2:
+		// For Q2, we need to extract year from the first partition file
+		// All partition files for a worker should have the same year
+		partition, err := gbo.fileProcessor.extractPartitionFromFilename(files[0])
+		if err != nil {
+			return "", fmt.Errorf("failed to extract partition from filename: %v", err)
+		}
+		year := gbo.fileProcessor.getYearFromPartition(partition)
+		grouper = &Query2Grouper{year: year}
+	case 3:
+		// For Q3, we need to extract year and semester from the first partition file
+		partition, err := gbo.fileProcessor.extractPartitionFromFilename(files[0])
+		if err != nil {
+			return "", fmt.Errorf("failed to extract partition from filename: %v", err)
+		}
+		year, semester := gbo.fileProcessor.getYearSemesterFromPartition(partition)
+		grouper = &Query3Grouper{year: year, semester: semester}
+	case 4:
+		grouper = &Query4Grouper{}
+	default:
+		return "", fmt.Errorf("unsupported query type: %d", gbo.config.QueryType)
+	}
+
+	// Initialize aggregated data map
+	var aggregatedData map[string]interface{}
+	switch grouper.(type) {
+	case *Query2Grouper:
+		aggregatedData = make(map[string]interface{}, 500)
+	case *Query3Grouper:
+		aggregatedData = make(map[string]interface{}, 20)
+	case *Query4Grouper:
+		aggregatedData = make(map[string]interface{}, 10000)
+	}
+
+	// Read and aggregate data from all partition files
+	for _, filePath := range files {
+		if err := gbo.aggregatePartitionFile(filePath, grouper, aggregatedData); err != nil {
+			log.Printf("Failed to aggregate partition file %s: %v", filePath, err)
+			// Continue with other files
+			continue
+		}
+	}
+
+	// Format output using the grouper
+	return grouper.FormatOutput(aggregatedData), nil
+}
+
+// aggregatePartitionFile reads a partition file and adds its records to the aggregated data map
+func (gbo *GroupByOrchestrator) aggregatePartitionFile(filePath string, grouper RecordGrouper, aggregatedData map[string]interface{}) error {
+	// Open file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %v", filePath, err)
+	}
+	defer file.Close()
+
+	// Create buffered CSV reader
+	bufferedFile := bufio.NewReaderSize(file, 64*1024) // 64KB buffer
+	reader := csv.NewReader(bufferedFile)
+	reader.ReuseRecord = true
+
+	// Skip header row
+	_, err = reader.Read()
+	if err != nil {
+		if err == io.EOF {
+			return nil // Empty file, nothing to aggregate
+		}
+		return fmt.Errorf("failed to read header from %s: %v", filePath, err)
+	}
+
+	// Read all records from this partition file and aggregate them
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			if err == io.EOF {
+				break // Normal end of file
+			}
+			log.Printf("Error reading from %s: %v", filePath, err)
+			break
+		}
+
+		if len(record) < grouper.GetMinFieldCount() {
+			log.Printf("Skipping malformed record in %s: %v", filePath, record)
+			continue
+		}
+
+		// Process record to get the aggregation key
+		key, shouldContinue, err := grouper.ProcessRecord(record)
+		if err != nil {
+			log.Printf("Skipping record in %s: %v", filePath, err)
+			continue
+		}
+		if !shouldContinue {
+			continue
+		}
+
+		// Aggregate based on query type
+		switch grouper.(type) {
+		case *Query2Grouper:
+			// Parse quantity and subtotal from the already-aggregated partition file
+			// Record format: month,item_id,quantity,subtotal (from worker)
+			quantity, _ := strconv.Atoi(strings.TrimSpace(record[2]))
+			subtotal, _ := strconv.ParseFloat(strings.TrimSpace(record[3]), 64)
+
+			// Aggregate across partition files
+			if aggregatedData[key] == nil {
+				aggregatedData[key] = &Query2AggregatedData{}
+			}
+			agg := aggregatedData[key].(*Query2AggregatedData)
+			agg.TotalQuantity += quantity
+			agg.TotalSubtotal += subtotal
+			// Count represents number of partition files containing this key
+			agg.Count++
+
+		case *Query3Grouper:
+			// Parse final_amount from the already-aggregated partition file
+			// Record format: store_id,final_amount (from worker)
+			finalAmount, _ := strconv.ParseFloat(strings.TrimSpace(record[1]), 64)
+
+			// Aggregate across partition files
+			if aggregatedData[key] == nil {
+				aggregatedData[key] = &Query3AggregatedData{}
+			}
+			agg := aggregatedData[key].(*Query3AggregatedData)
+			agg.TotalFinalAmount += finalAmount
+			// Count represents number of partition files containing this key
+			agg.Count++
+
+		case *Query4Grouper:
+			// For Q4, partition files contain user_id,store_id pairs
+			// We just count occurrences across all partition files
+			if count, ok := aggregatedData[key].(int); ok {
+				aggregatedData[key] = count + 1
+			} else {
+				aggregatedData[key] = 1
+			}
+		}
+	}
+
+	return nil
+}
+
+// sendAggregatedChunk sends the aggregated CSV data as a chunk to the next processing step
+func (gbo *GroupByOrchestrator) sendAggregatedChunk(clientID string, chunkNumber int, csvData string) error {
+	// Send chunk to next step (IsLastChunk=true, IsLastFromTable=true as per requirements)
+	return gbo.sendDataChunk(clientID, chunkNumber, csvData, true)
+}
+
+// cleanupClientFiles deletes all files and clears client state from the completion tracker
+func (gbo *GroupByOrchestrator) cleanupClientFiles(clientID string, files []string, chunkNumber int) {
 	log.Printf("Client %s: Chunk %d sent, now cleaning up files...", clientID, chunkNumber)
 
 	// Delete individual files
@@ -186,30 +310,6 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 	gbo.completionTracker.ClearClientState(clientID)
 
 	log.Printf("Client %s: Chunk %d sent and files cleaned up", clientID, chunkNumber)
-}
-
-// sendTerminationSignals sends termination signals to all map and reduce workers
-func (gbo *GroupByOrchestrator) sendTerminationSignals(clientID string) {
-	terminationSignal := TerminationSignal{
-		QueryType: gbo.config.QueryType,
-		ClientID:  clientID,
-		Message:   fmt.Sprintf("All data processing completed for client %s", clientID),
-	}
-
-	// Serialize termination signal
-	signalData, err := json.Marshal(terminationSignal)
-	if err != nil {
-		log.Printf("Failed to serialize termination signal: %v", err)
-		return
-	}
-
-	// Send to map workers
-	log.Printf("Sending termination signal to map workers for Query %d", gbo.config.QueryType)
-	if err := gbo.terminationProducer.Send(signalData, []string{}); err != 0 {
-		log.Printf("Failed to send termination signal to map workers: %v", err)
-	}
-
-	log.Printf("Termination signals sent successfully for Query %d", gbo.config.QueryType)
 }
 
 // sendDataChunk sends a data chunk with CSV data to the next processing step
@@ -302,17 +402,9 @@ func (gbo *GroupByOrchestrator) Close() {
 	if gbo.chunkConsumer != nil {
 		gbo.chunkConsumer.Close()
 	}
-	if gbo.terminationProducer != nil {
-		gbo.terminationProducer.Close()
-	}
 	if gbo.completionProducer != nil {
 		gbo.completionProducer.Close()
 	}
-}
-
-// getMapWorkerTerminationExchangeName returns the exchange name for map worker termination
-func getMapWorkerTerminationExchangeName(queryType int) string {
-	return fmt.Sprintf("query%d-map-termination", queryType)
 }
 
 // getCompletionQueueName returns the queue name for completion chunks based on query type

@@ -9,6 +9,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 )
 
 // GroupByWorker handles group by operations for partitioned chunks
@@ -124,6 +125,38 @@ func (w *GroupByWorker) processMessage(messageBody []byte) error {
 	return w.processChunk(chunkMessage)
 }
 
+// RecordAppender defines how to append records to CSV for a specific query type
+type RecordAppender interface {
+	AppendRecords(clientID string, partition int, records interface{}) error
+}
+
+// Query2RecordAppender appends Query2Record to CSV
+type Query2RecordAppender struct {
+	fileManager *FileManager
+}
+
+func (a *Query2RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
+	return a.fileManager.AppendQuery2RecordsToPartitionCSV(clientID, partition, records.([]shared.Query2Record))
+}
+
+// Query3RecordAppender appends Query3Record to CSV
+type Query3RecordAppender struct {
+	fileManager *FileManager
+}
+
+func (a *Query3RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
+	return a.fileManager.AppendQuery3RecordsToPartitionCSV(clientID, partition, records.([]shared.Query3Record))
+}
+
+// Query4RecordAppender appends Query4Record to CSV
+type Query4RecordAppender struct {
+	fileManager *FileManager
+}
+
+func (a *Query4RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
+	return a.fileManager.AppendRecordsToPartitionCSV(clientID, partition, records.([]shared.Query4Record))
+}
+
 // processChunk processes a single chunk with file-based group by aggregation
 func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 	testing_utils.LogInfo("GroupBy Worker", "Processing chunk %d from client %s, file %s (IsLastChunk=%t, IsLastFromTable=%t)",
@@ -131,111 +164,69 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 		chunkMessage.IsLastChunk, chunkMessage.IsLastFromTable)
 
 	// Determine partition(s) for this worker
-	// For Q2/Q3: worker ID = partition (1:1 mapping)
-	// For Q4: worker handles multiple partitions
 	partitions := w.getPartitionsForWorker()
 
 	// Query 2, 3, and 4 use CSV append strategy (no JSON load/save)
-	if w.config.QueryType == 2 {
-		return w.processQuery2Chunk(chunkMessage, partitions)
-	}
-	if w.config.QueryType == 3 {
-		return w.processQuery3Chunk(chunkMessage, partitions)
-	}
-	if w.config.QueryType == 4 {
-		return w.processQuery4Chunk(chunkMessage, partitions)
+	var appender RecordAppender
+	var partitionRecords interface{}
+	var err error
+
+	switch w.config.QueryType {
+	case 2:
+		appender = &Query2RecordAppender{fileManager: w.fileManager}
+		partitionRecords, err = w.processor.ProcessQuery2ChunkForCSV(chunkMessage, partitions)
+	case 3:
+		appender = &Query3RecordAppender{fileManager: w.fileManager}
+		partitionRecords, err = w.processor.ProcessQuery3ChunkForCSV(chunkMessage, partitions)
+	case 4:
+		appender = &Query4RecordAppender{fileManager: w.fileManager}
+		partitionRecords, err = w.processor.ProcessQuery4ChunkForCSV(chunkMessage, partitions, w.config.NumPartitions)
+	default:
+		return fmt.Errorf("unsupported query type: %d", w.config.QueryType)
 	}
 
-	// Fallback for unknown query types
-	return fmt.Errorf("unsupported query type: %d", w.config.QueryType)
-}
-
-// processQuery2Chunk processes Query 2 chunks using CSV append strategy
-func (w *GroupByWorker) processQuery2Chunk(chunkMessage *chunk.Chunk, workerPartitions []int) error {
-	// Extract records to append (no aggregation in memory)
-	partitionRecords, err := w.processor.ProcessQuery2ChunkForCSV(chunkMessage, workerPartitions)
 	if err != nil {
 		return fmt.Errorf("failed to extract records: %v", err)
 	}
 
-	// Append records to CSV files for each partition (batch write per partition)
-	for partition, records := range partitionRecords {
-		// Convert to struct slice for batch append
-		recs := make([]struct{ Month, ItemID, Quantity, Subtotal string }, len(records))
-		for i, rec := range records {
-			recs[i] = struct{ Month, ItemID, Quantity, Subtotal string }{
-				Month:    rec.Month,
-				ItemID:   rec.ItemID,
-				Quantity: rec.Quantity,
-				Subtotal: rec.Subtotal,
-			}
+	// Convert to map[int]interface{} for generic processing
+	recordsMap := make(map[int]interface{})
+	switch v := partitionRecords.(type) {
+	case map[int][]shared.Query2Record:
+		for k, val := range v {
+			recordsMap[k] = val
 		}
-
-		if err := w.fileManager.AppendQuery2RecordsToPartitionCSV(chunkMessage.ClientID, partition, recs); err != nil {
-			return fmt.Errorf("failed to append to partition %d CSV: %v", partition, err)
+	case map[int][]shared.Query3Record:
+		for k, val := range v {
+			recordsMap[k] = val
 		}
-
-		testing_utils.LogInfo("GroupBy Worker", "Appended %d records to partition %d CSV for chunk %d",
-			len(records), partition, chunkMessage.ChunkNumber)
-	}
-
-	// Send chunk notification to orchestrator AFTER successful CSV writes
-	return w.sendChunkNotification(chunkMessage)
-}
-
-// processQuery3Chunk processes Query 3 chunks using CSV append strategy
-func (w *GroupByWorker) processQuery3Chunk(chunkMessage *chunk.Chunk, workerPartitions []int) error {
-	// Extract records to append (no aggregation in memory)
-	partitionRecords, err := w.processor.ProcessQuery3ChunkForCSV(chunkMessage, workerPartitions)
-	if err != nil {
-		return fmt.Errorf("failed to extract records: %v", err)
+	case map[int][]shared.Query4Record:
+		for k, val := range v {
+			recordsMap[k] = val
+		}
+	default:
+		return fmt.Errorf("unknown record type: %T", partitionRecords)
 	}
 
 	// Append records to CSV files for each partition (batch write per partition)
-	for partition, records := range partitionRecords {
-		// Convert to struct slice for batch append
-		recs := make([]struct{ StoreID, FinalAmount string }, len(records))
-		for i, rec := range records {
-			recs[i] = struct{ StoreID, FinalAmount string }{
-				StoreID:     rec.StoreID,
-				FinalAmount: rec.FinalAmount,
-			}
-		}
-
-		if err := w.fileManager.AppendQuery3RecordsToPartitionCSV(chunkMessage.ClientID, partition, recs); err != nil {
+	for partition, records := range recordsMap {
+		if err := appender.AppendRecords(chunkMessage.ClientID, partition, records); err != nil {
 			return fmt.Errorf("failed to append to partition %d CSV: %v", partition, err)
 		}
 
-		testing_utils.LogInfo("GroupBy Worker", "Appended %d records to partition %d CSV for chunk %d",
-			len(records), partition, chunkMessage.ChunkNumber)
-	}
-
-	// Send chunk notification to orchestrator AFTER successful CSV writes
-	return w.sendChunkNotification(chunkMessage)
-}
-
-// processQuery4Chunk processes Query 4 chunks using CSV append strategy
-func (w *GroupByWorker) processQuery4Chunk(chunkMessage *chunk.Chunk, workerPartitions []int) error {
-	// Extract records to append (no aggregation in memory)
-	partitionRecords, err := w.processor.ProcessQuery4ChunkForCSV(chunkMessage, workerPartitions, w.config.NumPartitions)
-	if err != nil {
-		return fmt.Errorf("failed to extract records: %v", err)
-	}
-
-	// Append records to CSV files for each partition (batch write per partition)
-	for partition, records := range partitionRecords {
-		// Convert to struct slice for batch append
-		recs := make([]struct{ UserID, StoreID string }, len(records))
-		for i, rec := range records {
-			recs[i] = struct{ UserID, StoreID string }{UserID: rec.UserID, StoreID: rec.StoreID}
-		}
-
-		if err := w.fileManager.AppendRecordsToPartitionCSV(chunkMessage.ClientID, partition, recs); err != nil {
-			return fmt.Errorf("failed to append to partition %d CSV: %v", partition, err)
+		// Get record count for this partition for logging
+		var partitionRecordCount int
+		switch r := records.(type) {
+		case []shared.Query2Record:
+			partitionRecordCount = len(r)
+		case []shared.Query3Record:
+			partitionRecordCount = len(r)
+		case []shared.Query4Record:
+			partitionRecordCount = len(r)
 		}
 
 		testing_utils.LogInfo("GroupBy Worker", "Appended %d records to partition %d CSV for chunk %d",
-			len(records), partition, chunkMessage.ChunkNumber)
+			partitionRecordCount, partition, chunkMessage.ChunkNumber)
 	}
 
 	// Send chunk notification to orchestrator AFTER successful CSV writes
@@ -244,26 +235,13 @@ func (w *GroupByWorker) processQuery4Chunk(chunkMessage *chunk.Chunk, workerPart
 
 // getPartitionsForWorker returns the list of partitions this worker handles
 func (w *GroupByWorker) getPartitionsForWorker() []int {
-	// For Q2/Q3: worker ID maps to partition (1:1 mapping)
-	// Worker IDs are 1-based (1, 2, 3), partitions are 0-based (0, 1, 2)
-	// So Worker 1 → Partition 0, Worker 2 → Partition 1, Worker 3 → Partition 2
-	if w.config.QueryType == 2 || w.config.QueryType == 3 {
-		return []int{w.config.WorkerID - 1}
-	}
-
-	// For Q4: worker handles multiple partitions based on modulo
-	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
-	// Since workerID starts from 1:
-	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
-	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
-	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
-	partitions := []int{}
-	targetRemainder := w.config.WorkerID % w.config.NumWorkers
-	for partition := 0; partition < w.config.NumPartitions; partition++ {
-		if partition%w.config.NumWorkers == targetRemainder {
-			partitions = append(partitions, partition)
-		}
-	}
+	// Use shared partition calculation utility
+	partitions := shared.GetPartitionsForWorker(
+		w.config.QueryType,
+		w.config.WorkerID,
+		w.config.NumWorkers,
+		w.config.NumPartitions,
+	)
 	return partitions
 }
 

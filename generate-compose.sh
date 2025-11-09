@@ -268,6 +268,8 @@ generate_itemid_join_workers $ITEMID_JOIN_WORKER_COUNT
 # Function to generate storeid-join-worker services
 generate_storeid_join_workers() {
     local count=$1
+    local num_groupby_workers=$2  # Number of Query 3 groupby workers
+    
     for i in $(seq 1 $count); do
         # First worker has simpler container name for backward compatibility
         local container_name
@@ -276,6 +278,14 @@ generate_storeid_join_workers() {
         else
             container_name="storeid-join-worker-${i}"
         fi
+        
+        # Build dependencies on all Query 3 orchestrators
+        local orchestrator_deps=""
+        for w in $(seq 1 $num_groupby_workers); do
+            orchestrator_deps="${orchestrator_deps}      query3-orchestrator-${w}:
+        condition: service_started
+"
+        done
         
         cat >> docker-compose.yaml << EOF
   # StoreID Join Worker ${i} (scalable with dictionary broadcasting)
@@ -289,6 +299,7 @@ generate_storeid_join_workers() {
         condition: service_healthy
       join-data-handler-1:
         condition: service_started
+$(echo -e "${orchestrator_deps}")
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -296,6 +307,7 @@ generate_storeid_join_workers() {
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "${i}"
       STOREID_BATCH_SIZE: 5
+      NUM_WORKERS: "${num_groupby_workers}"
     profiles: ["orchestration"]
 
 EOF
@@ -304,67 +316,10 @@ EOF
 
 # Generate storeid-join-workers
 echo -e "${BLUE}Generating storeid-join-workers...${NC}"
-generate_storeid_join_workers $STOREID_JOIN_WORKER_COUNT
+generate_storeid_join_workers $STOREID_JOIN_WORKER_COUNT $Q3_GROUPBY_WORKER_COUNT
 
 # Add remaining non-scalable services
 cat >> docker-compose.yaml << 'EOF_REMAINING'
-  # Query 2 Group By Orchestrator
-  query2-orchestrator:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
-    container_name: query2-orchestrator
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      QUERY_TYPE: "2"
-    volumes:
-      - query2-groupby-data:/app/groupby-data
-    profiles: ["orchestration"]
-
-  # Query 3 Group By Orchestrator
-  query3-orchestrator:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
-    container_name: query3-orchestrator
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      QUERY_TYPE: "3"
-    volumes:
-      - query3-groupby-data:/app/groupby-data
-    profiles: ["orchestration"]
-
-  # Query 4 Group By Orchestrator
-  query4-orchestrator:
-    build:
-      context: .
-      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
-    container_name: query4-orchestrator
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
-      RABBITMQ_USER: admin
-      RABBITMQ_PASS: password
-      QUERY_TYPE: "4"
-    volumes:
-      - query4-groupby-data:/app/groupby-data
-    profiles: ["orchestration"]
-
   # Results dispatcher (NOT SCALABLE - outputs to stdout)
   results-dispatcher:
     build:
@@ -461,6 +416,39 @@ EOF
     done
 }
 
+# Function to generate orchestrator services (one per worker)
+generate_orchestrators() {
+    local query_type=$1
+    local worker_count=$2
+
+    for i in $(seq 1 $worker_count); do
+        cat >> docker-compose.yaml << EOF
+  # Query ${query_type} Group By Orchestrator ${i} (for worker ${i})
+  query${query_type}-orchestrator-${i}:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: query${query_type}-orchestrator-${i}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query${query_type}-groupby-worker-${i}:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "${query_type}"
+      WORKER_ID: "${i}"
+    volumes:
+      - query${query_type}-groupby-worker-${i}-data:/app/groupby-data
+    profiles: ["orchestration"]
+
+EOF
+    done
+}
+
 # Function to generate groupby worker services
 generate_groupby_workers() {
     local query_type=$1
@@ -500,8 +488,6 @@ generate_groupby_workers() {
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query${query_type}-orchestrator:
-        condition: service_started
 $(echo -e "${partitioner_deps}")
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -513,7 +499,7 @@ $(echo -e "${partitioner_deps}")
       NUM_WORKERS: "${count}"
       NUM_PARTITIONS: "${num_partitions}"
     volumes:
-      - query${query_type}-groupby-data:/app/groupby-data
+      - query${query_type}-groupby-worker-${i}-data:/app/groupby-data
     profiles: ["orchestration"]
 
 EOF
@@ -526,10 +512,13 @@ generate_top_worker() {
     local worker_name=$2
     local groupby_worker_count=$3
 
-    # Build dependencies on all groupby workers
-    local groupby_deps=""
+    # Build dependencies on all groupby workers and orchestrators
+    local deps=""
     for w in $(seq 1 $groupby_worker_count); do
-        groupby_deps="${groupby_deps}      query${query_type}-groupby-worker-${w}:
+        deps="${deps}      query${query_type}-groupby-worker-${w}:
+        condition: service_started
+"
+        deps="${deps}      query${query_type}-orchestrator-${w}:
         condition: service_started
 "
     done
@@ -544,12 +533,13 @@ generate_top_worker() {
     depends_on:
       rabbitmq:
         condition: service_healthy
-$(echo -e "${groupby_deps}")
+$(echo -e "${deps}")
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      NUM_WORKERS: "${groupby_worker_count}"
     profiles: ["orchestration"]
 
 EOF
@@ -737,20 +727,23 @@ generate_query_gateway $QUERY_GATEWAY_COUNT
 
 
 # Generate Query 2 components
-echo -e "${BLUE}Generating Query 2 partitioners and groupby workers...${NC}"
+echo -e "${BLUE}Generating Query 2 partitioners, groupby workers, and orchestrators...${NC}"
 generate_partitioner 2 $Q2_PARTITIONER_COUNT $Q2_GROUPBY_WORKER_COUNT
 generate_groupby_workers 2 $Q2_GROUPBY_WORKER_COUNT $Q2_PARTITIONER_COUNT
+generate_orchestrators 2 $Q2_GROUPBY_WORKER_COUNT
 generate_top_worker 2 "items" $Q2_GROUPBY_WORKER_COUNT
 
 # Generate Query 3 components
-echo -e "${BLUE}Generating Query 3 partitioners and groupby workers...${NC}"
+echo -e "${BLUE}Generating Query 3 partitioners, groupby workers, and orchestrators...${NC}"
 generate_partitioner 3 $Q3_PARTITIONER_COUNT $Q3_GROUPBY_WORKER_COUNT
 generate_groupby_workers 3 $Q3_GROUPBY_WORKER_COUNT $Q3_PARTITIONER_COUNT
+generate_orchestrators 3 $Q3_GROUPBY_WORKER_COUNT
 
 # Generate Query 4 components
-echo -e "${BLUE}Generating Query 4 partitioners and groupby workers...${NC}"
+echo -e "${BLUE}Generating Query 4 partitioners, groupby workers, and orchestrators...${NC}"
 generate_partitioner 4 $Q4_PARTITIONER_COUNT $Q4_GROUPBY_WORKER_COUNT
 generate_groupby_workers 4 $Q4_GROUPBY_WORKER_COUNT $Q4_PARTITIONER_COUNT
+generate_orchestrators 4 $Q4_GROUPBY_WORKER_COUNT
 generate_top_worker 4 "users" $Q4_GROUPBY_WORKER_COUNT
 
 
@@ -824,8 +817,11 @@ generate_server_dependencies() {
         echo "        condition: service_started"
     done
     # Add dependencies for all GroupBy services
-    echo "      query2-orchestrator:"
-    echo "        condition: service_started"
+    # Query 2 orchestrators
+    for i in $(seq 1 $Q2_GROUPBY_WORKER_COUNT); do
+        echo "      query2-orchestrator-${i}:"
+        echo "        condition: service_started"
+    done
 
     # Query 2 partitioners
     for i in $(seq 1 $Q2_PARTITIONER_COUNT); do
@@ -846,8 +842,11 @@ generate_server_dependencies() {
     echo "      query2-top-items-worker:"
     echo "        condition: service_started"
 
-    echo "      query3-orchestrator:"
-    echo "        condition: service_started"
+    # Query 3 orchestrators
+    for i in $(seq 1 $Q3_GROUPBY_WORKER_COUNT); do
+        echo "      query3-orchestrator-${i}:"
+        echo "        condition: service_started"
+    done
 
     # Query 3 partitioners
     for i in $(seq 1 $Q3_PARTITIONER_COUNT); do
@@ -865,8 +864,11 @@ generate_server_dependencies() {
         echo "        condition: service_started"
     done
 
-    echo "      query4-orchestrator:"
-    echo "        condition: service_started"
+    # Query 4 orchestrators
+    for i in $(seq 1 $Q4_GROUPBY_WORKER_COUNT); do
+        echo "      query4-orchestrator-${i}:"
+        echo "        condition: service_started"
+    done
 
     # Query 4 partitioners
     for i in $(seq 1 $Q4_PARTITIONER_COUNT); do
@@ -967,13 +969,39 @@ cat >> docker-compose.yaml << 'EOF_FOOTER'
 volumes:
   shared-data:
     driver: local
-  query2-groupby-data:
-    driver: local
-  query3-groupby-data:
-    driver: local
-  query4-groupby-data:
-    driver: local
 EOF_FOOTER
+
+# Generate per-worker volumes for groupby workers
+echo -e "${BLUE}Generating per-worker volumes...${NC}"
+cat >> docker-compose.yaml << EOF
+  # Query 2 worker volumes
+EOF
+for i in $(seq 1 $Q2_GROUPBY_WORKER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  query2-groupby-worker-${i}-data:
+    driver: local
+EOF
+done
+
+cat >> docker-compose.yaml << EOF
+  # Query 3 worker volumes
+EOF
+for i in $(seq 1 $Q3_GROUPBY_WORKER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  query3-groupby-worker-${i}-data:
+    driver: local
+EOF
+done
+
+cat >> docker-compose.yaml << EOF
+  # Query 4 worker volumes
+EOF
+for i in $(seq 1 $Q4_GROUPBY_WORKER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  query4-groupby-worker-${i}-data:
+    driver: local
+EOF
+done
 
 echo -e "${GREEN}✓ docker-compose.yaml generated successfully!${NC}"
 echo ""

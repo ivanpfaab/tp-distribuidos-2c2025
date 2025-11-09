@@ -38,24 +38,15 @@ func NewFileProcessor(queryType int, workerID int) *FileProcessor {
 
 // GetClientFiles returns all files for a given client
 // For Query 2, 3, and 4: returns CSV partition files following naming convention
+// Files follow pattern: {clientID}-q{queryType}-partition-{XXX}.csv in baseDir
 func (fp *FileProcessor) GetClientFiles(clientID string) ([]string, error) {
-	if fp.queryType == 2 {
-		return fp.getQuery2ClientFiles(clientID)
-	}
-	if fp.queryType == 3 {
-		return fp.getQuery3ClientFiles(clientID)
-	}
-	if fp.queryType == 4 {
-		return fp.getQuery4ClientFiles(clientID)
+	// Validate query type
+	if fp.queryType < 2 || fp.queryType > 4 {
+		return nil, fmt.Errorf("unsupported query type: %d", fp.queryType)
 	}
 
-	return nil, fmt.Errorf("unsupported query type: %d", fp.queryType)
-}
-
-// getQuery2ClientFiles returns all CSV partition files for Query 2
-// Files follow pattern: {clientID}-q2-partition-{XXX}.csv in baseDir
-func (fp *FileProcessor) getQuery2ClientFiles(clientID string) ([]string, error) {
-	prefix := fmt.Sprintf("%s-q2-partition-", clientID)
+	// Build file prefix pattern: {clientID}-q{queryType}-partition-
+	prefix := fmt.Sprintf("%s-q%d-partition-", clientID, fp.queryType)
 	var files []string
 
 	// Read all files in base directory
@@ -74,81 +65,200 @@ func (fp *FileProcessor) getQuery2ClientFiles(clientID string) ([]string, error)
 	// Sort files for consistent ordering (by partition number)
 	sort.Strings(files)
 
-	testing_utils.LogInfo("FileProcessor", "Found %d CSV partition files for client %s (Query 2)", len(files), clientID)
-	return files, nil
-}
-
-// getQuery3ClientFiles returns all CSV partition files for Query 3
-// Files follow pattern: {clientID}-q3-partition-{XXX}.csv in baseDir
-func (fp *FileProcessor) getQuery3ClientFiles(clientID string) ([]string, error) {
-	prefix := fmt.Sprintf("%s-q3-partition-", clientID)
-	var files []string
-
-	// Read all files in base directory
-	entries, err := os.ReadDir(fp.baseDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read base directory %s: %v", fp.baseDir, err)
-	}
-
-	// Collect files matching the pattern
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) && strings.HasSuffix(entry.Name(), ".csv") {
-			files = append(files, filepath.Join(fp.baseDir, entry.Name()))
-		}
-	}
-
-	// Sort files for consistent ordering (by partition number)
-	sort.Strings(files)
-
-	testing_utils.LogInfo("FileProcessor", "Found %d CSV partition files for client %s (Query 3)", len(files), clientID)
-	return files, nil
-}
-
-// getQuery4ClientFiles returns all CSV partition files for Query 4
-// Files follow pattern: {clientID}-q4-partition-{XXX}.csv in baseDir
-func (fp *FileProcessor) getQuery4ClientFiles(clientID string) ([]string, error) {
-	// Query 4 files are in baseDir, not clientDir
-	prefix := fmt.Sprintf("%s-q4-partition-", clientID)
-	var files []string
-
-	// Read all files in base directory
-	entries, err := os.ReadDir(fp.baseDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read base directory %s: %v", fp.baseDir, err)
-	}
-
-	// Collect files matching the pattern
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) && strings.HasSuffix(entry.Name(), ".csv") {
-			files = append(files, filepath.Join(fp.baseDir, entry.Name()))
-		}
-	}
-
-	// Sort files for consistent ordering (by partition number)
-	sort.Strings(files)
-
-	testing_utils.LogInfo("FileProcessor", "Found %d CSV partition files for client %s", len(files), clientID)
+	testing_utils.LogInfo("FileProcessor", "Found %d CSV partition files for client %s (Query %d)", len(files), clientID, fp.queryType)
 	return files, nil
 }
 
 // ReadAndConvertFile reads a file and converts it to CSV format based on query type
 // For Query 2, 3, and 4: reads CSV and groups it (aggregation happens here)
 func (fp *FileProcessor) ReadAndConvertFile(filePath string) (string, error) {
+	var grouper RecordGrouper
+
 	switch fp.queryType {
 	case 2:
-		return fp.readAndGroupQuery2CSV(filePath)
+		// Extract partition from filename to get year
+		partition, err := fp.extractPartitionFromFilename(filePath)
+		if err != nil {
+			return "", err
+		}
+		year := fp.getYearFromPartition(partition)
+		grouper = &Query2Grouper{year: year}
 	case 3:
-		return fp.readAndGroupQuery3CSV(filePath)
+		// Extract partition from filename to get year and semester
+		partition, err := fp.extractPartitionFromFilename(filePath)
+		if err != nil {
+			return "", err
+		}
+		year, semester := fp.getYearSemesterFromPartition(partition)
+		grouper = &Query3Grouper{year: year, semester: semester}
 	case 4:
-		return fp.readAndGroupQuery4CSV(filePath)
+		grouper = &Query4Grouper{}
 	default:
 		return "", fmt.Errorf("unsupported query type: %d", fp.queryType)
 	}
+
+	return fp.readAndGroupCSV(filePath, grouper)
+}
+
+// extractPartitionFromFilename extracts partition number from filename
+// Filename format: {clientID}-q{queryType}-partition-{XXX}.csv
+func (fp *FileProcessor) extractPartitionFromFilename(filePath string) (int, error) {
+	fileName := filepath.Base(filePath)
+	fileNameWithoutExt := strings.TrimSuffix(fileName, ".csv")
+
+	// Extract partition number (last part after "partition-")
+	parts := strings.Split(fileNameWithoutExt, "-partition-")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid filename format: %s", fileName)
+	}
+
+	partitionStr := parts[1]
+	var partition int
+	if _, err := fmt.Sscanf(partitionStr, "%d", &partition); err != nil {
+		return 0, fmt.Errorf("failed to parse partition number from filename %s: %v", fileName, err)
+	}
+
+	return partition, nil
+}
+
+// getYearFromPartition returns year string from partition number
+// Partition 0 = 2024-S1, Partition 1 = 2024-S2, Partition 2 = 2025-S1
+func (fp *FileProcessor) getYearFromPartition(partition int) string {
+	switch partition {
+	case 0, 1:
+		return "2024"
+	case 2:
+		return "2025"
+	default:
+		return "2024" // Fallback
+	}
+}
+
+// getYearSemesterFromPartition returns year and semester strings from partition number
+// Partition 0 = 2024-S1, Partition 1 = 2024-S2, Partition 2 = 2025-S1
+func (fp *FileProcessor) getYearSemesterFromPartition(partition int) (string, string) {
+	switch partition {
+	case 0:
+		return "2024", "1"
+	case 1:
+		return "2024", "2"
+	case 2:
+		return "2025", "1"
+	default:
+		return "2024", "1" // Fallback
+	}
+}
+
+// readAndGroupCSV is a generic method that reads and groups CSV files using a RecordGrouper
+func (fp *FileProcessor) readAndGroupCSV(filePath string, grouper RecordGrouper) (string, error) {
+	// Open file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file %s: %v", filePath, err)
+	}
+	defer file.Close()
+
+	// Create buffered CSV reader for better I/O performance
+	bufferedFile := bufio.NewReaderSize(file, 64*1024) // 64KB buffer
+	reader := csv.NewReader(bufferedFile)
+	reader.ReuseRecord = true // Reuse record slice to reduce allocations
+
+	// Skip header row
+	_, err = reader.Read()
+	if err != nil {
+		if err == io.EOF {
+			return grouper.GetHeader(), nil // Empty file, return header only
+		}
+		return "", fmt.Errorf("failed to read header from %s: %v", filePath, err)
+	}
+
+	// Initialize grouped data based on query type
+	var groupedData map[string]interface{}
+	switch grouper.(type) {
+	case *Query2Grouper:
+		// Query 2: map[month|item_id] -> *Query2AggregatedData
+		groupedData = make(map[string]interface{}, 500)
+	case *Query3Grouper:
+		// Query 3: map[store_id] -> *Query3AggregatedData
+		groupedData = make(map[string]interface{}, 20)
+	case *Query4Grouper:
+		// Query 4: map[user_id|store_id] -> count (int)
+		groupedData = make(map[string]interface{}, 10000)
+	}
+
+	// Stream records one at a time and group them
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			if err == io.EOF {
+				break // Normal end of file
+			}
+			// Other error - log and continue
+			testing_utils.LogWarn("FileProcessor", "Error reading from %s: %v", filePath, err)
+			break
+		}
+
+		if len(record) < grouper.GetMinFieldCount() {
+			testing_utils.LogWarn("FileProcessor", "Skipping malformed record in %s: %v", filePath, record)
+			continue
+		}
+
+		// Process record using the grouper
+		key, shouldContinue, err := grouper.ProcessRecord(record)
+		if err != nil {
+			testing_utils.LogWarn("FileProcessor", "Skipping record in %s: %v", filePath, err)
+			continue
+		}
+		if !shouldContinue {
+			continue // Grouper decided to skip this record
+		}
+
+		// Aggregate based on query type
+		switch grouper.(type) {
+		case *Query2Grouper:
+			// Parse quantity and subtotal
+			quantity, _ := strconv.Atoi(strings.TrimSpace(record[2]))
+			subtotal, _ := strconv.ParseFloat(strings.TrimSpace(record[3]), 64)
+
+			// Get or create aggregated data
+			if groupedData[key] == nil {
+				groupedData[key] = &Query2AggregatedData{}
+			}
+			agg := groupedData[key].(*Query2AggregatedData)
+			agg.TotalQuantity += quantity
+			agg.TotalSubtotal += subtotal
+			agg.Count++
+
+		case *Query3Grouper:
+			// Parse final_amount
+			finalAmount, _ := strconv.ParseFloat(strings.TrimSpace(record[1]), 64)
+
+			// Get or create aggregated data
+			if groupedData[key] == nil {
+				groupedData[key] = &Query3AggregatedData{}
+			}
+			agg := groupedData[key].(*Query3AggregatedData)
+			agg.TotalFinalAmount += finalAmount
+			agg.Count++
+
+		case *Query4Grouper:
+			// Simple count aggregation
+			if count, ok := groupedData[key].(int); ok {
+				groupedData[key] = count + 1
+			} else {
+				groupedData[key] = 1
+			}
+		}
+	}
+
+	// Format output using the grouper
+	return grouper.FormatOutput(groupedData), nil
 }
 
 // readAndGroupQuery4CSV reads a CSV partition file and groups user_id,store_id pairs
 // Returns aggregated CSV with user_id,store_id,count
 // Memory-efficient: groups while reading, clears after each file
+// DEPRECATED: Use readAndGroupCSV with Query4Grouper instead
 func (fp *FileProcessor) readAndGroupQuery4CSV(filePath string) (string, error) {
 	// Open file
 	file, err := os.Open(filePath)
@@ -523,20 +633,8 @@ func (fp *FileProcessor) DeleteFile(filePath string) error {
 
 // DeleteClientDirectory deletes partition CSV files for Query 2, 3, and 4
 func (fp *FileProcessor) DeleteClientDirectory(clientID string) error {
-	var files []string
-	var err error
-
-	switch fp.queryType {
-	case 2:
-		files, err = fp.getQuery2ClientFiles(clientID)
-	case 3:
-		files, err = fp.getQuery3ClientFiles(clientID)
-	case 4:
-		files, err = fp.getQuery4ClientFiles(clientID)
-	default:
-		return fmt.Errorf("unsupported query type: %d", fp.queryType)
-	}
-
+	// Get all files for this client using the consolidated method
+	files, err := fp.GetClientFiles(clientID)
 	if err != nil {
 		return fmt.Errorf("failed to get files for deletion: %v", err)
 	}

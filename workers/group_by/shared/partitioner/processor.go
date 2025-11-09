@@ -3,9 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -190,61 +188,25 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 }
 
 // getTimeBasedPartition calculates partition based on semester from created_at field
-// Partition 0: 2024-S1 (Jan-Jun 2024)
-// Partition 1: 2024-S2 (Jul-Dec 2024)
-// Partition 2: 2025-S1 (Jan-Jun 2025)
+// Uses shared partition calculation utility
 func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtIndex int) (int, error) {
 	if createdAtIndex >= len(record.Fields) {
 		return 0, fmt.Errorf("record does not have created_at field at index %d", createdAtIndex)
 	}
 
-	createdAtStr := record.Fields[createdAtIndex]
-	createdAt, err := p.parseDate(createdAtStr)
+	createdAtStr := strings.TrimSpace(record.Fields[createdAtIndex])
+	if createdAtStr == "" {
+		return 0, fmt.Errorf("created_at field is empty")
+	}
+
+	// Parse date using shared utility
+	createdAt, err := shared.ParseDate(createdAtStr)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse created_at '%s': %v", createdAtStr, err)
 	}
 
-	year := createdAt.Year()
-	month := createdAt.Month()
-
-	// Determine semester: S1 (Jan-Jun) or S2 (Jul-Dec)
-	semester := 1
-	if month >= 7 {
-		semester = 2
-	}
-
-	// Map year-semester to partition
-	switch {
-	case year == 2024 && semester == 1:
-		return 0, nil
-	case year == 2024 && semester == 2:
-		return 1, nil
-	case year == 2025 && semester == 1:
-		return 2, nil
-	default:
-		// For dates outside our expected range, log warning and assign to a default partition
-		testing_utils.LogWarn("Partitioner Processor", "Unexpected date %s (year=%d, semester=%d), assigning to partition 0", createdAtStr, year, semester)
-		return 0, nil
-	}
-}
-
-// parseDate parses a date string in various formats
-func (p *PartitionerProcessor) parseDate(dateStr string) (time.Time, error) {
-	// Try different date formats
-	formats := []string{
-		"2006-01-02 15:04:05",
-		"2006-01-02",
-		"2006/01/02",
-		"2006-01-02T15:04:05Z",
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, dateStr); err == nil {
-			return t, nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("unable to parse date: %s", dateStr)
+	// Calculate partition using shared utility
+	return shared.CalculateTimeBasedPartition(createdAt), nil
 }
 
 // getPartition calculates the partition for a record based on query type
@@ -264,7 +226,7 @@ func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 			return 0, fmt.Errorf("record does not have enough fields for user_id")
 		}
 		userID := record.Fields[4]
-		return GetUserPartition(userID, p.NumPartitions)
+		return shared.CalculateUserBasedPartition(userID, p.NumPartitions)
 	default:
 		return 0, fmt.Errorf("unsupported query type: %d", p.QueryType)
 	}
@@ -359,14 +321,7 @@ func (p *PartitionerProcessor) recordsToCSV(records []Record) string {
 }
 
 // GetUserPartition calculates the partition for a given ID (user_id or item_id)
+// Deprecated: Use shared.CalculateUserBasedPartition instead
 func GetUserPartition(id string, NumPartitions int) (int, error) {
-	// Parse ID (handle both int and float formats)
-	idFloat, err := strconv.ParseFloat(id, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid ID %s: %v", id, err)
-	}
-	idInt := int(idFloat)
-
-	// Simple modulo partitioning
-	return idInt % NumPartitions, nil
+	return shared.CalculateUserBasedPartition(id, NumPartitions)
 }

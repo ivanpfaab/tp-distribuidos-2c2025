@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 )
 
 const (
@@ -103,164 +105,106 @@ func (fm *FileManager) AppendToPartitionCSV(clientID string, partition int, user
 	return nil
 }
 
-// AppendRecordsToPartitionCSV appends multiple user_id,store_id records to a Query 4 partition CSV file
-// More efficient than calling AppendToPartitionCSV multiple times
-func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition int, records []struct{ UserID, StoreID string }) error {
+// CSVRecord defines the interface for records that can be written to CSV
+type CSVRecord interface {
+	ToCSVRow() []string
+}
+
+// appendRecordsToPartitionCSV is a generic method to append records to a partition CSV file
+// header: CSV header row (e.g., []string{"month", "item_id", "quantity", "subtotal"})
+// records: Slice of records implementing CSVRecord interface
+func (fm *FileManager) appendRecordsToPartitionCSV(clientID string, partition int, header []string, records []CSVRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
 
+	filePath := fm.GetFilePath(clientID, partition)
+
+	// Check if file exists to determine if we need to write header
+	fileExists := true
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		fileExists = false
+	}
+
+	// Ensure base directory exists
+	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
+		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
+	}
+
+	// Open file in append mode
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write header if this is a new file
+	if !fileExists {
+		if err := writer.Write(header); err != nil {
+			return fmt.Errorf("failed to write header: %v", err)
+		}
+	}
+
+	// Write all records using ToCSVRow method
+	for _, rec := range records {
+		if err := writer.Write(rec.ToCSVRow()); err != nil {
+			return fmt.Errorf("failed to write record: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// AppendRecordsToPartitionCSV appends multiple user_id,store_id records to a Query 4 partition CSV file
+// More efficient than calling AppendToPartitionCSV multiple times
+func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition int, records []shared.Query4Record) error {
 	// Only for Query 4
 	if fm.queryType != 4 {
 		return fmt.Errorf("AppendRecordsToPartitionCSV only supports Query 4")
 	}
 
-	filePath := fm.GetFilePath(clientID, partition)
-
-	// Check if file exists to determine if we need to write header
-	fileExists := true
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		fileExists = false
+	// Convert to CSVRecord slice
+	csvRecords := make([]CSVRecord, len(records))
+	for i := range records {
+		csvRecords[i] = records[i]
 	}
 
-	// Ensure base directory exists
-	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
-	}
-
-	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write header if this is a new file
-	if !fileExists {
-		header := []string{"user_id", "store_id"}
-		if err := writer.Write(header); err != nil {
-			return fmt.Errorf("failed to write header: %v", err)
-		}
-	}
-
-	// Write all records
-	for _, rec := range records {
-		record := []string{rec.UserID, rec.StoreID}
-		if err := writer.Write(record); err != nil {
-			return fmt.Errorf("failed to write record: %v", err)
-		}
-	}
-
-	return nil
+	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"user_id", "store_id"}, csvRecords)
 }
 
 // AppendQuery2RecordsToPartitionCSV appends multiple month,item_id,quantity,subtotal records to a Query 2 partition CSV file
 // More efficient than appending records one by one
-func (fm *FileManager) AppendQuery2RecordsToPartitionCSV(clientID string, partition int, records []struct{ Month, ItemID, Quantity, Subtotal string }) error {
-	if len(records) == 0 {
-		return nil
-	}
-
+func (fm *FileManager) AppendQuery2RecordsToPartitionCSV(clientID string, partition int, records []shared.Query2Record) error {
 	// Only for Query 2
 	if fm.queryType != 2 {
 		return fmt.Errorf("AppendQuery2RecordsToPartitionCSV only supports Query 2")
 	}
 
-	filePath := fm.GetFilePath(clientID, partition)
-
-	// Check if file exists to determine if we need to write header
-	fileExists := true
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		fileExists = false
+	// Convert to CSVRecord slice
+	csvRecords := make([]CSVRecord, len(records))
+	for i := range records {
+		csvRecords[i] = records[i]
 	}
 
-	// Ensure base directory exists
-	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
-	}
-
-	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write header if this is a new file
-	if !fileExists {
-		header := []string{"month", "item_id", "quantity", "subtotal"}
-		if err := writer.Write(header); err != nil {
-			return fmt.Errorf("failed to write header: %v", err)
-		}
-	}
-
-	// Write all records
-	for _, rec := range records {
-		record := []string{rec.Month, rec.ItemID, rec.Quantity, rec.Subtotal}
-		if err := writer.Write(record); err != nil {
-			return fmt.Errorf("failed to write record: %v", err)
-		}
-	}
-
-	return nil
+	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"month", "item_id", "quantity", "subtotal"}, csvRecords)
 }
 
 // AppendQuery3RecordsToPartitionCSV appends multiple store_id,final_amount records to a Query 3 partition CSV file
 // More efficient than appending records one by one
-func (fm *FileManager) AppendQuery3RecordsToPartitionCSV(clientID string, partition int, records []struct{ StoreID, FinalAmount string }) error {
-	if len(records) == 0 {
-		return nil
-	}
-
+func (fm *FileManager) AppendQuery3RecordsToPartitionCSV(clientID string, partition int, records []shared.Query3Record) error {
 	// Only for Query 3
 	if fm.queryType != 3 {
 		return fmt.Errorf("AppendQuery3RecordsToPartitionCSV only supports Query 3")
 	}
 
-	filePath := fm.GetFilePath(clientID, partition)
-
-	// Check if file exists to determine if we need to write header
-	fileExists := true
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		fileExists = false
+	// Convert to CSVRecord slice
+	csvRecords := make([]CSVRecord, len(records))
+	for i := range records {
+		csvRecords[i] = records[i]
 	}
 
-	// Ensure base directory exists
-	if err := os.MkdirAll(fm.baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create base directory %s: %v", fm.baseDir, err)
-	}
-
-	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open partition file %s: %v", filePath, err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write header if this is a new file
-	if !fileExists {
-		header := []string{"store_id", "final_amount"}
-		if err := writer.Write(header); err != nil {
-			return fmt.Errorf("failed to write header: %v", err)
-		}
-	}
-
-	// Write all records
-	for _, rec := range records {
-		record := []string{rec.StoreID, rec.FinalAmount}
-		if err := writer.Write(record); err != nil {
-			return fmt.Errorf("failed to write record: %v", err)
-		}
-	}
-
-	return nil
+	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"store_id", "final_amount"}, csvRecords)
 }
