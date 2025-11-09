@@ -183,7 +183,7 @@ func (fp *FileProcessor) readAndGroupCSV(filePath string, grouper RecordGrouper)
 		groupedData = make(map[string]interface{}, 20)
 	case *Query4Grouper:
 		// Query 4: map[user_id|store_id] -> count (int)
-		groupedData = make(map[string]interface{}, 10000)
+		groupedData = make(map[string]interface{}) // Start empty, let Go grow as needed
 	}
 
 	// Stream records one at a time and group them
@@ -252,7 +252,15 @@ func (fp *FileProcessor) readAndGroupCSV(filePath string, grouper RecordGrouper)
 	}
 
 	// Format output using the grouper
-	return grouper.FormatOutput(groupedData), nil
+	result := grouper.FormatOutput(groupedData)
+
+	// Clear the map to free memory immediately after formatting
+	for k := range groupedData {
+		delete(groupedData, k)
+	}
+	groupedData = nil
+
+	return result, nil
 }
 
 // readAndGroupQuery4CSV reads a CSV partition file and groups user_id,store_id pairs
@@ -282,8 +290,8 @@ func (fp *FileProcessor) readAndGroupQuery4CSV(filePath string) (string, error) 
 	}
 
 	// Group records: map[user_id|store_id] -> count
-	// Pre-allocate map with estimated capacity (can be large for Q4)
-	grouped := make(map[string]int, 10000)
+	// Start empty, let Go grow as needed
+	grouped := make(map[string]int)
 
 	// Stream records one at a time instead of loading all into memory
 	for {
