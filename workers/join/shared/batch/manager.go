@@ -72,6 +72,7 @@ func (bm *Manager) ClearClient(clientID string) {
 }
 
 // CombineChunks combines all chunks for a client into a single chunk
+// For CSV data, it skips headers for subsequent chunks
 func (bm *Manager) CombineChunks(clientID string) (*chunk.Chunk, error) {
 	chunks := bm.GetChunks(clientID)
 	if len(chunks) == 0 {
@@ -85,9 +86,23 @@ func (bm *Manager) CombineChunks(clientID string) (*chunk.Chunk, error) {
 	var combinedData strings.Builder
 	var totalChunkSize int
 
-	for _, chunkMsg := range chunks {
-		combinedData.WriteString(chunkMsg.ChunkData)
-		totalChunkSize += chunkMsg.ChunkSize
+	for i, chunkMsg := range chunks {
+		chunkData := chunkMsg.ChunkData
+		
+		// For CSV data, skip header row for subsequent chunks
+		if i > 0 {
+			lines := strings.Split(chunkData, "\n")
+			if len(lines) > 1 {
+				// Skip first line (header) and join the rest
+				chunkData = strings.Join(lines[1:], "\n")
+			}
+		}
+		
+		combinedData.WriteString(chunkData)
+		if i < len(chunks)-1 && !strings.HasSuffix(chunkData, "\n") {
+			combinedData.WriteString("\n")
+		}
+		totalChunkSize += len(chunkData)
 	}
 
 	// Create a single combined chunk

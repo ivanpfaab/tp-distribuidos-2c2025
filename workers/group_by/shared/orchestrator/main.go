@@ -25,7 +25,10 @@ func main() {
 	log.Printf("Starting orchestrator for Query %d", queryType)
 
 	// Create orchestrator for the specified query type
-	orchestrator := NewGroupByOrchestrator(queryType)
+	orchestrator, err := NewGroupByOrchestrator(queryType)
+	if err != nil {
+		log.Fatalf("Failed to create orchestrator: %v", err)
+	}
 	defer orchestrator.Close()
 
 	// Start the orchestrator
@@ -39,6 +42,4 @@ func main() {
 	<-sigChan
 
 	log.Printf("Shutting down Group By Orchestrator for Query %d...", queryType)
-
-	select {}
 }

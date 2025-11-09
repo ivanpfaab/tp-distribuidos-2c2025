@@ -61,6 +61,11 @@ const (
 	Query3OrchestratorChunksQueue = "query3-orchestrator-chunks"
 	Query4OrchestratorChunksQueue = "query4-orchestrator-chunks"
 
+	// Group By Orchestrator Fanout Exchanges (for chunk notifications from workers)
+	Query2OrchestratorChunksExchange = "query2-orchestrator-chunks-exchange"
+	Query3OrchestratorChunksExchange = "query3-orchestrator-chunks-exchange"
+	Query4OrchestratorChunksExchange = "query4-orchestrator-chunks-exchange"
+
 	// Group By Worker Exchanges (Partitioner -> Worker)
 	Query2GroupByExchange = "query2-groupby-exchange"
 	Query3GroupByExchange = "query3-groupby-exchange"
@@ -179,6 +184,20 @@ func GetGroupByWorkerRoutingKey(queryType int, workerID int) string {
 		return "query3.worker." + workerIDStr
 	case 4:
 		return "query4.worker." + workerIDStr
+	default:
+		return ""
+	}
+}
+
+// GetOrchestratorChunksExchangeName returns the fanout exchange name for orchestrator chunk notifications
+func GetOrchestratorChunksExchangeName(queryType int) string {
+	switch queryType {
+	case 2:
+		return Query2OrchestratorChunksExchange
+	case 3:
+		return Query3OrchestratorChunksExchange
+	case 4:
+		return Query4OrchestratorChunksExchange
 	default:
 		return ""
 	}

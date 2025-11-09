@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -267,6 +268,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 	}
 
 	clientID := chunkMsg.ClientID
+	chunkNumber := int(chunkMsg.ChunkNumber)
 
 	// Check if dictionary is ready
 	if !w.dictManager.IsReady(clientID) {
@@ -277,10 +279,36 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 
 	// Add chunk to batch
 	w.batchManager.AddChunk(clientID, chunkMsg)
+	fmt.Printf("StoreID Join Worker: Added chunk %d for client %s to batch\n", chunkNumber, clientID)
 
-	// Check if this is the last chunk
-	if chunkMsg.IsLastChunk {
-		fmt.Printf("StoreID Join Worker: Received last chunk for client %s, processing batch...\n", clientID)
+	// Get expected number of workers from environment (set in docker-compose)
+	numWorkersStr := os.Getenv("NUM_WORKERS")
+	numWorkers := 3 // Default to 3 if not set
+	if numWorkersStr != "" {
+		if n, err := strconv.Atoi(numWorkersStr); err == nil && n > 0 {
+			numWorkers = n
+		}
+	}
+
+	// Get all chunks for this client
+	chunks := w.batchManager.GetChunks(clientID)
+	
+	// Check if we've received all expected chunks (chunk numbers 1 through numWorkers)
+	receivedChunkNumbers := make(map[int]bool)
+	for _, ch := range chunks {
+		receivedChunkNumbers[int(ch.ChunkNumber)] = true
+	}
+
+	allChunksReceived := true
+	for i := 1; i <= numWorkers; i++ {
+		if !receivedChunkNumbers[i] {
+			allChunksReceived = false
+			break
+		}
+	}
+
+	if allChunksReceived {
+		fmt.Printf("StoreID Join Worker: Received all %d chunks for client %s, processing batch...\n", numWorkers, clientID)
 
 		// Combine and process batch
 		combinedChunk, err := w.batchManager.CombineChunks(clientID)
@@ -300,6 +328,9 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 		// Clear batch
 		w.batchManager.ClearClient(clientID)
 		fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
+	} else {
+		receivedCount := len(receivedChunkNumbers)
+		fmt.Printf("StoreID Join Worker: Client %s has %d/%d chunks, waiting for more...\n", clientID, receivedCount, numWorkers)
 	}
 
 	delivery.Ack(false)

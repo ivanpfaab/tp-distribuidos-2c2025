@@ -3,16 +3,14 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
-	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
 // Record represents a single data record
@@ -95,26 +93,47 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 	}
 
 	// Group partitions by worker and send one chunk per worker
-	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
-	// Note: workerID starts from 1 (not 0) to match docker-compose configuration
-	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
-	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
-	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
-	for workerID := 1; workerID <= p.NumWorkers; workerID++ {
-		// Collect all records for this worker from its assigned partitions
-		workerRecords := []Record{}
-		targetRemainder := workerID % p.NumWorkers
-		for partition := 0; partition < p.NumPartitions; partition++ {
-			if partition%p.NumWorkers == targetRemainder {
-				if records, exists := partitionedRecords[partition]; exists {
-					workerRecords = append(workerRecords, records...)
-				}
+	// For Query 2 & 3: 1:1 mapping (Worker 1 → Partition 0, Worker 2 → Partition 1, Worker 3 → Partition 2)
+	// For Query 4: Modulo-based distribution (many partitions distributed across workers)
+	if p.QueryType == 2 || p.QueryType == 3 {
+		// Direct 1:1 mapping for Query 2 & 3
+		for workerID := 1; workerID <= p.NumWorkers; workerID++ {
+			// Worker ID is 1-based, partition is 0-based
+			// Worker 1 → Partition 0, Worker 2 → Partition 1, Worker 3 → Partition 2
+			partition := workerID - 1
+			workerRecords := []Record{}
+			if records, exists := partitionedRecords[partition]; exists {
+				workerRecords = append(workerRecords, records...)
+			}
+
+			// Send chunk to this worker
+			if err := p.sendToWorker(workerID, workerRecords, chunkMessage); err != nil {
+				return fmt.Errorf("failed to send to worker %d: %v", workerID, err)
 			}
 		}
+	} else {
+		// Modulo-based distribution for Query 4 (many partitions)
+		// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
+		// Note: workerID starts from 1 (not 0) to match docker-compose configuration
+		// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
+		// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
+		// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
+		for workerID := 1; workerID <= p.NumWorkers; workerID++ {
+			// Collect all records for this worker from its assigned partitions
+			workerRecords := []Record{}
+			targetRemainder := workerID % p.NumWorkers
+			for partition := 0; partition < p.NumPartitions; partition++ {
+				if partition%p.NumWorkers == targetRemainder {
+					if records, exists := partitionedRecords[partition]; exists {
+						workerRecords = append(workerRecords, records...)
+					}
+				}
+			}
 
-		// Send chunk to this worker
-		if err := p.sendToWorker(workerID, workerRecords, chunkMessage); err != nil {
-			return fmt.Errorf("failed to send to worker %d: %v", workerID, err)
+			// Send chunk to this worker
+			if err := p.sendToWorker(workerID, workerRecords, chunkMessage); err != nil {
+				return fmt.Errorf("failed to send to worker %d: %v", workerID, err)
+			}
 		}
 	}
 
@@ -169,61 +188,25 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 }
 
 // getTimeBasedPartition calculates partition based on semester from created_at field
-// Partition 0: 2024-S1 (Jan-Jun 2024)
-// Partition 1: 2024-S2 (Jul-Dec 2024)
-// Partition 2: 2025-S1 (Jan-Jun 2025)
+// Uses shared partition calculation utility
 func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtIndex int) (int, error) {
 	if createdAtIndex >= len(record.Fields) {
 		return 0, fmt.Errorf("record does not have created_at field at index %d", createdAtIndex)
 	}
 
-	createdAtStr := record.Fields[createdAtIndex]
-	createdAt, err := p.parseDate(createdAtStr)
+	createdAtStr := strings.TrimSpace(record.Fields[createdAtIndex])
+	if createdAtStr == "" {
+		return 0, fmt.Errorf("created_at field is empty")
+	}
+
+	// Parse date using shared utility
+	createdAt, err := shared.ParseDate(createdAtStr)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse created_at '%s': %v", createdAtStr, err)
 	}
 
-	year := createdAt.Year()
-	month := createdAt.Month()
-
-	// Determine semester: S1 (Jan-Jun) or S2 (Jul-Dec)
-	semester := 1
-	if month >= 7 {
-		semester = 2
-	}
-
-	// Map year-semester to partition
-	switch {
-	case year == 2024 && semester == 1:
-		return 0, nil
-	case year == 2024 && semester == 2:
-		return 1, nil
-	case year == 2025 && semester == 1:
-		return 2, nil
-	default:
-		// For dates outside our expected range, log warning and assign to a default partition
-		testing_utils.LogWarn("Partitioner Processor", "Unexpected date %s (year=%d, semester=%d), assigning to partition 0", createdAtStr, year, semester)
-		return 0, nil
-	}
-}
-
-// parseDate parses a date string in various formats
-func (p *PartitionerProcessor) parseDate(dateStr string) (time.Time, error) {
-	// Try different date formats
-	formats := []string{
-		"2006-01-02 15:04:05",
-		"2006-01-02",
-		"2006/01/02",
-		"2006-01-02T15:04:05Z",
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, dateStr); err == nil {
-			return t, nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("unable to parse date: %s", dateStr)
+	// Calculate partition using shared utility
+	return shared.CalculateTimeBasedPartition(createdAt), nil
 }
 
 // getPartition calculates the partition for a record based on query type
@@ -243,7 +226,7 @@ func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 			return 0, fmt.Errorf("record does not have enough fields for user_id")
 		}
 		userID := record.Fields[4]
-		return GetUserPartition(userID, p.NumPartitions)
+		return shared.CalculateUserBasedPartition(userID, p.NumPartitions)
 	default:
 		return 0, fmt.Errorf("unsupported query type: %d", p.QueryType)
 	}
@@ -338,14 +321,7 @@ func (p *PartitionerProcessor) recordsToCSV(records []Record) string {
 }
 
 // GetUserPartition calculates the partition for a given ID (user_id or item_id)
+// Deprecated: Use shared.CalculateUserBasedPartition instead
 func GetUserPartition(id string, NumPartitions int) (int, error) {
-	// Parse ID (handle both int and float formats)
-	idFloat, err := strconv.ParseFloat(id, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid ID %s: %v", id, err)
-	}
-	idInt := int(idFloat)
-
-	// Simple modulo partitioning
-	return idInt % NumPartitions, nil
+	return shared.CalculateUserBasedPartition(id, NumPartitions)
 }
