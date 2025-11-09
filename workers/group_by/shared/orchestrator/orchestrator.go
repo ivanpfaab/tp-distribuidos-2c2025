@@ -171,7 +171,7 @@ func (gbo *GroupByOrchestrator) aggregateClientFiles(files []string) (string, er
 	case *Query3Grouper:
 		aggregatedData = make(map[string]interface{}, 20)
 	case *Query4Grouper:
-		aggregatedData = make(map[string]interface{}, 10000)
+		aggregatedData = make(map[string]interface{}) // Start empty, let Go grow as needed
 	}
 
 	// Read and aggregate data from all partition files
@@ -184,7 +184,15 @@ func (gbo *GroupByOrchestrator) aggregateClientFiles(files []string) (string, er
 	}
 
 	// Format output using the grouper
-	return grouper.FormatOutput(aggregatedData), nil
+	result := grouper.FormatOutput(aggregatedData)
+	
+	// Clear the map to free memory immediately after formatting
+	for k := range aggregatedData {
+		delete(aggregatedData, k)
+	}
+	aggregatedData = nil
+	
+	return result, nil
 }
 
 // aggregatePartitionFile reads a partition file and adds its records to the aggregated data map
