@@ -881,7 +881,11 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query4-partitioner:
+      query4-partitioner-1:
+        condition: service_started
+      query4-partitioner-2:
+        condition: service_started
+      query4-partitioner-3:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -905,7 +909,11 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query4-partitioner:
+      query4-partitioner-1:
+        condition: service_started
+      query4-partitioner-2:
+        condition: service_started
+      query4-partitioner-3:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -929,7 +937,11 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query4-partitioner:
+      query4-partitioner-1:
+        condition: service_started
+      query4-partitioner-2:
+        condition: service_started
+      query4-partitioner-3:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -1050,11 +1062,7 @@ services:
         condition: service_started
       query3-groupby-worker-3:
         condition: service_started
-      query4-orchestrator-1:
-        condition: service_started
-      query4-orchestrator-2:
-        condition: service_started
-      query4-orchestrator-3:
+      query4-orchestrator:
         condition: service_started
       query4-partitioner-1:
         condition: service_started
