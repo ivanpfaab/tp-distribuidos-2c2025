@@ -78,7 +78,7 @@ func (pm *PartitionManager) LookupEntity(clientID string, entityID string, parse
 		if len(record) == 0 {
 			continue
 		}
-		
+
 		// Skip header
 		if strings.Contains(strings.ToLower(record[0]), "user_id") {
 			continue
@@ -95,9 +95,11 @@ func (pm *PartitionManager) LookupEntity(clientID string, entityID string, parse
 }
 
 // CleanupClientFiles deletes all partition files for a client
+// Since each reader only has access to its own volume (which contains only its partitions),
+// this will automatically only delete the partitions owned by this reader
 func (pm *PartitionManager) CleanupClientFiles(clientID string) error {
 	pattern := filepath.Join(pm.sharedDataDir, fmt.Sprintf("%s-users-partition-*.csv", clientID))
-	
+
 	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return fmt.Errorf("error finding files for client %s: %w", clientID, err)
@@ -121,7 +123,7 @@ func (pm *PartitionManager) CleanupClientFiles(clientID string) error {
 func parseIDToFloat(id string) (float64, error) {
 	id = strings.TrimSpace(id)
 	id = strings.TrimSuffix(id, ".0")
-	
+
 	var result float64
 	_, err := fmt.Sscanf(id, "%f", &result)
 	if err != nil {
@@ -129,4 +131,3 @@ func parseIDToFloat(id string) (float64, error) {
 	}
 	return result, nil
 }
-

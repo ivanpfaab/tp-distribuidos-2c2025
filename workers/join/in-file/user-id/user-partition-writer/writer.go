@@ -42,10 +42,17 @@ func NewUserPartitionWriter(connConfig *middleware.ConnectionConfig, writerConfi
 		return nil, fmt.Errorf("failed to create consumer for queue %s", queueName)
 	}
 
-	// Ensure shared data directory exists
-	if err := os.MkdirAll(SharedDataDir, 0755); err != nil {
+	// Ensure shared data directory exists with 0777 permissions
+	// This allows both writer and reader containers to create/delete files
+	if err := os.MkdirAll(SharedDataDir, 0777); err != nil {
 		consumer.Close()
 		return nil, fmt.Errorf("failed to create shared data directory: %w", err)
+	}
+	// Ensure directory has correct permissions (in case it already existed)
+	if err := os.Chmod(SharedDataDir, 0777); err != nil {
+		// Log but don't fail - this is best effort
+		fmt.Printf("User Partition Writer %d: Warning - failed to set directory permissions on %s: %v\n",
+			writerConfig.WriterID, SharedDataDir, err)
 	}
 
 	// Create cleanup consumer for userid cleanup signals

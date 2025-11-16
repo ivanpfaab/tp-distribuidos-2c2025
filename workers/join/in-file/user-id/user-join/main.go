@@ -17,10 +17,17 @@ func main() {
 		return
 	}
 
-	// Create reader data directory
-	if err := os.MkdirAll(SharedDataDir, 0755); err != nil {
+	// Create reader data directory with 0777 permissions
+	// This allows both writer and reader containers to create/delete files
+	if err := os.MkdirAll(SharedDataDir, 0777); err != nil {
 		fmt.Printf("Failed to create reader data directory: %v\n", err)
 		return
+	}
+	// Ensure directory has correct permissions (in case it already existed)
+	if err := os.Chmod(SharedDataDir, 0777); err != nil {
+		// Log but don't fail - this is best effort
+		fmt.Printf("User Join Reader: Warning - failed to set directory permissions on %s: %v\n",
+			SharedDataDir, err)
 	}
 
 	// Create Join by User ID Worker (Reader only - writers are separate now)

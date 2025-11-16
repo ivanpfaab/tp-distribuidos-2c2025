@@ -203,20 +203,16 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 	// Process and send joined chunk
 	if err := jw.processAndSendChunk(chunkMsg, topUsers); err != 0 {
 		fmt.Printf("Join by User ID Worker: Failed to process chunk: %v\n", err)
-		delivery.Ack(false) // Still ACK to avoid infinite requeue loop
+		delivery.Nack(false, true)
 		return err
 	}
 
-	// Cleanup when last chunk is processed
-	if chunkMsg.IsLastChunk {
-		fmt.Printf("Join by User ID Worker: Last chunk processed for client %s, performing cleanup\n", chunkMsg.ClientID)
-		jw.performCleanup(chunkMsg.ClientID)
+	jw.performCleanup(chunkMsg.ClientID)
 
-		// Remove completion signal tracking for this client
-		jw.completionMutex.Lock()
-		delete(jw.completionSignals, chunkMsg.ClientID)
-		jw.completionMutex.Unlock()
-	}
+	// Remove completion signal tracking for this client
+	jw.completionMutex.Lock()
+	delete(jw.completionSignals, chunkMsg.ClientID)
+	jw.completionMutex.Unlock()
 
 	delivery.Ack(false)
 	return 0
@@ -301,14 +297,15 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 }
 
 // performCleanup performs cleanup operations for partition files
+// Since each reader only has access to its own volume, it will automatically only delete
+// the partition files that belong to it (volume isolation ensures this)
 func (jw *JoinByUserIdWorker) performCleanup(clientID string) {
-	fmt.Printf("Join by User ID Worker: Performing cleanup for client: %s (deletion commented out for testing)\n", clientID)
+	fmt.Printf("Join by User ID Worker: Performing cleanup for client: %s (reader %d)\n",
+		clientID, jw.readerConfig.ReaderID)
 
-	// TODO: Re-enable cleanup once we fix the partition-specific deletion logic
-	// Each reader should only delete partitions it owns (partition % numReaders == readerID - 1)
-	// if err := jw.partitionManager.CleanupClientFiles(clientID); err != nil {
-	// 	fmt.Printf("Join by User ID Worker: Error during cleanup for client %s: %v\n", clientID, err)
-	// } else {
-	// 	fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s\n", clientID)
-	// }
+	if err := jw.partitionManager.CleanupClientFiles(clientID); err != nil {
+		fmt.Printf("Join by User ID Worker: Error during cleanup for client %s: %v\n", clientID, err)
+	} else {
+		fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s (reader %d)\n", clientID, jw.readerConfig.ReaderID)
+	}
 }
