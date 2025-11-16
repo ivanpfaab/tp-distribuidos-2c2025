@@ -8,15 +8,15 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
-	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 )
 
 // GroupByWorker handles group by operations for partitioned chunks
 type GroupByWorker struct {
 	config               *WorkerConfig
 	consumer             *exchange.ExchangeConsumer
-	orchestratorProducer *workerqueue.QueueMiddleware
+	orchestratorProducer *exchange.ExchangeMiddleware
 	workerIDStr          string
 	fileManager          *FileManager
 	processor            *ChunkProcessor
@@ -43,25 +43,25 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 	}
 	exchangeDeclarer.Close()
 
-	// Create producer for orchestrator chunk notifications
-	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(config.OrchestratorQueue, config.ConnectionConfig)
+	// Create producer for orchestrator chunk notifications (fanout exchange)
+	orchestratorProducer := exchange.NewMessageMiddlewareExchange(config.OrchestratorExchange, []string{}, config.ConnectionConfig)
 	if orchestratorProducer == nil {
 		consumer.Close()
-		return nil, fmt.Errorf("failed to create orchestrator producer")
+		return nil, fmt.Errorf("failed to create orchestrator exchange producer")
 	}
 
-	// Declare orchestrator queue
-	if err := orchestratorProducer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare fanout exchange for orchestrator notifications
+	if err := orchestratorProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
 		consumer.Close()
 		orchestratorProducer.Close()
-		return nil, fmt.Errorf("failed to declare orchestrator queue: %v", err)
+		return nil, fmt.Errorf("failed to declare orchestrator fanout exchange: %v", err)
 	}
 
 	// Generate worker ID string
 	workerIDStr := fmt.Sprintf("query%d-groupby-worker-%d", config.QueryType, config.WorkerID)
 
 	// Create file manager and processor
-	fileManager := NewFileManager(config.QueryType)
+	fileManager := NewFileManager(config.QueryType, config.WorkerID)
 	processor := NewChunkProcessor(config.QueryType)
 
 	return &GroupByWorker{
@@ -125,6 +125,38 @@ func (w *GroupByWorker) processMessage(messageBody []byte) error {
 	return w.processChunk(chunkMessage)
 }
 
+// RecordAppender defines how to append records to CSV for a specific query type
+type RecordAppender interface {
+	AppendRecords(clientID string, partition int, records interface{}) error
+}
+
+// Query2RecordAppender appends Query2Record to CSV
+type Query2RecordAppender struct {
+	fileManager *FileManager
+}
+
+func (a *Query2RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
+	return a.fileManager.AppendQuery2RecordsToPartitionCSV(clientID, partition, records.([]shared.Query2Record))
+}
+
+// Query3RecordAppender appends Query3Record to CSV
+type Query3RecordAppender struct {
+	fileManager *FileManager
+}
+
+func (a *Query3RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
+	return a.fileManager.AppendQuery3RecordsToPartitionCSV(clientID, partition, records.([]shared.Query3Record))
+}
+
+// Query4RecordAppender appends Query4Record to CSV
+type Query4RecordAppender struct {
+	fileManager *FileManager
+}
+
+func (a *Query4RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
+	return a.fileManager.AppendRecordsToPartitionCSV(clientID, partition, records.([]shared.Query4Record))
+}
+
 // processChunk processes a single chunk with file-based group by aggregation
 func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 	// testing_utils.LogInfo("GroupBy Worker", "Processing chunk %d from client %s, file %s (IsLastChunk=%t, IsLastFromTable=%t)",
@@ -132,57 +164,84 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 	// 	chunkMessage.IsLastChunk, chunkMessage.IsLastFromTable)
 
 	// Determine partition(s) for this worker
-	// For Q2/Q3: worker ID = partition (1:1 mapping)
-	// For Q4: worker handles multiple partitions
 	partitions := w.getPartitionsForWorker()
 
-	// Process each partition
-	for _, partition := range partitions {
-		// Load existing data from file
-		currentData, err := w.fileManager.LoadData(chunkMessage.ClientID, partition)
-		if err != nil {
-			return fmt.Errorf("failed to load data for partition %d: %v", partition, err)
-		}
+	// Query 2, 3, and 4 use CSV append strategy (no JSON load/save)
+	var appender RecordAppender
+	var partitionRecords interface{}
+	var err error
 
-		// Process chunk and update data
-		updatedData, err := w.processor.ProcessChunk(chunkMessage, currentData, partition, w.config.NumPartitions)
-		if err != nil {
-			return fmt.Errorf("failed to process chunk for partition %d: %v", partition, err)
-		}
-
-		// Save updated data back to file
-		if err := w.fileManager.SaveData(chunkMessage.ClientID, partition, updatedData); err != nil {
-			return fmt.Errorf("failed to save data for partition %d: %v", partition, err)
-		}
-
-		// testing_utils.LogInfo("GroupBy Worker", "Successfully processed and saved partition %d for chunk %d",
-		// 	partition, chunkMessage.ChunkNumber)
+	switch w.config.QueryType {
+	case 2:
+		appender = &Query2RecordAppender{fileManager: w.fileManager}
+		partitionRecords, err = w.processor.ProcessQuery2ChunkForCSV(chunkMessage, partitions)
+	case 3:
+		appender = &Query3RecordAppender{fileManager: w.fileManager}
+		partitionRecords, err = w.processor.ProcessQuery3ChunkForCSV(chunkMessage, partitions)
+	case 4:
+		appender = &Query4RecordAppender{fileManager: w.fileManager}
+		partitionRecords, err = w.processor.ProcessQuery4ChunkForCSV(chunkMessage, partitions, w.config.NumPartitions)
+	default:
+		return fmt.Errorf("unsupported query type: %d", w.config.QueryType)
 	}
 
-	// Send chunk notification to orchestrator AFTER successful file writes
+	if err != nil {
+		return fmt.Errorf("failed to extract records: %v", err)
+	}
+
+	// Convert to map[int]interface{} for generic processing
+	recordsMap := make(map[int]interface{})
+	switch v := partitionRecords.(type) {
+	case map[int][]shared.Query2Record:
+		for k, val := range v {
+			recordsMap[k] = val
+		}
+	case map[int][]shared.Query3Record:
+		for k, val := range v {
+			recordsMap[k] = val
+		}
+	case map[int][]shared.Query4Record:
+		for k, val := range v {
+			recordsMap[k] = val
+		}
+	default:
+		return fmt.Errorf("unknown record type: %T", partitionRecords)
+	}
+
+	// Append records to CSV files for each partition (batch write per partition)
+	for partition, records := range recordsMap {
+		if err := appender.AppendRecords(chunkMessage.ClientID, partition, records); err != nil {
+			return fmt.Errorf("failed to append to partition %d CSV: %v", partition, err)
+		}
+
+		// Get record count for this partition for logging
+		var partitionRecordCount int
+		switch r := records.(type) {
+		case []shared.Query2Record:
+			partitionRecordCount = len(r)
+		case []shared.Query3Record:
+			partitionRecordCount = len(r)
+		case []shared.Query4Record:
+			partitionRecordCount = len(r)
+		}
+
+		testing_utils.LogInfo("GroupBy Worker", "Appended %d records to partition %d CSV for chunk %d",
+			partitionRecordCount, partition, chunkMessage.ChunkNumber)
+	}
+
+	// Send chunk notification to orchestrator AFTER successful CSV writes
 	return w.sendChunkNotification(chunkMessage)
 }
 
 // getPartitionsForWorker returns the list of partitions this worker handles
 func (w *GroupByWorker) getPartitionsForWorker() []int {
-	// For Q2/Q3: worker ID maps directly to partition (1:1 mapping)
-	if w.config.QueryType == 2 || w.config.QueryType == 3 {
-		return []int{w.config.WorkerID}
-	}
-
-	// For Q4: worker handles multiple partitions based on modulo
-	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
-	// Since workerID starts from 1:
-	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
-	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
-	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
-	partitions := []int{}
-	targetRemainder := w.config.WorkerID % w.config.NumWorkers
-	for partition := 0; partition < w.config.NumPartitions; partition++ {
-		if partition%w.config.NumWorkers == targetRemainder {
-			partitions = append(partitions, partition)
-		}
-	}
+	// Use shared partition calculation utility
+	partitions := shared.GetPartitionsForWorker(
+		w.config.QueryType,
+		w.config.WorkerID,
+		w.config.NumWorkers,
+		w.config.NumPartitions,
+	)
 	return partitions
 }
 
@@ -205,8 +264,8 @@ func (w *GroupByWorker) sendChunkNotification(chunkMessage *chunk.Chunk) error {
 		return fmt.Errorf("failed to serialize chunk notification: %v", err)
 	}
 
-	// Send to orchestrator
-	if sendErr := w.orchestratorProducer.Send(serializedNotification); sendErr != 0 {
+	// Send to orchestrator via fanout exchange (empty routing keys = fanout)
+	if sendErr := w.orchestratorProducer.Send(serializedNotification, []string{}); sendErr != 0 {
 		return fmt.Errorf("failed to send chunk notification to orchestrator: %v", sendErr)
 	}
 

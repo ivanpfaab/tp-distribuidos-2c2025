@@ -21,19 +21,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Start the gateway (non-blocking - returns immediately)
+	if err := gateway.Start(); err != 0 {
+		fmt.Printf("Failed to start query gateway: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Query Gateway started successfully. Waiting for messages from results dispatcher exchange...")
+
 	// Set up graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start the gateway in a goroutine
-	go func() {
-		if err := gateway.Start(); err != 0 {
-			fmt.Printf("Failed to start query gateway: %v\n", err)
-			os.Exit(1)
-		}
-	}()
-
-	fmt.Println("Query Gateway started successfully. Waiting for messages from streaming exchange...")
 
 	// Wait for shutdown signal
 	<-sigChan

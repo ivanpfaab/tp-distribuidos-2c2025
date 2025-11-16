@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 
@@ -122,6 +123,8 @@ func (st *StoreTopUsers) GetTopUsers() []*UserRecord {
 // ClientState holds the state for a specific client
 type ClientState struct {
 	topUsersByStore map[string]*StoreTopUsers // key: store_id
+	receivedChunks  map[int]bool               // Track which chunk numbers we've received (chunk number = worker ID)
+	numWorkers      int                        // Expected number of chunks
 }
 
 // TopUsersWorker processes user-store aggregations and selects top users per store
@@ -130,6 +133,7 @@ type TopUsersWorker struct {
 	producer     *workerqueue.QueueMiddleware
 	config       *middleware.ConnectionConfig
 	clientStates map[string]*ClientState // key: ClientID
+	numWorkers   int                     // Number of workers (from environment)
 }
 
 // NewTopUsersWorker creates a new top users worker
@@ -140,6 +144,16 @@ func NewTopUsersWorker() *TopUsersWorker {
 		Username: "admin",
 		Password: "password",
 	}
+
+	// Get NUM_WORKERS from environment
+	numWorkersStr := os.Getenv("NUM_WORKERS")
+	numWorkers := 3 // Default to 3 if not set
+	if numWorkersStr != "" {
+		if n, err := strconv.Atoi(numWorkersStr); err == nil && n > 0 {
+			numWorkers = n
+		}
+	}
+	log.Printf("Top Users Worker: Expecting %d chunks per client", numWorkers)
 
 	// Create consumer for top users queue
 	consumer := workerqueue.NewQueueConsumer(queues.Query4TopUsersQueue, config)
@@ -179,6 +193,7 @@ func NewTopUsersWorker() *TopUsersWorker {
 		producer:     producer,
 		config:       config,
 		clientStates: make(map[string]*ClientState),
+		numWorkers:   numWorkers,
 	}
 }
 
@@ -187,6 +202,8 @@ func (tw *TopUsersWorker) getOrCreateClientState(clientID string) *ClientState {
 	if tw.clientStates[clientID] == nil {
 		tw.clientStates[clientID] = &ClientState{
 			topUsersByStore: make(map[string]*StoreTopUsers),
+			receivedChunks:  make(map[int]bool),
+			numWorkers:      tw.numWorkers,
 		}
 	}
 	return tw.clientStates[clientID]
@@ -202,19 +219,34 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	}
 
 	clientID := chunkMsg.ClientID
+	chunkNumber := int(chunkMsg.ChunkNumber)
 	clientState := tw.getOrCreateClientState(clientID)
+
+	log.Printf("Top Users Worker: Received chunk %d for client %s (expecting chunks 1-%d)", chunkNumber, clientID, clientState.numWorkers)
+
+	// Mark this chunk as received
+	clientState.receivedChunks[chunkNumber] = true
 
 	// Process the chunk data first (if it has data)
 	if chunkMsg.ChunkSize > 0 && len(chunkMsg.ChunkData) > 0 {
+		log.Printf("Top Users Worker: Processing data chunk %d for client %s", chunkNumber, clientID)
 		if err := tw.processChunkData(chunkMsg, clientState); err != nil {
 			log.Printf("Top Users Worker: Failed to process chunk data: %v", err)
 			return middleware.MessageMiddlewareMessageError
 		}
 	}
 
-	// Check if this is the last chunk (EOS marker)
-	if chunkMsg.IsLastChunk {
-		log.Printf("Top Users Worker: Received last chunk for client %s, sending top users...", clientID)
+	// Check if we've received all expected chunks (1 through numWorkers)
+	allChunksReceived := true
+	for i := 1; i <= clientState.numWorkers; i++ {
+		if !clientState.receivedChunks[i] {
+			allChunksReceived = false
+			break
+		}
+	}
+
+	if allChunksReceived {
+		log.Printf("Top Users Worker: Received all %d chunks for client %s, sending top users...", clientState.numWorkers, clientID)
 
 		if err := tw.sendTopUsers(clientID, clientState); err != 0 {
 			log.Printf("Top Users Worker: Failed to send top users: %v", err)
@@ -223,6 +255,9 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 
 		// Clear client state
 		delete(tw.clientStates, clientID)
+	} else {
+		receivedCount := len(clientState.receivedChunks)
+		log.Printf("Top Users Worker: Client %s has %d/%d chunks, waiting for more...", clientID, receivedCount, clientState.numWorkers)
 	}
 
 	return 0
@@ -291,7 +326,6 @@ func (tw *TopUsersWorker) sendTopUsers(clientID string, clientState *ClientState
 		1,      // Chunk Number
 		true,   // Is Last Chunk
 		true,   // Is Last File (final results)
-		3,      // Step 3 (after map and reduce)
 		len(csvData),
 		1, // Table ID 1
 		csvData,

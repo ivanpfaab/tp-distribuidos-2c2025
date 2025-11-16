@@ -142,6 +142,12 @@ services:
         condition: service_healthy
       join-data-handler-1:
         condition: service_started
+      query3-orchestrator-1:
+        condition: service_started
+      query3-orchestrator-2:
+        condition: service_started
+      query3-orchestrator-3:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
@@ -149,71 +155,213 @@ services:
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "1"
       STOREID_BATCH_SIZE: 5
+      NUM_WORKERS: "3"
     profiles: ["orchestration"]
 
-  # Query 2 Group By Orchestrator
-  query2-orchestrator:
+  # Query 2 Group By Orchestrator 1 (for worker 1)
+  query2-orchestrator-1:
     build:
       context: .
       dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
-    container_name: query2-orchestrator
+    container_name: query2-orchestrator-1
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-groupby-worker-1:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
+      WORKER_ID: "1"
     volumes:
-      - query2-groupby-data:/app/groupby-data
+      - query2-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  # Query 3 Group By Orchestrator
-  query3-orchestrator:
+  # Query 2 Group By Orchestrator 2 (for worker 2)
+  query2-orchestrator-2:
     build:
       context: .
       dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
-    container_name: query3-orchestrator
+    container_name: query2-orchestrator-2
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query2-groupby-worker-2:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      WORKER_ID: "2"
+    volumes:
+      - query2-groupby-worker-2-data:/app/groupby-data
+    profiles: ["orchestration"]
+
+  # Query 2 Group By Orchestrator 3 (for worker 3)
+  query2-orchestrator-3:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: query2-orchestrator-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query2-groupby-worker-3:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      WORKER_ID: "3"
+    volumes:
+      - query2-groupby-worker-3-data:/app/groupby-data
+    profiles: ["orchestration"]
+
+  # Query 3 Group By Orchestrator 1 (for worker 1)
+  query3-orchestrator-1:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: query3-orchestrator-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-groupby-worker-1:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
+      WORKER_ID: "1"
     volumes:
-      - query3-groupby-data:/app/groupby-data
+      - query3-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  # Query 4 Group By Orchestrator
-  query4-orchestrator:
+  # Query 3 Group By Orchestrator 2 (for worker 2)
+  query3-orchestrator-2:
     build:
       context: .
       dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
-    container_name: query4-orchestrator
+    container_name: query3-orchestrator-2
     depends_on:
       rabbitmq:
         condition: service_healthy
+      query3-groupby-worker-2:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "3"
+      WORKER_ID: "2"
+    volumes:
+      - query3-groupby-worker-2-data:/app/groupby-data
+    profiles: ["orchestration"]
+
+  # Query 3 Group By Orchestrator 3 (for worker 3)
+  query3-orchestrator-3:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: query3-orchestrator-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query3-groupby-worker-3:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "3"
+      WORKER_ID: "3"
+    volumes:
+      - query3-groupby-worker-3-data:/app/groupby-data
+    profiles: ["orchestration"]
+
+  # Query 4 Group By Orchestrator 1 (for worker 1)
+  query4-orchestrator-1:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: query4-orchestrator-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-groupby-worker-1:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
+      WORKER_ID: "1"
     volumes:
-      - query4-groupby-data:/app/groupby-data
+      - query4-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
 
-  # Streaming service (NOT SCALABLE - outputs to stdout)
-  streaming-service:
+  # Query 4 Group By Orchestrator 2 (for worker 2)
+  query4-orchestrator-2:
     build:
       context: .
-      dockerfile: ./stream/Dockerfile
-    container_name: streaming-service
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: query4-orchestrator-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-groupby-worker-2:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      WORKER_ID: "2"
+    volumes:
+      - query4-groupby-worker-2-data:/app/groupby-data
+    profiles: ["orchestration"]
+
+  # Query 4 Group By Orchestrator 3 (for worker 3)
+  query4-orchestrator-3:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/orchestrator/Dockerfile
+    container_name: query4-orchestrator-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      query4-groupby-worker-3:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      WORKER_ID: "3"
+    volumes:
+      - query4-groupby-worker-3-data:/app/groupby-data
+    profiles: ["orchestration"]
+
+  # Results dispatcher (NOT SCALABLE - outputs to stdout)
+  results-dispatcher:
+    build:
+      context: .
+      dockerfile: ./dispatcher/Dockerfile
+    container_name: results-dispatcher
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -484,8 +632,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query2-orchestrator:
-        condition: service_started
       query2-partitioner:
         condition: service_started
     environment:
@@ -498,7 +644,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "3"
     volumes:
-      - query2-groupby-data:/app/groupby-data
+      - query2-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 2 GroupBy Worker 2
@@ -510,8 +656,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query2-orchestrator:
-        condition: service_started
       query2-partitioner:
         condition: service_started
     environment:
@@ -524,7 +668,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "3"
     volumes:
-      - query2-groupby-data:/app/groupby-data
+      - query2-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 2 GroupBy Worker 3
@@ -536,8 +680,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query2-orchestrator:
-        condition: service_started
       query2-partitioner:
         condition: service_started
     environment:
@@ -550,7 +692,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "3"
     volumes:
-      - query2-groupby-data:/app/groupby-data
+      - query2-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 2 Top items Classification
@@ -568,11 +710,18 @@ services:
         condition: service_started
       query2-groupby-worker-3:
         condition: service_started
+      query2-orchestrator-1:
+        condition: service_started
+      query2-orchestrator-2:
+        condition: service_started
+      query2-orchestrator-3:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      NUM_WORKERS: "3"
     profiles: ["orchestration"]
 
   # Query 3 Partitioner 1
@@ -603,8 +752,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-orchestrator:
-        condition: service_started
       query3-partitioner:
         condition: service_started
     environment:
@@ -617,7 +764,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "3"
     volumes:
-      - query3-groupby-data:/app/groupby-data
+      - query3-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 3 GroupBy Worker 2
@@ -629,8 +776,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-orchestrator:
-        condition: service_started
       query3-partitioner:
         condition: service_started
     environment:
@@ -643,7 +788,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "3"
     volumes:
-      - query3-groupby-data:/app/groupby-data
+      - query3-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 3 GroupBy Worker 3
@@ -655,8 +800,6 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query3-orchestrator:
-        condition: service_started
       query3-partitioner:
         condition: service_started
     environment:
@@ -669,7 +812,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "3"
     volumes:
-      - query3-groupby-data:/app/groupby-data
+      - query3-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Partitioner 1
@@ -738,13 +881,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query4-orchestrator:
-        condition: service_started
-      query4-partitioner-1:
-        condition: service_started
-      query4-partitioner-2:
-        condition: service_started
-      query4-partitioner-3:
+      query4-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -756,7 +893,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "100"
     volumes:
-      - query4-groupby-data:/app/groupby-data
+      - query4-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 GroupBy Worker 2
@@ -768,13 +905,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query4-orchestrator:
-        condition: service_started
-      query4-partitioner-1:
-        condition: service_started
-      query4-partitioner-2:
-        condition: service_started
-      query4-partitioner-3:
+      query4-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -786,7 +917,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "100"
     volumes:
-      - query4-groupby-data:/app/groupby-data
+      - query4-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 GroupBy Worker 3
@@ -798,13 +929,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      query4-orchestrator:
-        condition: service_started
-      query4-partitioner-1:
-        condition: service_started
-      query4-partitioner-2:
-        condition: service_started
-      query4-partitioner-3:
+      query4-partitioner:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -816,7 +941,7 @@ services:
       NUM_WORKERS: "3"
       NUM_PARTITIONS: "100"
     volumes:
-      - query4-groupby-data:/app/groupby-data
+      - query4-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Top users Classification
@@ -834,19 +959,26 @@ services:
         condition: service_started
       query4-groupby-worker-3:
         condition: service_started
+      query4-orchestrator-1:
+        condition: service_started
+      query4-orchestrator-2:
+        condition: service_started
+      query4-orchestrator-3:
+        condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      NUM_WORKERS: "3"
     profiles: ["orchestration"]
 
   # Core application (data flow services)
-  server:
+  proxy:
     build:
       context: .
-      dockerfile: ./server/Dockerfile
-    container_name: server
+      dockerfile: ./proxy/Dockerfile
+    container_name: proxy
     ports:
       - "8081:8080"  # TCP port for client connections
     depends_on:
@@ -888,7 +1020,11 @@ services:
         condition: service_started
       storeid-join-worker-1:
         condition: service_started
-      query2-orchestrator:
+      query2-orchestrator-1:
+        condition: service_started
+      query2-orchestrator-2:
+        condition: service_started
+      query2-orchestrator-3:
         condition: service_started
       query2-partitioner:
         condition: service_started
@@ -900,7 +1036,11 @@ services:
         condition: service_started
       query2-top-items-worker:
         condition: service_started
-      query3-orchestrator:
+      query3-orchestrator-1:
+        condition: service_started
+      query3-orchestrator-2:
+        condition: service_started
+      query3-orchestrator-3:
         condition: service_started
       query3-partitioner:
         condition: service_started
@@ -910,7 +1050,11 @@ services:
         condition: service_started
       query3-groupby-worker-3:
         condition: service_started
-      query4-orchestrator:
+      query4-orchestrator-1:
+        condition: service_started
+      query4-orchestrator-2:
+        condition: service_started
+      query4-orchestrator-3:
         condition: service_started
       query4-partitioner-1:
         condition: service_started
@@ -926,7 +1070,7 @@ services:
         condition: service_started
       query4-top-users-worker:
         condition: service_started
-      streaming-service:
+      results-dispatcher:
         condition: service_started
       in-memory-join-orchestrator:
         condition: service_started
@@ -947,7 +1091,7 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client-1
     depends_on:
-      server:
+      proxy:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -955,7 +1099,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI1
-    command: ["./main", "/app/data", "server:8080"]
+    command: ["./main", "/app/data", "proxy:8080"]
     profiles: ["data-flow"]
 
   # Client 2
@@ -965,7 +1109,7 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client-2
     depends_on:
-      server:
+      proxy:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -973,7 +1117,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI2
-    command: ["./main", "/app/data", "server:8080"]
+    command: ["./main", "/app/data", "proxy:8080"]
     profiles: ["data-flow"]
 
   # Testing (optional, can be run with profile)
@@ -986,7 +1130,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      server:
+      proxy:
         condition: service_started
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
@@ -999,9 +1143,24 @@ services:
 volumes:
   shared-data:
     driver: local
-  query2-groupby-data:
+  # Query 2 worker volumes
+  query2-groupby-worker-1-data:
     driver: local
-  query3-groupby-data:
+  query2-groupby-worker-2-data:
     driver: local
-  query4-groupby-data:
+  query2-groupby-worker-3-data:
+    driver: local
+  # Query 3 worker volumes
+  query3-groupby-worker-1-data:
+    driver: local
+  query3-groupby-worker-2-data:
+    driver: local
+  query3-groupby-worker-3-data:
+    driver: local
+  # Query 4 worker volumes
+  query4-groupby-worker-1-data:
+    driver: local
+  query4-groupby-worker-2-data:
+    driver: local
+  query4-groupby-worker-3-data:
     driver: local

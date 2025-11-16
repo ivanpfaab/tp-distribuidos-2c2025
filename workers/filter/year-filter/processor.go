@@ -119,8 +119,8 @@ func (yfw *YearFilterWorker) processMessage(delivery amqp.Delivery) middleware.M
 	}
 
 	// Process the chunk (year filter logic)
-	fmt.Printf("Year Filter Worker: Processing chunk - QueryType: %d, Step: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
-		chunkMsg.QueryType, chunkMsg.Step, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
+	fmt.Printf("Year Filter Worker: Processing chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
+		chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
 
 	responseChunk, msgErr := YearFilterLogic(chunkMsg)
 	if msgErr != 0 {

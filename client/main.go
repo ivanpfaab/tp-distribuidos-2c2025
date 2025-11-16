@@ -15,7 +15,7 @@ func main() {
 	dataFolder := os.Args[1]
 
 	// Get server address from command line or use default
-	serverAddr := "server:8080"
+	serverAddr := "proxy:8080"
 	if len(os.Args) >= 3 {
 		serverAddr = os.Args[2]
 	}

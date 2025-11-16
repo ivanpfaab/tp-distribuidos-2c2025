@@ -6,10 +6,10 @@ This project contains a simple echo server and client application written in Go,
 
 ```
 tp-distribuidos-2c2025/
-├── server/
-│   ├── main.go          # Echo server implementation
+├── proxy/
+│   ├── main.go          # Proxy server implementation
 │   ├── go.mod           # Go module file
-│   ├── Dockerfile       # Server container configuration
+│   ├── Dockerfile       # Proxy container configuration
 │   └── .dockerignore    # Docker ignore file
 ├── client/
 │   ├── main.go          # Client implementation
@@ -85,13 +85,13 @@ The project includes a comprehensive Makefile with convenient commands:
 
 ### Manual Docker Commands
 
-1. **Build and run the server:**
+1. **Build and run the proxy:**
    ```bash
-   # Build server image
-   docker build -t server ./server
+   # Build proxy image
+   docker build -t proxy ./proxy
    
-   # Run server container
-   docker run -p 8080:8080 --name server server
+   # Run proxy container
+   docker run -p 8080:8080 --name proxy proxy
    ```
 
 2. **Build and run the client (in another terminal):**

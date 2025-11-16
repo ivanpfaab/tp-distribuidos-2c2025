@@ -22,7 +22,7 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 	// Route chunk to appropriate destination based on query type
 	switch chunkMsg.QueryType {
 	case 1:
-		// Query 1: Send to Query1 results queue for streaming service
+		// Query 1: Send to Query1 results queue for results dispatcher
 		if err := qg.sendToQuery1Results(chunkMsg); err != 0 {
 			fmt.Printf("Query Gateway: Failed to send chunk to Query1 results queue: %v\n", err)
 			return err
@@ -61,7 +61,7 @@ func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.Messag
 	return 0
 }
 
-// printResult prints the chunk data in a formatted way with ClientID (same format as streaming service)
+// printResult prints the chunk data in a formatted way with ClientID (same format as results dispatcher)
 func (qg *QueryGateway) printResult(chunkData *chunk.Chunk) {
 	// Split the CSV data into individual rows and print each one
 	rows := strings.Split(strings.TrimSpace(chunkData.ChunkData), "\n")

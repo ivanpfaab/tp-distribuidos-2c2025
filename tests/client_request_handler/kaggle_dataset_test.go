@@ -188,8 +188,8 @@ func setupTestConnection(t *testing.T) (*TestConnection, error) {
 
 				// Process all chunks
 				receivedChunks <- chunkMsg
-				testing_utils.LogStep("Received chunk: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
-					chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.Step, chunkMsg.IsLastChunk)
+				testing_utils.LogStep("Received chunk: ClientID=%s, ChunkNumber=%d, IsLastChunk=%t",
+					chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
 
 				// Acknowledge the message
 				delivery.Ack(false)
@@ -208,7 +208,7 @@ func setupTestConnection(t *testing.T) (*TestConnection, error) {
 
 	// Connect to server
 	testing_utils.LogStep("Connecting to server")
-	conn, err := net.Dial("tcp", "server:8080")
+	conn, err := net.Dial("tcp", "proxy:8080")
 	if err != nil {
 		consumer.Close()
 		return nil, fmt.Errorf("test server not available: %v", err)
@@ -303,7 +303,7 @@ func processDatasetWithConnection(t *testing.T, testConn *TestConnection, transa
 			// Try to reconnect if connection was lost
 			testing_utils.LogStep("Attempting to reconnect...")
 			testConn.conn.Close()
-			conn, err := net.Dial("tcp", "server:8080")
+			conn, err := net.Dial("tcp", "proxy:8080")
 			if err != nil {
 				testing_utils.LogStep("Failed to reconnect: %v", err)
 				continue
@@ -348,13 +348,10 @@ func processDatasetWithConnection(t *testing.T, testConn *TestConnection, transa
 
 			chunksReceived++
 			testConn.chunkCount++
-			testing_utils.LogStep("Received chunk %d/%d for file %s: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
-				chunksReceived, expectedChunksForFile, fileID, chunk.ClientID, chunk.ChunkNumber, chunk.Step, chunk.IsLastChunk)
+			testing_utils.LogStep("Received chunk %d/%d for file %s: ClientID=%s, ChunkNumber=%d, IsLastChunk=%t",
+				chunksReceived, expectedChunksForFile, fileID, chunk.ClientID, chunk.ChunkNumber, chunk.IsLastChunk)
 
 			// Verify chunk properties
-			if chunk.Step != 0 {
-				t.Errorf("Expected chunk step to be 0, got %d", chunk.Step)
-			}
 			if chunk.QueryType != 1 {
 				t.Errorf("Expected query type to be 1, got %d", chunk.QueryType)
 			}
@@ -598,8 +595,8 @@ func processDataset(t *testing.T, transactions []CoffeeShopTransaction, fileID s
 				// Process all chunks (remove file ID filtering for now)
 				receivedChunks <- chunkMsg
 				chunkCount++
-				testing_utils.LogStep("Received chunk %d: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
-					chunkCount, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.Step, chunkMsg.IsLastChunk)
+				testing_utils.LogStep("Received chunk %d: ClientID=%s, ChunkNumber=%d, IsLastChunk=%t",
+					chunkCount, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
 
 				// Acknowledge the message
 				delivery.Ack(false)
@@ -619,7 +616,7 @@ func processDataset(t *testing.T, transactions []CoffeeShopTransaction, fileID s
 
 	// Connect to server
 	testing_utils.LogStep("Connecting to server")
-	conn, err := net.Dial("tcp", "server:8080")
+	conn, err := net.Dial("tcp", "proxy:8080")
 	if err != nil {
 		t.Skipf("Skipping test - test server not available: %v", err)
 		return
@@ -721,13 +718,10 @@ func processDataset(t *testing.T, transactions []CoffeeShopTransaction, fileID s
 	for {
 		for chunk := range receivedChunks {
 			chunkCount++
-			testing_utils.LogStep("Received chunk %d/%d: ClientID=%s, ChunkNumber=%d, Step=%d, IsLastChunk=%t",
-				chunkCount, expectedChunks, chunk.ClientID, chunk.ChunkNumber, chunk.Step, chunk.IsLastChunk)
+			testing_utils.LogStep("Received chunk %d/%d: ClientID=%s, ChunkNumber=%d, IsLastChunk=%t",
+				chunkCount, expectedChunks, chunk.ClientID, chunk.ChunkNumber, chunk.IsLastChunk)
 
 			// Verify chunk properties
-			if chunk.Step != 0 {
-				t.Errorf("Expected chunk step to be 0, got %d", chunk.Step)
-			}
 			if chunk.QueryType != 1 {
 				t.Errorf("Expected query type to be 1, got %d", chunk.QueryType)
 			}
