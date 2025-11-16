@@ -1,6 +1,9 @@
 package queues
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+)
 
 // This package centralizes all queue names used across the distributed system
 // to ensure consistency and avoid duplication
@@ -118,6 +121,10 @@ const (
 	UserIdCompletionExchange     = "userid-completion-exchange"
 	UserIdCompletionRoutingKey   = "userid.completion"
 
+	// User Join Exchange (Top Users → Join Readers)
+	UserIdJoinChunksExchange   = "userid-join-chunks-exchange"
+	UserIdJoinRoutingKeyPrefix = "userid-join.reader."
+
 	// ============================================================================
 	// In-Memory Join Orchestrator Queues
 	// ============================================================================
@@ -201,4 +208,9 @@ func GetOrchestratorChunksExchangeName(queryType int) string {
 	default:
 		return ""
 	}
+}
+
+// GetUserIdJoinRoutingKey returns the routing key for a specific reader
+func GetUserIdJoinRoutingKey(readerID int) string {
+	return fmt.Sprintf("%s%d", UserIdJoinRoutingKeyPrefix, readerID)
 }

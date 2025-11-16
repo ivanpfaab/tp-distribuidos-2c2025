@@ -11,20 +11,20 @@ func main() {
 	fmt.Println("Starting User Join Reader (Query 4)...")
 
 	// Load configuration
-	config, err := loadConfig()
+	connConfig, readerConfig, err := loadConfig()
 	if err != nil {
 		fmt.Printf("Failed to load configuration: %v\n", err)
 		return
 	}
 
-	// Create shared data directory
-	if err := os.MkdirAll("/shared-data", 0755); err != nil {
-		fmt.Printf("Failed to create shared data directory: %v\n", err)
+	// Create reader data directory
+	if err := os.MkdirAll(SharedDataDir, 0755); err != nil {
+		fmt.Printf("Failed to create reader data directory: %v\n", err)
 		return
 	}
 
 	// Create Join by User ID Worker (Reader only - writers are separate now)
-	worker, err := NewJoinByUserIdWorker(config)
+	worker, err := NewJoinByUserIdWorker(connConfig, readerConfig)
 	if err != nil {
 		fmt.Printf("Failed to create join by user ID worker: %v\n", err)
 		return

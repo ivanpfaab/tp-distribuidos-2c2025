@@ -31,12 +31,12 @@ func (rd *ResultsDispatcherWorker) processMessage(delivery amqp.Delivery, queryT
 	rd.sendFormattedDataToClient(chunkData)
 
 	// Handle completion tracking based on query type
-	if queryType == QueryType1 {
-		// Query1: Use completion tracker (may receive multiple chunks)
+	if queryType == QueryType1 || queryType == QueryType4 {
+		// Query1 and Query4: Use completion tracker (may receive multiple chunks)
 		chunkNotification := signals.NewChunkNotification(
 			chunkData.ClientID,
 			chunkData.FileID,
-			"query1-streaming",
+			"query-results",
 			chunkData.TableID,
 			chunkData.ChunkNumber,
 			chunkData.IsLastChunk,
@@ -44,11 +44,11 @@ func (rd *ResultsDispatcherWorker) processMessage(delivery amqp.Delivery, queryT
 		)
 
 		if err := rd.processChunkNotification(chunkNotification, queryType); err != 0 {
-			testing.LogError("Results Dispatcher", "Failed to process Query1 chunk notification: %v", err)
+			testing.LogError("Results Dispatcher", "Failed to process Query%d chunk notification: %v", queryType, err)
 			return err
 		}
 	} else {
-		// Queries 2, 3, 4: Simple counter (only one chunk expected)
+		// Queries 2, 3: Simple counter (only one chunk expected)
 		rd.handleSingleChunkCompletion(chunkData.ClientID, queryType)
 	}
 	return middleware.MessageMiddlewareError(0)
@@ -97,9 +97,9 @@ func (rd *ResultsDispatcherWorker) handleSingleChunkCompletion(clientID string, 
 	}
 }
 
-// processChunkNotification processes chunk notifications for completion tracking (Query1 only)
+// processChunkNotification processes chunk notifications for completion tracking (Query1 and Query4)
 func (rd *ResultsDispatcherWorker) processChunkNotification(notification *signals.ChunkNotification, queryType int) middleware.MessageMiddlewareError {
-	// Only handle Query1 with completion tracker
+	// Handle Query1 with completion tracker
 	if queryType == QueryType1 {
 		if err := rd.query1Tracker.ProcessChunkNotification(notification); err != nil {
 			testing.LogError("Results Dispatcher", "Failed to process Query1 chunk notification: %v", err)
@@ -108,8 +108,17 @@ func (rd *ResultsDispatcherWorker) processChunkNotification(notification *signal
 		return middleware.MessageMiddlewareError(0)
 	}
 
-	// This should not happen since we only call this for Query1
-	testing.LogError("Results Dispatcher", "processChunkNotification called for non-Query1: %d", queryType)
+	// Handle Query4 with completion tracker
+	if queryType == QueryType4 {
+		if err := rd.query4Tracker.ProcessChunkNotification(notification); err != nil {
+			testing.LogError("Results Dispatcher", "Failed to process Query4 chunk notification: %v", err)
+			return middleware.MessageMiddlewareMessageError
+		}
+		return middleware.MessageMiddlewareError(0)
+	}
+
+	// This should not happen since we only call this for Query1 or Query4
+	testing.LogError("Results Dispatcher", "processChunkNotification called for unsupported query type: %d", queryType)
 	return middleware.MessageMiddlewareMessageError
 }
 

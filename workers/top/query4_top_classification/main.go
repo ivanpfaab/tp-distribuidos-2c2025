@@ -12,6 +12,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
@@ -129,11 +130,12 @@ type ClientState struct {
 
 // TopUsersWorker processes user-store aggregations and selects top users per store
 type TopUsersWorker struct {
-	consumer     *workerqueue.QueueConsumer
-	producer     *workerqueue.QueueMiddleware
-	config       *middleware.ConnectionConfig
-	clientStates map[string]*ClientState // key: ClientID
-	numWorkers   int                     // Number of workers (from environment)
+	consumer         *workerqueue.QueueConsumer
+	exchangeProducer *exchange.ExchangeMiddleware
+	config           *middleware.ConnectionConfig
+	clientStates     map[string]*ClientState // key: ClientID
+	numPartitions    int                     // Total number of partitions
+	numReaders       int                     // Number of readers (5)
 }
 
 // NewTopUsersWorker creates a new top users worker
@@ -147,13 +149,16 @@ func NewTopUsersWorker() *TopUsersWorker {
 
 	// Get NUM_PARTITIONS from environment (total partitions across all orchestrators)
 	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
-	numPartitions := 10 // Default to 10 if not set
+	numPartitions := 100 // Default to 100 if not set
 	if numPartitionsStr != "" {
 		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
 			numPartitions = n
 		}
 	}
 	log.Printf("Top Users Worker: Expecting %d chunks per client (one per partition)", numPartitions)
+
+	// Number of readers (fixed at 5)
+	numReaders := 5
 
 	// Create consumer for top users queue
 	consumer := workerqueue.NewQueueConsumer(queues.Query4TopUsersQueue, config)
@@ -174,26 +179,27 @@ func NewTopUsersWorker() *TopUsersWorker {
 	}
 	queueDeclarer.Close()
 
-	// Create producer for output queue (to User join)
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.UserIdChunkQueue, config)
-	if producer == nil {
+	// Create exchange producer for output (to User join readers)
+	exchangeProducer := exchange.NewMessageMiddlewareExchange(queues.UserIdJoinChunksExchange, []string{}, config)
+	if exchangeProducer == nil {
 		consumer.Close()
-		log.Fatal("Failed to create producer")
+		log.Fatal("Failed to create exchange producer")
 	}
 
-	// Declare the output queue
-	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
+	// Declare the direct exchange (non-durable)
+	if err := exchangeProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
 		consumer.Close()
-		producer.Close()
-		log.Fatalf("Failed to declare output queue '%s': %v", queues.UserIdChunkQueue, err)
+		exchangeProducer.Close()
+		log.Fatalf("Failed to declare exchange '%s': %v", queues.UserIdJoinChunksExchange, err)
 	}
 
 	return &TopUsersWorker{
-		consumer:     consumer,
-		producer:     producer,
-		config:       config,
-		clientStates: make(map[string]*ClientState),
-		numWorkers:   numPartitions, // Store as numWorkers for backward compatibility in struct
+		consumer:         consumer,
+		exchangeProducer: exchangeProducer,
+		config:           config,
+		clientStates:     make(map[string]*ClientState),
+		numPartitions:    numPartitions,
+		numReaders:       numReaders,
 	}
 }
 
@@ -203,7 +209,7 @@ func (tw *TopUsersWorker) getOrCreateClientState(clientID string) *ClientState {
 		tw.clientStates[clientID] = &ClientState{
 			topUsersByStore: make(map[string]*StoreTopUsers),
 			receivedChunks:  make(map[int]bool),
-			numPartitions:   tw.numWorkers, // numWorkers stores numPartitions
+			numPartitions:   tw.numPartitions,
 		}
 	}
 	return tw.clientStates[clientID]
@@ -301,54 +307,109 @@ func (tw *TopUsersWorker) processChunkData(chunkMsg *chunk.Chunk, clientState *C
 	return nil
 }
 
-// sendTopUsers sends the final top users to the join worker
-func (tw *TopUsersWorker) sendTopUsers(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
-	// Convert top users to CSV with clean schema
-	var csvBuilder strings.Builder
-	csvBuilder.WriteString("user_id,store_id,purchase_count,rank\n")
+// getUserPartition returns the partition number for a given user ID
+func getUserPartition(userID string, numPartitions int) (int, error) {
+	// Parse user ID (handle both int and float formats)
+	userIDFloat, err := strconv.ParseFloat(userID, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid user ID %s: %w", userID, err)
+	}
+	userIDInt := int(userIDFloat)
+	return userIDInt % numPartitions, nil
+}
 
+// sendTopUsers sends the final top users to the join workers, one chunk per reader
+func (tw *TopUsersWorker) sendTopUsers(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
+	// Group top users by reader (1-5)
+	readerUsers := make(map[int][]*UserRecord) // readerID -> users
+
+	// Build rank map for all users (for consistent output)
+	rankMap := make(map[string]int) // userID -> rank
 	for _, storeTop := range clientState.topUsersByStore {
 		topUsers := storeTop.GetTopUsers()
 		for rank, user := range topUsers {
+			rankMap[user.UserID] = rank + 1
+		}
+	}
+
+	// Group users by reader based on their partition
+	for _, storeTop := range clientState.topUsersByStore {
+		topUsers := storeTop.GetTopUsers()
+		for _, user := range topUsers {
+			partition, err := getUserPartition(user.UserID, tw.numPartitions)
+			if err != nil {
+				log.Printf("Top Users Worker: Failed to get partition for user %s: %v", user.UserID, err)
+				continue
+			}
+			// Determine which reader owns this partition
+			readerID := (partition % tw.numReaders) + 1
+			readerUsers[readerID] = append(readerUsers[readerID], user)
+		}
+	}
+
+	log.Printf("Top Users Worker: Grouped top users into %d readers for client %s", len(readerUsers), clientID)
+
+	// Send one chunk per reader
+	for readerID := 1; readerID <= tw.numReaders; readerID++ {
+		users := readerUsers[readerID]
+
+		// Build CSV for this reader
+		var csvBuilder strings.Builder
+		csvBuilder.WriteString("user_id,store_id,purchase_count,rank\n")
+
+		for _, user := range users {
+			rank := rankMap[user.UserID]
 			csvBuilder.WriteString(fmt.Sprintf("%s,%s,%d,%d\n",
 				user.UserID,
 				user.StoreID,
 				user.PurchaseCount,
-				rank+1, // Rank starts from 1
+				rank,
 			))
 		}
+
+		csvData := csvBuilder.String()
+
+		// Determine if this is the last chunk (last reader)
+		isLastChunk := (readerID == tw.numReaders)
+		isLastFromTable := isLastChunk
+
+		// Create chunk for this reader
+		outputChunk := chunk.NewChunk(
+			clientID,
+			"TP01",   // File ID for top users (Query 4) - doesn't end in number to avoid parsing as file count
+			4,        // Query Type 4
+			readerID, // Chunk Number = reader ID
+			isLastChunk,
+			isLastFromTable,
+			len(csvData),
+			1, // Table ID 1
+			csvData,
+		)
+
+		// Serialize the chunk
+		chunkMsg := chunk.NewChunkMessage(outputChunk)
+		serializedData, err := chunk.SerializeChunkMessage(chunkMsg)
+		if err != nil {
+			log.Printf("Top Users Worker: Failed to serialize chunk for reader %d: %v", readerID, err)
+			continue
+		}
+
+		// Get routing key for this reader
+		routingKey := queues.GetUserIdJoinRoutingKey(readerID)
+
+		// Send to exchange with reader-specific routing key
+		sendErr := tw.exchangeProducer.Send(serializedData, []string{routingKey})
+		if sendErr != 0 {
+			log.Printf("Top Users Worker: Failed to send chunk for reader %d: %v", readerID, sendErr)
+			continue
+		}
+
+		log.Printf("Top Users Worker: Sent chunk for reader %d (%d users) (IsLastChunk=%t)",
+			readerID, len(users), isLastChunk)
 	}
 
-	csvData := csvBuilder.String()
-
-	// Create chunk for output
-	outputChunk := chunk.NewChunk(
-		clientID,
-		"TOP4", // File ID for top users
-		4,      // Query Type 4
-		1,      // Chunk Number
-		true,   // Is Last Chunk
-		true,   // Is Last File (final results)
-		len(csvData),
-		1, // Table ID 1
-		csvData,
-	)
-
-	// Serialize and send
-	chunkMsg := chunk.NewChunkMessage(outputChunk)
-	serializedData, err := chunk.SerializeChunkMessage(chunkMsg)
-	if err != nil {
-		log.Printf("Top Users Worker: Failed to serialize output chunk: %v", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	sendErr := tw.producer.Send(serializedData)
-	if sendErr != 0 {
-		log.Printf("Top Users Worker: Failed to send output chunk: %v", sendErr)
-		return sendErr
-	}
-
-	log.Printf("Top Users Worker: Successfully sent top users for client %s (%d stores)", clientID, len(clientState.topUsersByStore))
+	log.Printf("Top Users Worker: Successfully sent all reader chunks for client %s (%d stores, %d readers)",
+		clientID, len(clientState.topUsersByStore), len(readerUsers))
 	return 0
 }
 
@@ -382,8 +443,8 @@ func (tw *TopUsersWorker) Close() {
 	if tw.consumer != nil {
 		tw.consumer.Close()
 	}
-	if tw.producer != nil {
-		tw.producer.Close()
+	if tw.exchangeProducer != nil {
+		tw.exchangeProducer.Close()
 	}
 }
 

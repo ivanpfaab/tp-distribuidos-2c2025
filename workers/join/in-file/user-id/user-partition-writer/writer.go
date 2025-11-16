@@ -141,7 +141,6 @@ func (upw *UserPartitionWriter) createCallback() func(middleware.ConsumeChannel,
 	}
 }
 
-
 // processQueueMessage processes messages from queue with type detection
 func (upw *UserPartitionWriter) processQueueMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	// Get message type
@@ -275,12 +274,20 @@ func (upw *UserPartitionWriter) appendUserToPartition(partition int, record []st
 		fileExists = false
 	}
 
-	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Open file in append mode with 0666 permissions (readable/writable by all)
+	// This allows the reader container to delete the files later
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		return fmt.Errorf("failed to open partition file %s: %w", filePath, err)
 	}
 	defer file.Close()
+
+	// Ensure file has correct permissions (in case it already existed with different permissions)
+	if err := os.Chmod(filePath, 0666); err != nil {
+		// Log but don't fail - this is best effort
+		fmt.Printf("User Partition Writer %d: Warning - failed to set permissions on %s: %v\n",
+			upw.writerConfig.WriterID, filePath, err)
+	}
 
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
