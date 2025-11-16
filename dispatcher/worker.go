@@ -28,6 +28,7 @@ type ResultsDispatcherWorker struct {
 
 	// Query completion tracking
 	query1Tracker         *shared.CompletionTracker
+	query4Tracker         *shared.CompletionTracker
 	clientQueryCompletion map[string]*ClientQueryStatus
 	completionMutex       sync.RWMutex
 }
@@ -133,8 +134,9 @@ func NewResultsDispatcherWorker(config *middleware.ConnectionConfig) (*ResultsDi
 		clientQueryCompletion: make(map[string]*ClientQueryStatus),
 	}
 
-	// Initialize completion tracker (only for Query1)
+	// Initialize completion trackers for Query1 and Query4 (both receive multiple chunks)
 	rd.query1Tracker = shared.NewCompletionTracker("Query1", rd.onQuery1Completed)
+	rd.query4Tracker = shared.NewCompletionTracker("Query4", rd.onQuery4Completed)
 
 	return rd, nil
 }
@@ -174,7 +176,12 @@ func (rd *ResultsDispatcherWorker) onQuery1Completed(clientID string, clientStat
 	rd.updateQueryCompletion(clientID, QueryType1)
 }
 
-// updateQueryCompletion updates the completion status for Query1
+// onQuery4Completed is called when Query4 completes for a client
+func (rd *ResultsDispatcherWorker) onQuery4Completed(clientID string, clientStatus *shared.ClientStatus) {
+	rd.updateQueryCompletion(clientID, QueryType4)
+}
+
+// updateQueryCompletion updates the completion status for queries
 func (rd *ResultsDispatcherWorker) updateQueryCompletion(clientID string, queryType int) {
 	rd.completionMutex.Lock()
 	defer rd.completionMutex.Unlock()
@@ -193,10 +200,14 @@ func (rd *ResultsDispatcherWorker) updateQueryCompletion(clientID string, queryT
 
 	clientQueryStatus := rd.clientQueryCompletion[clientID]
 
-	// Mark Query1 as completed
-	if queryType == QueryType1 {
+	// Mark the specific query as completed
+	switch queryType {
+	case QueryType1:
 		clientQueryStatus.Query1Completed = true
 		testing_utils.LogInfo("Results Dispatcher", "✅ Query1 completed for client %s", clientID)
+	case QueryType4:
+		clientQueryStatus.Query4Completed = true
+		testing_utils.LogInfo("Results Dispatcher", "✅ Query4 completed for client %s", clientID)
 	}
 
 	// Check if all queries are completed

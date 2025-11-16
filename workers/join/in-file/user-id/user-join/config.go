@@ -10,12 +10,11 @@ import (
 )
 
 const (
-	// Shared data directory for CSV files
-	SharedDataDir = "/shared-data"
+	// Reader data directory (volume-specific)
+	SharedDataDir = "/app/reader-data"
 
 	// Alias queue names from centralized config
 	JoinUserIdDictionaryQueue = queues.JoinUserIdDictionaryQueue
-	UserIdChunkQueue          = queues.UserIdChunkQueue
 	Query4ResultsQueue        = queues.Query4ResultsQueue
 
 	// Partition configuration
@@ -26,10 +25,16 @@ const (
 	DefaultRabbitMQPort = "5672"
 	DefaultRabbitMQUser = "admin"
 	DefaultRabbitMQPass = "password"
+	DefaultReaderID     = 1
 )
 
+// Config holds the reader-specific configuration
+type Config struct {
+	ReaderID int // This reader's ID (1-indexed)
+}
+
 // loadConfig loads configuration from environment variables
-func loadConfig() (*middleware.ConnectionConfig, error) {
+func loadConfig() (*middleware.ConnectionConfig, *Config, error) {
 	host := getEnvOrDefault("RABBITMQ_HOST", DefaultRabbitMQHost)
 	port := getEnvOrDefault("RABBITMQ_PORT", DefaultRabbitMQPort)
 	user := getEnvOrDefault("RABBITMQ_USER", DefaultRabbitMQUser)
@@ -37,15 +42,31 @@ func loadConfig() (*middleware.ConnectionConfig, error) {
 
 	portInt, err := strconv.Atoi(port)
 	if err != nil {
-		return nil, fmt.Errorf("invalid RABBITMQ_PORT: %v", err)
+		return nil, nil, fmt.Errorf("invalid RABBITMQ_PORT: %v", err)
 	}
 
-	return &middleware.ConnectionConfig{
+	connConfig := &middleware.ConnectionConfig{
 		Host:     host,
 		Port:     portInt,
 		Username: user,
 		Password: pass,
-	}, nil
+	}
+
+	// Load reader ID
+	readerIDStr := getEnvOrDefault("READER_ID", strconv.Itoa(DefaultReaderID))
+	readerID, err := strconv.Atoi(readerIDStr)
+	if err != nil || readerID < 1 {
+		return nil, nil, fmt.Errorf("invalid READER_ID: %s (must be positive integer)", readerIDStr)
+	}
+
+	readerConfig := &Config{
+		ReaderID: readerID,
+	}
+
+	fmt.Printf("User Join Reader Config: ReaderID=%d, NumPartitions=%d\n",
+		readerConfig.ReaderID, NumPartitions)
+
+	return connConfig, readerConfig, nil
 }
 
 // getEnvOrDefault returns environment variable value or default if not set
@@ -54,17 +75,4 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-// getUserPartition returns the partition number for a given user ID
-func getUserPartition(userID string) (int, error) {
-	// Parse user ID (handle both int and float formats)
-	userIDFloat, err := strconv.ParseFloat(userID, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid user ID %s: %w", userID, err)
-	}
-	userIDInt := int(userIDFloat)
-
-	// Using userIDInt as the partition number and module to determine where the user belongs
-	return userIDInt % NumPartitions, nil
 }

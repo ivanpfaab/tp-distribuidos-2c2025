@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
+	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -13,56 +13,41 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 	joinchunk "github.com/tp-distribuidos-2c2025/workers/join/shared/chunk"
-	"github.com/tp-distribuidos-2c2025/workers/join/shared/buffer"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/file"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/parser"
 )
 
-const (
-	MaxClientsInBufferWorker = 1000 // Maximum number of clients to buffer
-)
-
 // JoinByUserIdWorker handles joining top users data with user data from CSV files
 type JoinByUserIdWorker struct {
-	topUsersConsumer   *workerqueue.QueueConsumer
+	topUsersConsumer   *exchange.ExchangeConsumer
 	completionConsumer *exchange.ExchangeConsumer
 	producer           *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
+	readerConfig       *Config
 	workerID           string
 
+	// Completion tracking (no buffering needed)
+	completionSignals map[string]bool // clientID -> completion received
+	completionMutex   sync.RWMutex
+
 	// Shared components
-	bufferManager    *buffer.Manager
 	partitionManager *file.PartitionManager
 	chunkSender      *joinchunk.Sender
 	stopChan         chan struct{}
 }
 
 // NewJoinByUserIdWorker creates a new JoinByUserIdWorker instance
-func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWorker, error) {
-	// Create consumer for user ID chunks
-	topUsersConsumer := workerqueue.NewQueueConsumer(
-		UserIdChunkQueue,
+func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Config) (*JoinByUserIdWorker, error) {
+	// Create exchange consumer for user ID chunks (with reader-specific routing key)
+	routingKey := queues.GetUserIdJoinRoutingKey(readerConfig.ReaderID)
+	topUsersConsumer := exchange.NewExchangeConsumer(
+		queues.UserIdJoinChunksExchange,
+		[]string{routingKey},
 		config,
 	)
 	if topUsersConsumer == nil {
-		return nil, fmt.Errorf("failed to create user ID chunk consumer")
+		return nil, fmt.Errorf("failed to create user ID chunk exchange consumer")
 	}
-
-	// Declare the user ID chunk queue
-	userChunkDeclarer := workerqueue.NewMessageMiddlewareQueue(
-		UserIdChunkQueue,
-		config,
-	)
-	if userChunkDeclarer == nil {
-		topUsersConsumer.Close()
-		return nil, fmt.Errorf("failed to create user chunk queue declarer")
-	}
-	if err := userChunkDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		topUsersConsumer.Close()
-		userChunkDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare user ID chunk queue: %v", err)
-	}
-	userChunkDeclarer.Close()
 
 	// Create completion signal consumer
 	completionConsumer := exchange.NewExchangeConsumer(
@@ -94,15 +79,10 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 		return nil, fmt.Errorf("failed to declare query 4 results queue: %v", err)
 	}
 
-	// Generate worker ID
-	instanceID := os.Getenv("WORKER_INSTANCE_ID")
-	if instanceID == "" {
-		instanceID = "1"
-	}
-	workerID := fmt.Sprintf("userid-reader-%s", instanceID)
+	// Generate worker ID from reader config
+	workerID := fmt.Sprintf("userid-reader-%d", readerConfig.ReaderID)
 
 	// Initialize shared components
-	bufferManager := buffer.NewManager(MaxClientsInBufferWorker)
 	partitionManager := file.NewPartitionManager(SharedDataDir, NumPartitions)
 	chunkSender := joinchunk.NewSender(producer)
 
@@ -111,8 +91,9 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig) (*JoinByUserIdWo
 		completionConsumer: completionConsumer,
 		producer:           producer,
 		config:             config,
+		readerConfig:       readerConfig,
 		workerID:           workerID,
-		bufferManager:      bufferManager,
+		completionSignals:  make(map[string]bool),
 		partitionManager:   partitionManager,
 		chunkSender:        chunkSender,
 		stopChan:           make(chan struct{}),
@@ -181,7 +162,7 @@ func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
 	}
 }
 
-// processTopUsersMessage processes a single top users chunk with buffering
+// processTopUsersMessage processes a single top users chunk with NACK/requeue pattern
 func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	// Deserialize the chunk message
 	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
@@ -191,8 +172,25 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	fmt.Printf("Join by User ID Worker: Received chunk - ClientID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
-		chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
+	fmt.Printf("Join by User ID Worker: Received chunk - ClientID: %s, ChunkNumber: %d (reader %d), IsLastChunk: %t\n",
+		chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
+
+	// Check if completion signal has been received for this client
+	jw.completionMutex.RLock()
+	completionReceived := jw.completionSignals[chunkMsg.ClientID]
+	jw.completionMutex.RUnlock()
+
+	if !completionReceived {
+		// Completion signal not received yet, NACK and requeue
+		fmt.Printf("Join by User ID Worker: Completion signal not received for client %s, NACKing and requeuing chunk %d\n",
+			chunkMsg.ClientID, chunkMsg.ChunkNumber)
+		delivery.Nack(false, true) // Requeue
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Completion signal received, process chunk immediately
+	fmt.Printf("Join by User ID Worker: Processing chunk %d for client %s (completion signal received)\n",
+		chunkMsg.ChunkNumber, chunkMsg.ClientID)
 
 	// Parse top users data
 	topUsers, parseErr := parser.ParseTopUsersData(chunkMsg.ChunkData)
@@ -202,49 +200,19 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Get or create buffer
-	buffer, created := jw.bufferManager.GetOrCreateBuffer(chunkMsg.ClientID)
-	if !created {
-		if buffer == nil {
-			fmt.Printf("Join by User ID Worker: Buffer full (%d clients), NACKing message for client %s\n",
-				MaxClientsInBufferWorker, chunkMsg.ClientID)
-			delivery.Nack(false, false) // NACK and requeue
-			return middleware.MessageMiddlewareMessageError
-		}
+	// Process and send joined chunk
+	if err := jw.processAndSendChunk(chunkMsg, topUsers); err != 0 {
+		fmt.Printf("Join by User ID Worker: Failed to process chunk: %v\n", err)
+		delivery.Nack(false, true)
+		return err
 	}
 
-	// Add chunk and records to buffer
-	if err := jw.bufferManager.AddChunk(chunkMsg.ClientID, chunkMsg); err != nil {
-		fmt.Printf("Join by User ID Worker: Failed to add chunk to buffer: %v\n", err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
+	jw.performCleanup(chunkMsg.ClientID)
 
-		// Convert TopUserRecord to interface{} for buffer
-		recordInterfaces := make([]interface{}, len(topUsers))
-		for i, tu := range topUsers {
-			recordInterfaces[i] = tu
-		}
-		if err := jw.bufferManager.AddRecords(chunkMsg.ClientID, recordInterfaces); err != nil {
-		fmt.Printf("Join by User ID Worker: Failed to add records to buffer: %v\n", err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	fmt.Printf("Join by User ID Worker: Buffered chunk for client %s (chunks: %d, users: %d)\n",
-		chunkMsg.ClientID, len(buffer.Chunks), len(buffer.Records))
-
-	// Check if last chunk
-	if chunkMsg.IsLastChunk {
-		fmt.Printf("Join by User ID Worker: Client %s last chunk received with %d buffered users\n",
-			chunkMsg.ClientID, len(buffer.Records))
-
-		// Mark chunk data as received
-		jw.bufferManager.MarkChunkDataReceived(chunkMsg.ClientID)
-
-		// Check if ready to join
-		jw.checkAndJoin(chunkMsg.ClientID)
-	}
+	// Remove completion signal tracking for this client
+	jw.completionMutex.Lock()
+	delete(jw.completionSignals, chunkMsg.ClientID)
+	jw.completionMutex.Unlock()
 
 	delivery.Ack(false)
 	return 0
@@ -262,76 +230,20 @@ func (jw *JoinByUserIdWorker) processCompletionSignal(delivery amqp.Delivery) mi
 
 	fmt.Printf("Join by User ID Worker: Received completion signal for client %s\n", completionSignal.ClientID)
 
-	// Ensure buffer exists
-	buffer, _ := jw.bufferManager.GetOrCreateBuffer(completionSignal.ClientID)
-	if buffer == nil {
-		fmt.Printf("Join by User ID Worker: Failed to create buffer for client %s\n", completionSignal.ClientID)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
-
 	// Mark completion signal as received
-	jw.bufferManager.MarkCompletionSignalReceived(completionSignal.ClientID)
+	jw.completionMutex.Lock()
+	jw.completionSignals[completionSignal.ClientID] = true
+	jw.completionMutex.Unlock()
 
-	// Check if ready to join
-	jw.checkAndJoin(completionSignal.ClientID)
+	// Chunks will be processed when they arrive (or re-arrive after requeue)
+	fmt.Printf("Join by User ID Worker: Client %s marked as ready, chunks can now be processed\n", completionSignal.ClientID)
 
 	delivery.Ack(false)
 	return 0
 }
 
-// checkAndJoin checks if both completion signal and chunk data are ready, then performs join if both are ready
-func (jw *JoinByUserIdWorker) checkAndJoin(clientID string) {
-	if !jw.bufferManager.IsReady(clientID) {
-		return
-	}
-
-	// Mark as processed to prevent duplicate joins
-	if !jw.bufferManager.MarkProcessed(clientID) {
-		fmt.Printf("Join by User ID Worker: Client %s already processed, skipping\n", clientID)
-		return
-	}
-
-	fmt.Printf("Join by User ID Worker: Both conditions met for client %s, performing join\n", clientID)
-
-	// Perform the join
-	jw.processClientIfReady(clientID)
-}
-
-// processClientIfReady processes a client when completion signal is received
-func (jw *JoinByUserIdWorker) processClientIfReady(clientID string) {
-	records := jw.bufferManager.GetRecords(clientID)
-	if records == nil {
-		fmt.Printf("Join by User ID Worker: No records found for client %s\n", clientID)
-		return
-	}
-
-	fmt.Printf("Join by User ID Worker: Processing client %s with %d buffered users\n",
-		clientID, len(records))
-
-	// Convert records to TopUserRecord
-	topUsers := make([]parser.TopUserRecord, len(records))
-	for i, r := range records {
-		if tu, ok := r.(parser.TopUserRecord); ok {
-			topUsers[i] = tu
-		}
-	}
-
-	// Send joined chunk
-	if err := jw.sendJoinedChunk(clientID, topUsers, true); err != 0 {
-		fmt.Printf("Join by User ID Worker: Failed to send joined chunk for client %s: %v\n", clientID, err)
-	} else {
-		fmt.Printf("Join by User ID Worker: Sent complete joined data for client %s (%d users)\n",
-			clientID, len(topUsers))
-	}
-
-	// Cleanup
-	jw.bufferManager.RemoveBuffer(clientID)
-	jw.performCleanup(clientID)
-}
-
-// sendJoinedChunk sends a chunk with joined user data
-func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, topUsers []parser.TopUserRecord, isLast bool) middleware.MessageMiddlewareError {
+// processAndSendChunk processes a chunk and sends the joined result
+func (jw *JoinByUserIdWorker) processAndSendChunk(chunkMsg *chunk.Chunk, topUsers []parser.TopUserRecord) middleware.MessageMiddlewareError {
 	// Build CSV data with joined users
 	var csvBuilder strings.Builder
 	csvBuilder.WriteString("user_id,store_id,purchase_count,rank,gender,birthdate,registered_at\n")
@@ -340,11 +252,11 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, topUsers []parser
 	failedJoins := 0
 
 	for _, topUser := range topUsers {
-		userData, err := jw.lookupUserFromFile(topUser.UserID, clientID)
+		userData, err := jw.lookupUserFromFile(topUser.UserID, chunkMsg.ClientID)
 		if err != nil || userData == nil {
 			failedJoins++
 			fmt.Printf("Join by User ID Worker: Failed to lookup user %s for client %s: %v\n",
-				topUser.UserID, clientID, err)
+				topUser.UserID, chunkMsg.ClientID, err)
 			continue
 		}
 
@@ -360,25 +272,16 @@ func (jw *JoinByUserIdWorker) sendJoinedChunk(clientID string, topUsers []parser
 		successfulJoins++
 	}
 
-	fmt.Printf("Join by User ID Worker: Client %s - Successful joins: %d, Failed joins: %d, Total users: %d\n",
-		clientID, successfulJoins, failedJoins, len(topUsers))
+	fmt.Printf("Join by User ID Worker: Client %s, Chunk %d - Successful joins: %d, Failed joins: %d, Total users: %d\n",
+		chunkMsg.ClientID, chunkMsg.ChunkNumber, successfulJoins, failedJoins, len(topUsers))
 
 	csvData := csvBuilder.String()
 
-	// Get metadata from first chunk
-	chunkMetadata := jw.bufferManager.GetFirstChunkMetadata(clientID)
-	if chunkMetadata == nil {
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Get chunk counter
-	chunkCounter := jw.bufferManager.IncrementChunkCounter(clientID)
-
-	// Send chunk
+	// Send chunk with reader ID as chunk number
 	return jw.chunkSender.SendFromMetadata(
-		chunkMetadata,
-		chunkCounter,
-		isLast,
+		chunkMsg,
+		int(chunkMsg.ChunkNumber), // Use reader ID as chunk number
+		chunkMsg.IsLastChunk,
 		len(csvData),
 		csvData,
 	)
@@ -394,12 +297,15 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 }
 
 // performCleanup performs cleanup operations for partition files
+// Since each reader only has access to its own volume, it will automatically only delete
+// the partition files that belong to it (volume isolation ensures this)
 func (jw *JoinByUserIdWorker) performCleanup(clientID string) {
-	fmt.Printf("Join by User ID Worker: Performing cleanup for client: %s\n", clientID)
+	fmt.Printf("Join by User ID Worker: Performing cleanup for client: %s (reader %d)\n",
+		clientID, jw.readerConfig.ReaderID)
 
 	if err := jw.partitionManager.CleanupClientFiles(clientID); err != nil {
 		fmt.Printf("Join by User ID Worker: Error during cleanup for client %s: %v\n", clientID, err)
 	} else {
-		fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s\n", clientID)
+		fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s (reader %d)\n", clientID, jw.readerConfig.ReaderID)
 	}
 }

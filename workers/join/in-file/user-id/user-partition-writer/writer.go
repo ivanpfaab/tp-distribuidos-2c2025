@@ -42,10 +42,17 @@ func NewUserPartitionWriter(connConfig *middleware.ConnectionConfig, writerConfi
 		return nil, fmt.Errorf("failed to create consumer for queue %s", queueName)
 	}
 
-	// Ensure shared data directory exists
-	if err := os.MkdirAll(SharedDataDir, 0755); err != nil {
+	// Ensure shared data directory exists with 0777 permissions
+	// This allows both writer and reader containers to create/delete files
+	if err := os.MkdirAll(SharedDataDir, 0777); err != nil {
 		consumer.Close()
 		return nil, fmt.Errorf("failed to create shared data directory: %w", err)
+	}
+	// Ensure directory has correct permissions (in case it already existed)
+	if err := os.Chmod(SharedDataDir, 0777); err != nil {
+		// Log but don't fail - this is best effort
+		fmt.Printf("User Partition Writer %d: Warning - failed to set directory permissions on %s: %v\n",
+			writerConfig.WriterID, SharedDataDir, err)
 	}
 
 	// Create cleanup consumer for userid cleanup signals
@@ -140,7 +147,6 @@ func (upw *UserPartitionWriter) createCallback() func(middleware.ConsumeChannel,
 		done <- nil
 	}
 }
-
 
 // processQueueMessage processes messages from queue with type detection
 func (upw *UserPartitionWriter) processQueueMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
@@ -275,12 +281,20 @@ func (upw *UserPartitionWriter) appendUserToPartition(partition int, record []st
 		fileExists = false
 	}
 
-	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Open file in append mode with 0666 permissions (readable/writable by all)
+	// This allows the reader container to delete the files later
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		return fmt.Errorf("failed to open partition file %s: %w", filePath, err)
 	}
 	defer file.Close()
+
+	// Ensure file has correct permissions (in case it already existed with different permissions)
+	if err := os.Chmod(filePath, 0666); err != nil {
+		// Log but don't fail - this is best effort
+		fmt.Printf("User Partition Writer %d: Warning - failed to set permissions on %s: %v\n",
+			upw.writerConfig.WriterID, filePath, err)
+	}
 
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
