@@ -247,7 +247,7 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 			// Check if it's a ClientCompletionSignal
 			if completionSignal, ok := message.(*signals.ClientCompletionSignal); ok {
 				log.Printf("Client Request Handler: Received completion signal for client %s: %s", completionSignal.ClientID, completionSignal.Message)
-
+				delivery.Ack(false)
 				// Close the connection for this client
 				h.connectionsMutex.Lock()
 				conn, exists := h.activeConnections[completionSignal.ClientID]
@@ -286,7 +286,9 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 			} else {
 				log.Printf("Client Request Handler: No active connection found for client %s", chunkData.ClientID)
 			}
+			delivery.Ack(false)
 		}
+
 	})
 
 	if err != 0 {

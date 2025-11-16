@@ -14,12 +14,12 @@ import (
 
 // GroupByWorker handles group by operations for partitioned chunks
 type GroupByWorker struct {
-	config                  *WorkerConfig
-	consumer                *exchange.ExchangeConsumer
-	orchestratorProducer    *workerqueue.QueueMiddleware
-	workerIDStr             string
-	fileManager             *FileManager
-	processor               *ChunkProcessor
+	config               *WorkerConfig
+	consumer             *exchange.ExchangeConsumer
+	orchestratorProducer *workerqueue.QueueMiddleware
+	workerIDStr          string
+	fileManager          *FileManager
+	processor            *ChunkProcessor
 }
 
 // NewGroupByWorker creates a new group by worker instance
@@ -90,7 +90,7 @@ func (w *GroupByWorker) createCallback() func(middleware.ConsumeChannel, chan er
 		messageCount := 0
 		for delivery := range *consumeChannel {
 			messageCount++
-			testing_utils.LogInfo("GroupBy Worker", "Received message #%d", messageCount)
+			// testing_utils.LogInfo("GroupBy Worker", "Received message #%d", messageCount)
 
 			// Process the message
 			if err := w.processMessage(delivery.Body); err != nil {
@@ -127,9 +127,9 @@ func (w *GroupByWorker) processMessage(messageBody []byte) error {
 
 // processChunk processes a single chunk with file-based group by aggregation
 func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
-	testing_utils.LogInfo("GroupBy Worker", "Processing chunk %d from client %s, file %s (IsLastChunk=%t, IsLastFromTable=%t)",
-		chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID,
-		chunkMessage.IsLastChunk, chunkMessage.IsLastFromTable)
+	// testing_utils.LogInfo("GroupBy Worker", "Processing chunk %d from client %s, file %s (IsLastChunk=%t, IsLastFromTable=%t)",
+	// 	chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID,
+	// 	chunkMessage.IsLastChunk, chunkMessage.IsLastFromTable)
 
 	// Determine partition(s) for this worker
 	// For Q2/Q3: worker ID = partition (1:1 mapping)
@@ -155,8 +155,8 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 			return fmt.Errorf("failed to save data for partition %d: %v", partition, err)
 		}
 
-		testing_utils.LogInfo("GroupBy Worker", "Successfully processed and saved partition %d for chunk %d",
-			partition, chunkMessage.ChunkNumber)
+		// testing_utils.LogInfo("GroupBy Worker", "Successfully processed and saved partition %d for chunk %d",
+		// 	partition, chunkMessage.ChunkNumber)
 	}
 
 	// Send chunk notification to orchestrator AFTER successful file writes
@@ -210,8 +210,8 @@ func (w *GroupByWorker) sendChunkNotification(chunkMessage *chunk.Chunk) error {
 		return fmt.Errorf("failed to send chunk notification to orchestrator: %v", sendErr)
 	}
 
-	testing_utils.LogInfo("GroupBy Worker", "Sent chunk notification to orchestrator for chunk %d (ClientID=%s, FileID=%s)",
-		chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID)
+	// testing_utils.LogInfo("GroupBy Worker", "Sent chunk notification to orchestrator for chunk %d (ClientID=%s, FileID=%s)",
+	// 	chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID)
 
 	return nil
 }

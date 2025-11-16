@@ -123,8 +123,6 @@ func (fm *FileManager) SaveData(clientID string, partition int, data map[string]
 		return fmt.Errorf("failed to write file %s: %v", filePath, err)
 	}
 
-	testing_utils.LogInfo("FileManager", "Saved data to %s (%d bytes, %d top-level keys)",
-		filePath, len(jsonData), len(data))
 	return nil
 }
 

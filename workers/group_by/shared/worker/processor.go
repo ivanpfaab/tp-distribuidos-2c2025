@@ -107,7 +107,7 @@ func (cp *ChunkProcessor) processQuery2(chunkMsg *chunk.Chunk, currentData map[s
 		item["count"] = cp.toInt(item["count"]) + 1
 	}
 
-	testing_utils.LogInfo("ChunkProcessor", "Query 2: Processed %d records", len(records))
+	// testing_utils.LogInfo("ChunkProcessor", "Query 2: Processed %d records", len(records))
 	return currentData, nil
 }
 
@@ -152,7 +152,7 @@ func (cp *ChunkProcessor) processQuery3(chunkMsg *chunk.Chunk, currentData map[s
 		store["count"] = cp.toInt(store["count"]) + 1
 	}
 
-	testing_utils.LogInfo("ChunkProcessor", "Query 3: Processed %d records", len(records))
+	// testing_utils.LogInfo("ChunkProcessor", "Query 3: Processed %d records", len(records))
 	return currentData, nil
 }
 
@@ -220,8 +220,8 @@ func (cp *ChunkProcessor) processQuery4(chunkMsg *chunk.Chunk, currentData map[s
 		processedCount++
 	}
 
-	testing_utils.LogInfo("ChunkProcessor", "Query 4 partition %d: Processed %d records, skipped %d records",
-		targetPartition, processedCount, skippedCount)
+	// testing_utils.LogInfo("ChunkProcessor", "Query 4 partition %d: Processed %d records, skipped %d records",
+	// 	targetPartition, processedCount, skippedCount)
 	return currentData, nil
 }
 
