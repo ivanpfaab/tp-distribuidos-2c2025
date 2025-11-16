@@ -1,0 +1,88 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: fault-tolerance-rabbitmq
+    ports:
+      - "5673:5672"   # Different port to avoid conflicts
+      - "15673:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker-1:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance/worker/Dockerfile
+    container_name: fault-tolerance-worker-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: 1
+      INPUT_QUEUE: queue-3-1
+      OUTPUT_QUEUE: queue-1-2
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  worker-2:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance/worker/Dockerfile
+    container_name: fault-tolerance-worker-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: 2
+      INPUT_QUEUE: queue-1-2
+      OUTPUT_QUEUE: queue-2-3
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  worker-3:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance/worker/Dockerfile
+    container_name: fault-tolerance-worker-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: 3
+      INPUT_QUEUE: queue-2-3
+      OUTPUT_QUEUE: queue-3-1
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance/test-runner/Dockerfile
+    container_name: fault-tolerance-test-runner
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      worker-1:
+        condition: service_started
+      worker-2:
+        condition: service_started
+      worker-3:
+        condition: service_started
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
