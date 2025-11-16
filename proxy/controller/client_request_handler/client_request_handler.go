@@ -123,11 +123,13 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 
 	log.Printf("Client Request Handler: Starting client results consumer...")
 
-	// Start consuming in a goroutine
+	// Start consuming
 	err := h.clientResultsConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			h.resultsHandler.ProcessMessage(delivery.Body)
+			delivery.Ack(false)
 		}
+		done <- nil
 	})
 
 	if err != 0 {
