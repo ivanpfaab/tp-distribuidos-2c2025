@@ -18,6 +18,7 @@ help:
 	@echo "  make logs-worker-1   - Show logs from worker-1"
 	@echo "  make logs-worker-2   - Show logs from worker-2"
 	@echo "  make logs-worker-3   - Show logs from worker-3"
+	@echo "  make logs-final      - Show logs from final-consumer"
 	@echo "  make logs-test       - Show logs from test-runner"
 	@echo "  make kill-worker-1   - Kill worker-1 (fault injection)"
 	@echo "  make kill-worker-2   - Kill worker-2 (fault injection)"
@@ -66,6 +67,9 @@ logs-worker-2:
 
 logs-worker-3:
 	docker compose -f $(COMPOSE_FILE) logs -f worker-3
+
+logs-final:
+	docker compose -f $(COMPOSE_FILE) logs -f final-consumer
 
 logs-test:
 	docker compose -f $(COMPOSE_FILE) logs -f test-runner

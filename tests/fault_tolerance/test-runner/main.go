@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"time"
+	"fmt"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -21,8 +22,8 @@ func main() {
 	}
 	log.Println("Test Runner: RabbitMQ is ready")
 
-	// Create producer to send initial chunk
-	producer := workerqueue.NewMessageMiddlewareQueue("queue-3-1", config.RabbitMQ)
+	// Create producer to send initial chunk (sends to Worker 1's input queue)
+	producer := workerqueue.NewMessageMiddlewareQueue("queue-1-2", config.RabbitMQ)
 	if producer == nil {
 		log.Fatal("Failed to create producer")
 	}
@@ -37,30 +38,42 @@ func main() {
 	log.Println("Test Runner: Waiting for workers to be ready...")
 	time.Sleep(3 * time.Second)
 
-	// Create test chunk
-	testChunk := chunk.NewChunk(
-		"TEST",       // ClientID (4 bytes)
-		"FT01",       // FileID (4 bytes)
-		1,            // QueryType
-		1,            // ChunkNumber
-		false,        // IsLastChunk
-		false,        // IsLastFromTable
-		len("Hello"), // ChunkSize
-		0,            // TableID
-		"Hello",      // ChunkData
-	)
+	// Send 100 chunks
+	numChunks := 100
+	log.Printf("Test Runner: Sending %d chunks", numChunks)
 
-	// Serialize and send
-	chunkMessage := chunk.NewChunkMessage(testChunk)
-	serialized, err := chunk.SerializeChunkMessage(chunkMessage)
-	if err != nil {
-		log.Fatalf("Failed to serialize chunk: %v", err)
+	for i := 1; i <= numChunks; i++ {
+		chunkData := fmt.Sprintf("Hello this is the chunk number %d", i)
+		// Create test chunk
+		testChunk := chunk.NewChunk(
+			"TEST",       // ClientID (4 bytes)
+			"FT01",       // FileID (4 bytes)
+			1,            // QueryType
+			i,            // ChunkNumber
+			false,        // IsLastChunk
+			false,        // IsLastFromTable
+			len(chunkData), // ChunkSize
+			0,            // TableID
+			chunkData,      // ChunkData
+		)
+
+		// Serialize and send
+		chunkMessage := chunk.NewChunkMessage(testChunk)
+		serialized, err := chunk.SerializeChunkMessage(chunkMessage)
+		if err != nil {
+			log.Fatalf("Failed to serialize chunk %d: %v", i, err)
+		}
+
+		if err := producer.Send(serialized); err != 0 {
+			log.Fatalf("Failed to send chunk %d: %v", i, err)
+		}
+
+		if i%10 == 0 {
+			log.Printf("Test Runner: Sent %d chunks", i)
+		}
 	}
 
-	log.Println("Test Runner: Sending initial chunk")
-	if err := producer.Send(serialized); err != 0 {
-		log.Fatalf("Failed to send chunk: %v", err)
-	}
+	log.Printf("Test Runner: All %d chunks sent", numChunks)
 
 	log.Println("Test Runner: Chunk sent, monitoring...")
 

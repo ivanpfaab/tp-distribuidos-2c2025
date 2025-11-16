@@ -1,18 +1,19 @@
 # Fault Tolerance Test System
 
-A minimal circular pipeline test system to verify fault tolerance behavior with chunk protocol messages.
+A minimal linear pipeline test system to verify fault tolerance behavior with chunk protocol messages.
 
 ## Architecture
 
-Three workers in a circular pipeline:
+Three workers in a linear pipeline ending with a final consumer:
 ```
-Worker 1 → queue-1-2 → Worker 2 → queue-2-3 → Worker 3 → queue-3-1 → Worker 1
+Test Runner → queue-1-2 → Worker 1 → queue-2-3 → Worker 2 → queue-3-final → Worker 3 → queue-final → Final Consumer
 ```
 
 ## Components
 
 - **Worker**: Receives chunks, waits 3 seconds, forwards to next worker
-- **Test Runner**: Sends initial chunk to start the cycle
+- **Test Runner**: Sends 100 chunks to start the pipeline
+- **Final Consumer**: Consumes chunks from Worker 3 and prints the results
 - **RabbitMQ**: Message broker (port 5673 to avoid conflicts)
 
 ## Running
@@ -98,5 +99,6 @@ docker compose -f tests/fault_tolerance/docker-compose.yaml down
 
 - Each worker waits 3 seconds before forwarding
 - Basic logging: Worker ID, received/sent messages
-- Chunks circulate through the pipeline indefinitely
+- Final consumer prints all received chunks with their data
+- 100 chunks are sent through the linear pipeline
 
