@@ -816,11 +816,49 @@ services:
     profiles: ["orchestration"]
 
   # Query 4 Partitioner 1
-  query4-partitioner:
+  query4-partitioner-1:
     build:
       context: .
       dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
-    container_name: query4-partitioner
+    container_name: query4-partitioner-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "3"
+    profiles: ["orchestration"]
+
+  # Query 4 Partitioner 2
+  query4-partitioner-2:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query4-partitioner-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "3"
+    profiles: ["orchestration"]
+
+  # Query 4 Partitioner 3
+  query4-partitioner-3:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query4-partitioner-3
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -1018,7 +1056,11 @@ services:
         condition: service_started
       query4-orchestrator-3:
         condition: service_started
-      query4-partitioner:
+      query4-partitioner-1:
+        condition: service_started
+      query4-partitioner-2:
+        condition: service_started
+      query4-partitioner-3:
         condition: service_started
       query4-groupby-worker-1:
         condition: service_started

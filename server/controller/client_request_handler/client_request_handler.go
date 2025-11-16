@@ -113,7 +113,6 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 	dataHandler.Close()
 }
 
-
 // StartClientResultsConsumer starts consuming formatted results from results dispatcher
 func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	if h.clientResultsConsumer == nil {
@@ -128,6 +127,7 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 		for delivery := range *consumeChannel {
 			h.resultsHandler.ProcessMessage(delivery.Body)
 		}
+
 	})
 
 	if err != 0 {

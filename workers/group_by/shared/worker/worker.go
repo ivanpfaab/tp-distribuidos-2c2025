@@ -90,7 +90,7 @@ func (w *GroupByWorker) createCallback() func(middleware.ConsumeChannel, chan er
 		messageCount := 0
 		for delivery := range *consumeChannel {
 			messageCount++
-			testing_utils.LogInfo("GroupBy Worker", "Received message #%d", messageCount)
+			// testing_utils.LogInfo("GroupBy Worker", "Received message #%d", messageCount)
 
 			// Process the message
 			if err := w.processMessage(delivery.Body); err != nil {
@@ -159,9 +159,9 @@ func (a *Query4RecordAppender) AppendRecords(clientID string, partition int, rec
 
 // processChunk processes a single chunk with file-based group by aggregation
 func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
-	testing_utils.LogInfo("GroupBy Worker", "Processing chunk %d from client %s, file %s (IsLastChunk=%t, IsLastFromTable=%t)",
-		chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID,
-		chunkMessage.IsLastChunk, chunkMessage.IsLastFromTable)
+	// testing_utils.LogInfo("GroupBy Worker", "Processing chunk %d from client %s, file %s (IsLastChunk=%t, IsLastFromTable=%t)",
+	// 	chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID,
+	// 	chunkMessage.IsLastChunk, chunkMessage.IsLastFromTable)
 
 	// Determine partition(s) for this worker
 	partitions := w.getPartitionsForWorker()
@@ -269,8 +269,8 @@ func (w *GroupByWorker) sendChunkNotification(chunkMessage *chunk.Chunk) error {
 		return fmt.Errorf("failed to send chunk notification to orchestrator: %v", sendErr)
 	}
 
-	testing_utils.LogInfo("GroupBy Worker", "Sent chunk notification to orchestrator for chunk %d (ClientID=%s, FileID=%s)",
-		chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID)
+	// testing_utils.LogInfo("GroupBy Worker", "Sent chunk notification to orchestrator for chunk %d (ClientID=%s, FileID=%s)",
+	// 	chunkMessage.ChunkNumber, chunkMessage.ClientID, chunkMessage.FileID)
 
 	return nil
 }
