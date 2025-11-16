@@ -123,8 +123,8 @@ func (st *StoreTopUsers) GetTopUsers() []*UserRecord {
 // ClientState holds the state for a specific client
 type ClientState struct {
 	topUsersByStore map[string]*StoreTopUsers // key: store_id
-	receivedChunks  map[int]bool               // Track which chunk numbers we've received (chunk number = worker ID)
-	numWorkers      int                        // Expected number of chunks
+	receivedChunks  map[int]bool              // Track which chunk numbers we've received (chunk number = partition number for Q4)
+	numPartitions   int                       // Expected number of chunks (one per partition)
 }
 
 // TopUsersWorker processes user-store aggregations and selects top users per store
@@ -145,15 +145,15 @@ func NewTopUsersWorker() *TopUsersWorker {
 		Password: "password",
 	}
 
-	// Get NUM_WORKERS from environment
-	numWorkersStr := os.Getenv("NUM_WORKERS")
-	numWorkers := 3 // Default to 3 if not set
-	if numWorkersStr != "" {
-		if n, err := strconv.Atoi(numWorkersStr); err == nil && n > 0 {
-			numWorkers = n
+	// Get NUM_PARTITIONS from environment (total partitions across all orchestrators)
+	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
+	numPartitions := 10 // Default to 10 if not set
+	if numPartitionsStr != "" {
+		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
+			numPartitions = n
 		}
 	}
-	log.Printf("Top Users Worker: Expecting %d chunks per client", numWorkers)
+	log.Printf("Top Users Worker: Expecting %d chunks per client (one per partition)", numPartitions)
 
 	// Create consumer for top users queue
 	consumer := workerqueue.NewQueueConsumer(queues.Query4TopUsersQueue, config)
@@ -193,7 +193,7 @@ func NewTopUsersWorker() *TopUsersWorker {
 		producer:     producer,
 		config:       config,
 		clientStates: make(map[string]*ClientState),
-		numWorkers:   numWorkers,
+		numWorkers:   numPartitions, // Store as numWorkers for backward compatibility in struct
 	}
 }
 
@@ -203,7 +203,7 @@ func (tw *TopUsersWorker) getOrCreateClientState(clientID string) *ClientState {
 		tw.clientStates[clientID] = &ClientState{
 			topUsersByStore: make(map[string]*StoreTopUsers),
 			receivedChunks:  make(map[int]bool),
-			numWorkers:      tw.numWorkers,
+			numPartitions:   tw.numWorkers, // numWorkers stores numPartitions
 		}
 	}
 	return tw.clientStates[clientID]
@@ -219,26 +219,27 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	}
 
 	clientID := chunkMsg.ClientID
-	chunkNumber := int(chunkMsg.ChunkNumber)
+	chunkNumber := int(chunkMsg.ChunkNumber) // For Query 4, this is the partition number
 	clientState := tw.getOrCreateClientState(clientID)
 
-	log.Printf("Top Users Worker: Received chunk %d for client %s (expecting chunks 1-%d)", chunkNumber, clientID, clientState.numWorkers)
+	log.Printf("Top Users Worker: Received chunk %d (partition %d) for client %s (expecting %d total chunks)",
+		chunkNumber, chunkNumber, clientID, clientState.numPartitions)
 
-	// Mark this chunk as received
+	// Mark this chunk as received (using partition number as key)
 	clientState.receivedChunks[chunkNumber] = true
 
 	// Process the chunk data first (if it has data)
 	if chunkMsg.ChunkSize > 0 && len(chunkMsg.ChunkData) > 0 {
-		log.Printf("Top Users Worker: Processing data chunk %d for client %s", chunkNumber, clientID)
+		log.Printf("Top Users Worker: Processing data chunk %d (partition %d) for client %s", chunkNumber, chunkNumber, clientID)
 		if err := tw.processChunkData(chunkMsg, clientState); err != nil {
 			log.Printf("Top Users Worker: Failed to process chunk data: %v", err)
 			return middleware.MessageMiddlewareMessageError
 		}
 	}
 
-	// Check if we've received all expected chunks (1 through numWorkers)
+	// Check if we've received all expected chunks (all partitions 0 through numPartitions-1)
 	allChunksReceived := true
-	for i := 1; i <= clientState.numWorkers; i++ {
+	for i := 0; i < clientState.numPartitions; i++ {
 		if !clientState.receivedChunks[i] {
 			allChunksReceived = false
 			break
@@ -246,7 +247,8 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	}
 
 	if allChunksReceived {
-		log.Printf("Top Users Worker: Received all %d chunks for client %s, sending top users...", clientState.numWorkers, clientID)
+		log.Printf("Top Users Worker: Received all %d chunks (partitions 0-%d) for client %s, sending top users...",
+			clientState.numPartitions, clientState.numPartitions-1, clientID)
 
 		if err := tw.sendTopUsers(clientID, clientState); err != 0 {
 			log.Printf("Top Users Worker: Failed to send top users: %v", err)
@@ -257,7 +259,8 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 		delete(tw.clientStates, clientID)
 	} else {
 		receivedCount := len(clientState.receivedChunks)
-		log.Printf("Top Users Worker: Client %s has %d/%d chunks, waiting for more...", clientID, receivedCount, clientState.numWorkers)
+		log.Printf("Top Users Worker: Client %s has %d/%d chunks (partitions), waiting for more...",
+			clientID, receivedCount, clientState.numPartitions)
 	}
 
 	return 0

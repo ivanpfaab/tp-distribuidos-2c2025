@@ -11,6 +11,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 )
 
 // Record represents a single data record
@@ -188,7 +189,7 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 }
 
 // getTimeBasedPartition calculates partition based on semester from created_at field
-// Uses shared partition calculation utility
+// Uses common partition calculation utility
 func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtIndex int) (int, error) {
 	if createdAtIndex >= len(record.Fields) {
 		return 0, fmt.Errorf("record does not have created_at field at index %d", createdAtIndex)
@@ -199,14 +200,14 @@ func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtInd
 		return 0, fmt.Errorf("created_at field is empty")
 	}
 
-	// Parse date using shared utility
-	createdAt, err := shared.ParseDate(createdAtStr)
+	// Parse date using common utility
+	createdAt, err := common.ParseDate(createdAtStr)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse created_at '%s': %v", createdAtStr, err)
 	}
 
-	// Calculate partition using shared utility
-	return shared.CalculateTimeBasedPartition(createdAt), nil
+	// Calculate partition using common utility
+	return common.CalculateTimeBasedPartition(createdAt), nil
 }
 
 // getPartition calculates the partition for a record based on query type
@@ -226,7 +227,7 @@ func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 			return 0, fmt.Errorf("record does not have enough fields for user_id")
 		}
 		userID := record.Fields[4]
-		return shared.CalculateUserBasedPartition(userID, p.NumPartitions)
+		return common.CalculateUserBasedPartition(userID, p.NumPartitions)
 	default:
 		return 0, fmt.Errorf("unsupported query type: %d", p.QueryType)
 	}
@@ -234,18 +235,7 @@ func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 
 // validateHeader validates that the CSV header matches the expected schema
 func (p *PartitionerProcessor) ValidateHeader(header []string) error {
-	if len(header) != len(p.Schema) {
-		return fmt.Errorf("schema field count mismatch: expected %d, got %d", len(p.Schema), len(header))
-	}
-
-	for i, expectedField := range p.Schema {
-		actualField := strings.TrimSpace(header[i])
-		if actualField != expectedField {
-			return fmt.Errorf("schema field mismatch at position %d: expected '%s', got '%s'", i, expectedField, actualField)
-		}
-	}
-
-	return nil
+	return common.ValidateHeader(header, p.Schema)
 }
 
 // sendToWorker sends a chunk to a specific worker with correct metadata
@@ -321,7 +311,7 @@ func (p *PartitionerProcessor) recordsToCSV(records []Record) string {
 }
 
 // GetUserPartition calculates the partition for a given ID (user_id or item_id)
-// Deprecated: Use shared.CalculateUserBasedPartition instead
+// Deprecated: Use common.CalculateUserBasedPartition instead
 func GetUserPartition(id string, NumPartitions int) (int, error) {
-	return shared.CalculateUserBasedPartition(id, NumPartitions)
+	return common.CalculateUserBasedPartition(id, NumPartitions)
 }
