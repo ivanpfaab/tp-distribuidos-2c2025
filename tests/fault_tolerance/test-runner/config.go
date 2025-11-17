@@ -8,7 +8,8 @@ import (
 )
 
 type Config struct {
-	RabbitMQ *middleware.ConnectionConfig
+	RabbitMQ     *middleware.ConnectionConfig
+	DuplicateRate float64
 }
 
 func LoadConfig() *Config {
@@ -20,6 +21,7 @@ func LoadConfig() *Config {
 			Password: getEnv("RABBITMQ_PASS", "password"),
 			VHost:    "/",
 		},
+		DuplicateRate: parseFloat(getEnv("DUPLICATE_RATE", "0.0")),
 	}
 }
 
@@ -32,6 +34,11 @@ func getEnv(key, defaultValue string) string {
 
 func parseInt(s string) int {
 	val, _ := strconv.Atoi(s)
+	return val
+}
+
+func parseFloat(s string) float64 {
+	val, _ := strconv.ParseFloat(s, 64)
 	return val
 }
 

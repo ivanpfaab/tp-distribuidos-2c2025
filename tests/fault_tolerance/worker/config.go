@@ -8,17 +8,18 @@ import (
 )
 
 type Config struct {
-	WorkerID   int
-	InputQueue string
-	OutputQueue string
-	RabbitMQ   *middleware.ConnectionConfig
+	WorkerID      int
+	InputQueue    string
+	OutputQueue   string
+	RabbitMQ      *middleware.ConnectionConfig
+	DuplicateRate float64
 }
 
 func LoadConfig() *Config {
 	workerID, _ := strconv.Atoi(getEnv("WORKER_ID", "1"))
-	
+
 	return &Config{
-		WorkerID:   workerID,
+		WorkerID:    workerID,
 		InputQueue:  getEnv("INPUT_QUEUE", "queue-input"),
 		OutputQueue: getEnv("OUTPUT_QUEUE", "queue-output"),
 		RabbitMQ: &middleware.ConnectionConfig{
@@ -28,6 +29,7 @@ func LoadConfig() *Config {
 			Password: getEnv("RABBITMQ_PASS", "password"),
 			VHost:    "/",
 		},
+		DuplicateRate: parseFloat(getEnv("DUPLICATE_RATE", "0.0")),
 	}
 }
 
@@ -43,3 +45,7 @@ func parseInt(s string) int {
 	return val
 }
 
+func parseFloat(s string) float64 {
+	val, _ := strconv.ParseFloat(s, 64)
+	return val
+}

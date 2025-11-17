@@ -10,13 +10,15 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	statemanager "github.com/tp-distribuidos-2c2025/shared/state_manager"
+	"github.com/tp-distribuidos-2c2025/tests/fault_tolerance/utils"
 )
 
 type Worker struct {
-	config       *Config
-	consumer     *workerqueue.QueueConsumer
-	producer     *workerqueue.QueueMiddleware
-	stateManager *statemanager.StateManager
+	config          *Config
+	consumer        *workerqueue.QueueConsumer
+	producer        *workerqueue.QueueMiddleware
+	stateManager    *statemanager.StateManager
+	duplicateSender *utils.DuplicateSender
 }
 
 func NewWorker(config *Config) (*Worker, error) {
@@ -71,11 +73,18 @@ func NewWorker(config *Config) (*Worker, error) {
 		log.Printf("Worker %d: Loaded %d processed IDs", config.WorkerID, count)
 	}
 
+	// Initialize DuplicateSender
+	duplicateSender := utils.NewDuplicateSender(config.DuplicateRate)
+	if config.DuplicateRate > 0.0 {
+		log.Printf("Worker %d: Duplicate rate enabled: %.2f%%", config.WorkerID, config.DuplicateRate*100)
+	}
+
 	return &Worker{
-		config:       config,
-		consumer:     consumer,
-		producer:     producer,
-		stateManager: stateManager,
+		config:          config,
+		consumer:        consumer,
+		producer:        producer,
+		stateManager:    stateManager,
+		duplicateSender: duplicateSender,
 	}, nil
 }
 
@@ -106,7 +115,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 
 	// Check if already processed
 	if w.stateManager.IsProcessed(chunkMsg.ID) {
-		log.Printf("Worker %d: Chunk ID already processed, skipping", w.config.WorkerID)
+		log.Printf("Worker %d: Chunk ID %s already processed, skipping", w.config.WorkerID, chunkMsg.ID)
 		return 0 // Return 0 to ACK (handled by Start method)
 	}
 
@@ -115,22 +124,51 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	// Wait 3 seconds before forwarding
 	time.Sleep(3 * time.Second)
 
-	// Forward to output queue
+	var serialized []byte
+
+	if w.duplicateSender.ShouldSendDuplicate() {
+		// Send a duplicate
+		duplicateID, duplicateData, found := w.duplicateSender.GetRandomDuplicate()
+		if found {
+			serialized = duplicateData
+			log.Printf("Worker %d: Sending DUPLICATE chunk (ID: %s)", w.config.WorkerID, duplicateID)
+		} else {
+			// Fallback to normal processing if no duplicates available
+			chunkMessage := chunk.NewChunkMessage(chunkMsg)
+			var err error
+			serialized, err = chunk.SerializeChunkMessage(chunkMessage)
+			if err != nil {
+				log.Printf("Worker %d: Failed to serialize chunk: %v", w.config.WorkerID, err)
+				return middleware.MessageMiddlewareMessageError
+			}
+		}
+
+		// Send to output queue
+		if sendErr := w.producer.Send(serialized); sendErr != 0 {
+			log.Printf("Worker %d: Failed to send chunk: %v", w.config.WorkerID, sendErr)
+		}
+
+	} 
+	// Normal processing: forward the chunk
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
-	serialized, err := chunk.SerializeChunkMessage(chunkMessage)
+	serialized, err = chunk.SerializeChunkMessage(chunkMessage)
 	if err != nil {
 		log.Printf("Worker %d: Failed to serialize chunk: %v", w.config.WorkerID, err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	if err := w.producer.Send(serialized); err != 0 {
-		log.Printf("Worker %d: Failed to send chunk: %v", w.config.WorkerID, err)
-		return err
+	// Send to output queue
+	if sendErr := w.producer.Send(serialized); sendErr != 0 {
+		log.Printf("Worker %d: Failed to send chunk: %v", w.config.WorkerID, sendErr)
+		return sendErr
 	}
 
+	// Store chunk for potential future duplicates (only if it's a new chunk, not a duplicate)
+	w.duplicateSender.StoreChunk(chunkMsg, serialized)
+
 	// Mark as processed (must be after successful send)
-	if err := w.stateManager.MarkProcessed(chunkMsg.ID); err != nil {
-		log.Printf("Worker %d: Failed to mark chunk as processed: %v", w.config.WorkerID, err)
+	if markErr := w.stateManager.MarkProcessed(chunkMsg.ID); markErr != nil {
+		log.Printf("Worker %d: Failed to mark chunk as processed: %v", w.config.WorkerID, markErr)
 		return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 	}
 

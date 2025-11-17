@@ -33,6 +33,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      DUPLICATE_RATE: 0.3
 
   worker-2:
     build:
@@ -52,6 +53,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      DUPLICATE_RATE: 0.3
 
   worker-3:
     build:
@@ -71,6 +73,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      DUPLICATE_RATE: 0.3
 
   final-consumer:
     build:
@@ -113,6 +116,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      DUPLICATE_RATE: 0.3  # Duplicate rate (0.0-1.0), default: 0.0 (no duplicates)
 
 volumes:
   worker-1-data:

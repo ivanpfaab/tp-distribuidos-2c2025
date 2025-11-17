@@ -61,6 +61,23 @@ docker compose -f tests/fault_tolerance/docker-compose.yaml down
 
 ## Testing Fault Tolerance
 
+### Testing Duplicate Deduplication
+
+You can test if workers correctly skip duplicate chunks by setting the `DUPLICATE_RATE` environment variable:
+
+```bash
+# Set duplicate rate to 30% (0.3)
+export DUPLICATE_RATE=0.3
+
+# Start the system
+make up
+```
+
+The test runner will randomly send duplicate chunks based on the rate. Workers should:
+- Log "Chunk ID already processed, skipping" for duplicates
+- Only process each unique chunk once
+- Final consumer should receive exactly 100 unique chunks (regardless of duplicates sent)
+
 ### Using Makefile
 
 1. **Kill a worker**:
@@ -101,4 +118,9 @@ docker compose -f tests/fault_tolerance/docker-compose.yaml down
 - Basic logging: Worker ID, received/sent messages
 - Final consumer prints all received chunks with their data
 - 100 chunks are sent through the linear pipeline
+- **Duplicate Rate**: Configure `DUPLICATE_RATE` environment variable (0.0-1.0) to test deduplication
+  - `0.0` (default): No duplicates
+  - `0.5`: 50% chance of sending a duplicate chunk
+  - `1.0`: Always send duplicates
+  - Workers should skip duplicate chunks based on their ID
 

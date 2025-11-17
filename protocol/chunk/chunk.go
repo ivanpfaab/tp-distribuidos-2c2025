@@ -2,6 +2,7 @@ package chunk
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
@@ -21,14 +22,12 @@ type Chunk struct {
 
 func NewChunk(clientID, fileID string, queryType byte, chunkNumber int, isLastChunk, isLastFromTable bool, chunkSize, tableID int, chunkData string) *Chunk {
 	// Generate ID: ClientID (4 bytes) + ChunkNumber (8 bytes as uint64)
-	idBytes := make([]byte, IDSize)
-	copy(idBytes[0:ClientIDSize], []byte(clientID))
-	binary.BigEndian.PutUint64(idBytes[ClientIDSize:], uint64(chunkNumber))
+	id := fmt.Sprintf("%s%08d", clientID, uint64(chunkNumber))
 	
 	return &Chunk{
 		ClientID:        clientID,
 		FileID:          fileID,
-		ID:              string(idBytes),
+		ID:              id,
 		QueryType:       queryType,
 		ChunkNumber:     chunkNumber,
 		IsLastChunk:     isLastChunk,
