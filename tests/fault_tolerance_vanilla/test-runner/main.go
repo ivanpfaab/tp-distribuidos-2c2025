@@ -8,7 +8,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	"github.com/tp-distribuidos-2c2025/tests/fault_tolerance/utils"
+	"github.com/tp-distribuidos-2c2025/tests/fault_tolerance_vanilla/utils"
 )
 
 func main() {

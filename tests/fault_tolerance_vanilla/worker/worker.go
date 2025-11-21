@@ -10,7 +10,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	statemanager "github.com/tp-distribuidos-2c2025/shared/state_manager"
-	"github.com/tp-distribuidos-2c2025/tests/fault_tolerance/utils"
+	"github.com/tp-distribuidos-2c2025/tests/fault_tolerance_vanilla/utils"
 )
 
 type Worker struct {
