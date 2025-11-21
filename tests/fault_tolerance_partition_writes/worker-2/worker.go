@@ -13,7 +13,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	"github.com/tp-distribuidos-2c2025/shared/partition_manager"
+	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
 	statemanager "github.com/tp-distribuidos-2c2025/shared/state_manager"
 )
 
@@ -174,6 +174,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 			FilePrefix: "users-partition",
 			Header:     []string{"user_id", "name"},
 			ClientID:   chunkMsg.ClientID,
+			DebugMode:  w.config.DebugMode,
 		}
 
 		if err := w.partitionManager.WritePartition(partition, chunkMsg.ID, opts); err != nil {
@@ -288,4 +289,3 @@ func (w *Worker) Close() {
 		w.producer.Close()
 	}
 }
-

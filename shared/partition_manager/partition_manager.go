@@ -100,8 +100,11 @@ func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []strin
 		return fmt.Errorf("failed to sync file: %w", err)
 	}
 
-	testing_utils.LogInfo("Partition Manager", "Sleeping for 5 second")
-	time.Sleep(5000 * time.Millisecond)
+	// Add delay in debug mode to make crashes more likely during testing
+	if opts.DebugMode {
+		testing_utils.LogInfo("Partition Manager", "Sleeping for 5 second")
+		time.Sleep(5000 * time.Millisecond)
+	}
 
 	return nil
 }

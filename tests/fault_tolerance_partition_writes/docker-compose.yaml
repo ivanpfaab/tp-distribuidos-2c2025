@@ -45,6 +45,7 @@ services:
       INPUT_QUEUE: queue-1-2
       OUTPUT_QUEUE: queue-2-3
       NUM_PARTITIONS: ${NUM_PARTITIONS:-5}
+      DEBUG_MODE: true
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
