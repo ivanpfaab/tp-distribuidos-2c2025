@@ -60,10 +60,8 @@ func (pm *PartitionManager) WritePartition(data PartitionData, chunkID string, o
 // appendToPartitionFile appends lines to a partition file
 func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []string, opts WriteOptions) error {
 	// Check if file exists
-	fileExists := true
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		fileExists = false
-	}
+	_, err := os.Stat(filePath)
+	fileExists := !os.IsNotExist(err)
 
 	// Open file in append mode
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -84,12 +82,7 @@ func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []strin
 
 	// Write all lines (parse CSV lines back to records)
 	for _, line := range lines {
-		// Remove trailing \n if present
-		line = strings.TrimSuffix(line, "\n")
-
-		// Parse CSV line
-		reader := csv.NewReader(strings.NewReader(line))
-		record, err := reader.Read()
+		record, err := parseCSVLine(line)
 		if err != nil {
 			return fmt.Errorf("failed to parse CSV line: %w", err)
 		}
@@ -215,21 +208,13 @@ func (pm *PartitionManager) fixIncompleteLineAndAppend(
 	// Check if incomplete line matches any of the new lines (to avoid duplicates)
 	linesToWrite := newLines
 	if len(newLines) > 0 {
-		incompleteLineTrimmed := strings.TrimSuffix(incompleteLine, "\n")
-
-		// Parse incomplete line
-		readerIncomplete := csv.NewReader(strings.NewReader(incompleteLineTrimmed))
-		recordIncomplete, errIncomplete := readerIncomplete.Read()
+		recordIncomplete, errIncomplete := parseCSVLine(incompleteLine)
 
 		if errIncomplete == nil {
 			// Check if incomplete line matches any of the new lines
 			foundMatch := false
-
 			for _, newLine := range newLines {
-				newLineTrimmed := strings.TrimSuffix(newLine, "\n")
-				readerNew := csv.NewReader(strings.NewReader(newLineTrimmed))
-				recordNew, errNew := readerNew.Read()
-
+				recordNew, errNew := parseCSVLine(newLine)
 				if errNew == nil {
 					// Check if records are equal or if incomplete is a partial version of new line
 					if recordsEqual(recordIncomplete, recordNew) || isPartialRecord(recordIncomplete, recordNew) {
@@ -258,6 +243,13 @@ func (pm *PartitionManager) fixIncompleteLineAndAppend(
 
 	// Write all lines
 	return pm.appendToPartitionFile(filePath, linesToWrite, opts)
+}
+
+// parseCSVLine parses a CSV line (with optional trailing newline) into a record
+func parseCSVLine(line string) ([]string, error) {
+	line = strings.TrimSuffix(line, "\n")
+	reader := csv.NewReader(strings.NewReader(line))
+	return reader.Read()
 }
 
 // recordsEqual compares two CSV records for equality
@@ -293,25 +285,12 @@ func isPartialRecord(incomplete, complete []string) bool {
 		incompleteField := incomplete[i]
 		completeField := complete[i]
 
-		// Incomplete field cannot be longer than complete field
+		// Incomplete field must be shorter or equal, and must be a prefix of complete field
 		if len(incompleteField) > len(completeField) {
 			return false
 		}
-
-		// Incomplete field must be a prefix of complete field
-		if len(incompleteField) > 0 {
-			// Check if incomplete field matches the prefix of complete field
-			if len(completeField) < len(incompleteField) {
-				return false // Complete field is shorter, not a match
-			}
-			if incompleteField != completeField[:len(incompleteField)] {
-				return false // Not a prefix match
-			}
-		} else {
-			// Empty incomplete field - only matches if complete field is also empty
-			if len(completeField) > 0 {
-				return false
-			}
+		if incompleteField != completeField[:len(incompleteField)] {
+			return false
 		}
 
 		// Track if at least one field is actually incomplete (shorter)
