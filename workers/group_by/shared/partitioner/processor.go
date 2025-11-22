@@ -176,13 +176,8 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 			continue
 		}
 
-		// Clean up each field
-		cleanedFields := make([]string, len(record))
-		for j, field := range record {
-			cleanedFields[j] = strings.TrimSpace(field)
-		}
-
-		result = append(result, Record{Fields: cleanedFields})
+		// CSV parser already handles whitespace correctly, use fields directly
+		result = append(result, Record{Fields: record})
 	}
 
 	return result, nil
@@ -195,7 +190,7 @@ func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtInd
 		return 0, fmt.Errorf("record does not have created_at field at index %d", createdAtIndex)
 	}
 
-	createdAtStr := strings.TrimSpace(record.Fields[createdAtIndex])
+	createdAtStr := record.Fields[createdAtIndex]
 	if createdAtStr == "" {
 		return 0, fmt.Errorf("created_at field is empty")
 	}
@@ -295,16 +290,57 @@ func (p *PartitionerProcessor) sendToWorker(workerID int, records []Record, orig
 
 // recordsToCSV converts records to CSV format
 func (p *PartitionerProcessor) recordsToCSV(records []Record) string {
+	if len(records) == 0 {
+		var result strings.Builder
+		for i, field := range p.Schema {
+			if i > 0 {
+				result.WriteByte(',')
+			}
+			result.WriteString(field)
+		}
+		result.WriteByte('\n')
+		return result.String()
+	}
+
+	// Calculate exact size needed to avoid reallocation
+	// Header size: sum of field lengths + commas + newline
+	headerSize := len(p.Schema) - 1 // commas between fields
+	for _, field := range p.Schema {
+		headerSize += len(field)
+	}
+	headerSize++ // newline
+
+	// Estimate record size from first record
+	firstRecordSize := len(records[0].Fields) - 1 // commas
+	for _, field := range records[0].Fields {
+		firstRecordSize += len(field)
+	}
+	firstRecordSize++ // newline
+
+	// Total size = header + (average record size * record count)
+	estimatedSize := headerSize + (firstRecordSize * len(records))
+
 	var result strings.Builder
+	result.Grow(estimatedSize)
 
-	// Write header
-	result.WriteString(strings.Join(p.Schema, ","))
-	result.WriteString("\n")
+	// Write header - avoid strings.Join
+	for i, field := range p.Schema {
+		if i > 0 {
+			result.WriteByte(',')
+		}
+		result.WriteString(field)
+	}
+	result.WriteByte('\n')
 
-	// Write records
+	// Write records - avoid strings.Join
 	for _, record := range records {
-		result.WriteString(strings.Join(record.Fields, ","))
-		result.WriteString("\n")
+		for i, field := range record.Fields {
+			if i > 0 {
+				result.WriteByte(',')
+			}
+			result.WriteString(field)
+		}
+		result.WriteByte('\n')
 	}
 
 	return result.String()
