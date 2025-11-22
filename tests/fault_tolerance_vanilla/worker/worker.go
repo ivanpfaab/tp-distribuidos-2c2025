@@ -7,9 +7,9 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
-	statemanager "github.com/tp-distribuidos-2c2025/shared/state_manager"
 	"github.com/tp-distribuidos-2c2025/tests/fault_tolerance_vanilla/utils"
 )
 
@@ -17,7 +17,7 @@ type Worker struct {
 	config          *Config
 	consumer        *workerqueue.QueueConsumer
 	producer        *workerqueue.QueueMiddleware
-	stateManager    *statemanager.StateManager
+	messageManager  *messagemanager.MessageManager
 	duplicateSender *utils.DuplicateSender
 }
 
@@ -64,12 +64,12 @@ func NewWorker(config *Config) (*Worker, error) {
 		return nil, fmt.Errorf("failed to declare output queue: %d", err)
 	}
 
-	// Initialize StateManager
-	stateManager := statemanager.NewStateManager("/app/worker-data/processed-ids.txt")
-	if err := stateManager.LoadProcessedIDs(); err != nil {
+	// Initialize MessageManager
+	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
+	if err := messageManager.LoadProcessedIDs(); err != nil {
 		log.Printf("Worker %d: Warning - failed to load processed IDs: %v (starting with empty state)", config.WorkerID, err)
 	} else {
-		count := stateManager.GetProcessedCount()
+		count := messageManager.GetProcessedCount()
 		log.Printf("Worker %d: Loaded %d processed IDs", config.WorkerID, count)
 	}
 
@@ -83,7 +83,7 @@ func NewWorker(config *Config) (*Worker, error) {
 		config:          config,
 		consumer:        consumer,
 		producer:        producer,
-		stateManager:    stateManager,
+		messageManager:  messageManager,
 		duplicateSender: duplicateSender,
 	}, nil
 }
@@ -114,7 +114,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	}
 
 	// Check if already processed
-	if w.stateManager.IsProcessed(chunkMsg.ID) {
+	if w.messageManager.IsProcessed(chunkMsg.ID) {
 		log.Printf("Worker %d: Chunk ID %s already processed, skipping", w.config.WorkerID, chunkMsg.ID)
 		return 0 // Return 0 to ACK (handled by Start method)
 	}
@@ -148,7 +148,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 			log.Printf("Worker %d: Failed to send chunk: %v", w.config.WorkerID, sendErr)
 		}
 
-	} 
+	}
 	// Normal processing: forward the chunk
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 	serialized, err = chunk.SerializeChunkMessage(chunkMessage)
@@ -167,7 +167,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	w.duplicateSender.StoreChunk(chunkMsg, serialized)
 
 	// Mark as processed (must be after successful send)
-	if markErr := w.stateManager.MarkProcessed(chunkMsg.ID); markErr != nil {
+	if markErr := w.messageManager.MarkProcessed(chunkMsg.ID); markErr != nil {
 		log.Printf("Worker %d: Failed to mark chunk as processed: %v", w.config.WorkerID, markErr)
 		return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 	}
@@ -177,8 +177,8 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 }
 
 func (w *Worker) Close() {
-	if w.stateManager != nil {
-		w.stateManager.Close()
+	if w.messageManager != nil {
+		w.messageManager.Close()
 	}
 	if w.consumer != nil {
 		w.consumer.Close()

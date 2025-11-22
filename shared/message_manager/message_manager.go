@@ -1,4 +1,4 @@
-package statemanager
+package messagemanager
 
 import (
 	"bufio"
@@ -7,23 +7,23 @@ import (
 	"strings"
 )
 
-// StateManager manages processed message IDs using a persistent file
-type StateManager struct {
+// MessageManager manages processed message IDs using a persistent file
+type MessageManager struct {
 	filePath     string
 	processedIDs map[string]bool
 }
 
-// NewStateManager creates a new StateManager instance
-func NewStateManager(filePath string) *StateManager {
-	return &StateManager{
+// NewMessageManager creates a new MessageManager instance
+func NewMessageManager(filePath string) *MessageManager {
+	return &MessageManager{
 		filePath:     filePath,
 		processedIDs: make(map[string]bool),
 	}
 }
 
 // LoadProcessedIDs reads the file and loads all processed IDs into memory
-func (sm *StateManager) LoadProcessedIDs() error {
-	file, err := os.Open(sm.filePath)
+func (mm *MessageManager) LoadProcessedIDs() error {
+	file, err := os.Open(mm.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// File doesn't exist yet (first run), return nil
@@ -37,7 +37,7 @@ func (sm *StateManager) LoadProcessedIDs() error {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
-			sm.processedIDs[line] = true
+			mm.processedIDs[line] = true
 		}
 	}
 
@@ -49,17 +49,17 @@ func (sm *StateManager) LoadProcessedIDs() error {
 }
 
 // IsProcessed checks if an ID has already been processed
-func (sm *StateManager) IsProcessed(id string) bool {
-	return sm.processedIDs[id]
+func (mm *MessageManager) IsProcessed(id string) bool {
+	return mm.processedIDs[id]
 }
 
 // MarkProcessed marks an ID as processed and appends it to the file
-func (sm *StateManager) MarkProcessed(id string) error {
+func (mm *MessageManager) MarkProcessed(id string) error {
 	// Add to memory
-	sm.processedIDs[id] = true
+	mm.processedIDs[id] = true
 
 	// Append to file
-	file, err := os.OpenFile(sm.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(mm.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file for writing: %w", err)
 	}
@@ -87,11 +87,12 @@ func (sm *StateManager) MarkProcessed(id string) error {
 }
 
 // Close performs cleanup (currently no-op, but kept for future use)
-func (sm *StateManager) Close() error {
+func (mm *MessageManager) Close() error {
 	return nil
 }
 
 // GetProcessedCount returns the number of processed IDs
-func (sm *StateManager) GetProcessedCount() int {
-	return len(sm.processedIDs)
+func (mm *MessageManager) GetProcessedCount() int {
+	return len(mm.processedIDs)
 }
+

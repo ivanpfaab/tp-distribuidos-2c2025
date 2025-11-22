@@ -14,15 +14,15 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
-	statemanager "github.com/tp-distribuidos-2c2025/shared/state_manager"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 )
 
 type Worker struct {
 	config              *Config
 	consumer            *workerqueue.QueueConsumer
 	producer            *workerqueue.QueueMiddleware
-	processedChunks     *statemanager.StateManager
-	partitionChunkState *statemanager.StateManager
+	processedChunks     *messagemanager.MessageManager
+	partitionChunkState *messagemanager.MessageManager
 	partitionManager    *partitionmanager.PartitionManager
 }
 
@@ -76,8 +76,8 @@ func NewWorker(config *Config) (*Worker, error) {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	// Initialize StateManager for processed chunks
-	processedChunks := statemanager.NewStateManager("/app/worker-data/state/processed-chunks.txt")
+	// Initialize MessageManager for processed chunks
+	processedChunks := messagemanager.NewMessageManager("/app/worker-data/state/processed-chunks.txt")
 	if err := processedChunks.LoadProcessedIDs(); err != nil {
 		log.Printf("Worker 2: Warning - failed to load processed chunks: %v (starting with empty state)", err)
 	} else {
@@ -85,8 +85,8 @@ func NewWorker(config *Config) (*Worker, error) {
 		log.Printf("Worker 2: Loaded %d processed chunks", count)
 	}
 
-	// Initialize StateManager for partition-chunk pairs
-	partitionChunkState := statemanager.NewStateManager("/app/worker-data/state/written-partition-chunks.txt")
+	// Initialize MessageManager for partition-chunk pairs
+	partitionChunkState := messagemanager.NewMessageManager("/app/worker-data/state/written-partition-chunks.txt")
 	if err := partitionChunkState.LoadProcessedIDs(); err != nil {
 		log.Printf("Worker 2: Warning - failed to load partition-chunk state: %v (starting with empty state)", err)
 	} else {
