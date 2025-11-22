@@ -100,30 +100,17 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 	}
 
 	// Send chunks to next step
-	// For Query 4: send one chunk per file (using partition number as chunk number)
-	// For Query 2/3: send one chunk (using worker ID as chunk number, backward compatible)
-	if gbo.config.QueryType == 4 {
-		// Query 4: send multiple chunks, one per partition file
-		for i, result := range fileResults {
-			isLastChunk := (i == len(fileResults)-1)
-			// Use partition number as chunk number (unique across all orchestrators)
-			chunkNumber := result.PartitionNumber
-			if err := gbo.sendDataChunk(clientID, chunkNumber, result.CSVData, isLastChunk); err != nil {
-				log.Printf("Failed to send data chunk for client %s, partition %d: %v", clientID, chunkNumber, err)
-				// Continue with other chunks
-				continue
-			}
-			log.Printf("Client %s: Sent chunk for partition %d (%d/%d)", clientID, chunkNumber, i+1, len(fileResults))
+	// All queries: send multiple chunks, one per partition file
+	for i, result := range fileResults {
+		isLastChunk := (i == len(fileResults)-1)
+		// Use partition number as chunk number (unique across all orchestrators)
+		chunkNumber := result.PartitionNumber
+		if err := gbo.sendDataChunk(clientID, chunkNumber, result.CSVData, isLastChunk); err != nil {
+			log.Printf("Failed to send data chunk for client %s, partition %d: %v", clientID, chunkNumber, err)
+			// Continue with other chunks
+			continue
 		}
-	} else {
-		// Query 2/3: send single chunk (backward compatible)
-		if len(fileResults) > 0 {
-			chunkNumber := gbo.config.WorkerID
-			if err := gbo.sendAggregatedChunk(clientID, chunkNumber, fileResults[0].CSVData); err != nil {
-				log.Printf("Failed to send data chunk for client %s: %v", clientID, err)
-				return
-			}
-		}
+		log.Printf("Client %s: Sent chunk for partition %d (%d/%d)", clientID, chunkNumber, i+1, len(fileResults))
 	}
 
 	// Clean up files and clear state
@@ -155,15 +142,14 @@ func (gbo *GroupByOrchestrator) cleanupClientFiles(clientID string) {
 // sendDataChunk sends a data chunk with CSV data to the next processing step
 func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, csvData string, isLastChunk bool) error {
 	// Create chunk with grouped CSV data
-	// For Query 4: Chunk number = partition number (unique across orchestrators)
-	// For Query 2/3: Chunk number = worker ID (backward compatible)
-	// IsLastChunk: true only for the last chunk from this orchestrator (Query 4) or always true (Query 2/3)
+	// All queries: Chunk number = partition number (unique across orchestrators)
+	// IsLastChunk: true only for the last chunk from this orchestrator
 	// IsLastFromTable: true only when this is the last chunk from all orchestrators
 	dataChunk := chunk.NewChunk(
 		clientID,                   // ClientID
 		"01",                       // FileID - use "01" so completion tracker can parse it
 		byte(gbo.config.QueryType), // QueryType
-		chunkNumber,                // ChunkNumber (partition number for Q4, worker ID for Q2/Q3)
+		chunkNumber,                // ChunkNumber (partition number)
 		isLastChunk,                // IsLastChunk - true for last chunk from this orchestrator
 		false,                      // IsLastFromTable - set by top-users worker when all chunks received
 		len(csvData),               // ChunkSize

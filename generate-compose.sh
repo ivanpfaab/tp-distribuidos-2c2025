@@ -65,18 +65,22 @@ echo ""
 echo -e "${BLUE}Configure User Join Workers (Query 4 - distributed write/read)${NC}"
 echo ""
 
-USER_PARTITION_WRITERS=$(prompt_worker_count "user-partition-writer" 5)
-USER_JOIN_READERS=$(prompt_worker_count "user-join-reader" 2)
+USER_PARTITION_WORKERS=$(prompt_worker_count "user-partition-worker (writer+reader pairs)" 5)
+USER_PARTITION_WRITERS=$USER_PARTITION_WORKERS
+USER_JOIN_READERS=$USER_PARTITION_WORKERS
 echo ""
 echo -e "${BLUE}Configure Group By Components${NC}"
 echo ""
 
 Q2_PARTITIONER_COUNT=$(prompt_worker_count "query2-partitioner" 1)
-Q2_GROUPBY_WORKER_COUNT=3  # Fixed at 3 for Query 2
+Q2_GROUPBY_WORKER_COUNT=$(prompt_worker_count "query2-groupby-worker" 3)
+Q2_NUM_PARTITIONS=$(prompt_worker_count "query2-partitions" 10) #correct to ask for number of partitions not 'query2-partitions workers'
 Q3_PARTITIONER_COUNT=$(prompt_worker_count "query3-partitioner" 1)
-Q3_GROUPBY_WORKER_COUNT=3  # Fixed at 3 for Query 3
+Q3_GROUPBY_WORKER_COUNT=$(prompt_worker_count "query3-groupby-worker" 3)
+Q3_NUM_PARTITIONS=$(prompt_worker_count "query3-partitions" 10)
 Q4_PARTITIONER_COUNT=$(prompt_worker_count "query4-partitioner" 1)
 Q4_GROUPBY_WORKER_COUNT=$(prompt_worker_count "query4-groupby-worker" 3)
+Q4_NUM_PARTITIONS=$(prompt_worker_count "query4-partitions" 100)
 
 echo ""
 echo -e "${BLUE}Configure Clients${NC}"
@@ -100,11 +104,11 @@ echo -e "User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC}"
 echo -e "Clients:                ${YELLOW}${CLIENT_COUNT}${NC}"
 echo ""
 echo -e "Query 2 Partitioners:   ${YELLOW}${Q2_PARTITIONER_COUNT}${NC} instance(s)"
-echo -e "Query 2 GroupBy Workers: ${YELLOW}${Q2_GROUPBY_WORKER_COUNT}${NC} instance(s)"
+echo -e "Query 2 GroupBy Workers: ${YELLOW}${Q2_GROUPBY_WORKER_COUNT}${NC} instance(s) (${Q2_NUM_PARTITIONS} partitions)"
 echo -e "Query 3 Partitioners:   ${YELLOW}${Q3_PARTITIONER_COUNT}${NC} instance(s)"
-echo -e "Query 3 GroupBy Workers: ${YELLOW}${Q3_GROUPBY_WORKER_COUNT}${NC} instance(s)"
+echo -e "Query 3 GroupBy Workers: ${YELLOW}${Q3_GROUPBY_WORKER_COUNT}${NC} instance(s) (${Q3_NUM_PARTITIONS} partitions)"
 echo -e "Query 4 Partitioners:   ${YELLOW}${Q4_PARTITIONER_COUNT}${NC} instance(s)"
-echo -e "Query 4 GroupBy Workers: ${YELLOW}${Q4_GROUPBY_WORKER_COUNT}${NC} instance(s)"
+echo -e "Query 4 GroupBy Workers: ${YELLOW}${Q4_GROUPBY_WORKER_COUNT}${NC} instance(s) (${Q4_NUM_PARTITIONS} partitions)"
 
 echo -e "${BLUE}Note: Query 2 Top Items Worker and Query 4 Top Users Worker will be included${NC}"
 echo -e "${GREEN}========================================${NC}"
@@ -269,6 +273,7 @@ generate_itemid_join_workers $ITEMID_JOIN_WORKER_COUNT
 generate_storeid_join_workers() {
     local count=$1
     local num_groupby_workers=$2  # Number of Query 3 groupby workers
+    local num_partitions=$3       # Number of Query 3 partitions
     
     for i in $(seq 1 $count); do
         # First worker has simpler container name for backward compatibility
@@ -307,7 +312,7 @@ $(echo -e "${orchestrator_deps}")
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "${i}"
       STOREID_BATCH_SIZE: 5
-      NUM_WORKERS: "${num_groupby_workers}"
+      NUM_PARTITIONS: "${num_partitions}"
     profiles: ["orchestration"]
 
 EOF
@@ -316,7 +321,7 @@ EOF
 
 # Generate storeid-join-workers
 echo -e "${BLUE}Generating storeid-join-workers...${NC}"
-generate_storeid_join_workers $STOREID_JOIN_WORKER_COUNT $Q3_GROUPBY_WORKER_COUNT
+generate_storeid_join_workers $STOREID_JOIN_WORKER_COUNT $Q3_GROUPBY_WORKER_COUNT $Q3_NUM_PARTITIONS
 
 # Add remaining non-scalable services
 cat >> docker-compose.yaml << 'EOF_REMAINING'
@@ -375,14 +380,7 @@ generate_partitioner() {
     local query_type=$1
     local count=$2
     local num_workers=$3
-
-    # Determine NUM_PARTITIONS based on query type
-    local num_partitions
-    if [ "$query_type" = "2" ] || [ "$query_type" = "3" ]; then
-        num_partitions="3"  # Time-based partitions (3 semesters)
-    else
-        num_partitions="100"  # Default for Query 4 (configurable)
-    fi
+    local num_partitions=$4
 
     for i in $(seq 1 $count); do
         local container_name
@@ -454,14 +452,7 @@ generate_groupby_workers() {
     local query_type=$1
     local count=$2
     local partitioner_count=$3
-
-    # Determine NUM_PARTITIONS based on query type
-    local num_partitions
-    if [ "$query_type" = "2" ] || [ "$query_type" = "3" ]; then
-        num_partitions="3"  # Time-based partitions (3 semesters)
-    else
-        num_partitions="100"  # Default for Query 4 (configurable)
-    fi
+    local num_partitions=$4
 
     for i in $(seq 1 $count); do
         # Build dependencies on all partitioners
@@ -511,6 +502,7 @@ generate_top_worker() {
     local query_type=$1
     local worker_name=$2
     local groupby_worker_count=$3
+    local num_partitions=$4
 
     # Build dependencies on all groupby workers and orchestrators
     local deps=""
@@ -539,7 +531,7 @@ $(echo -e "${deps}")
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
-      NUM_WORKERS: "${groupby_worker_count}"
+      NUM_PARTITIONS: "${num_partitions}"
     profiles: ["orchestration"]
 
 EOF
@@ -593,16 +585,17 @@ generate_user_partition_writers() {
       WRITER_ID: ${i}
       NUM_WRITERS: ${count}
     volumes:
-      - shared-data:/shared-data
+      - user-writer-${i}-data:/shared-data
     profiles: ["orchestration"]
 
 EOF
     done
 }
 
-# Function to generate user-join-reader services (scalable readers)
+# Function to generate user-join-reader services (paired with writers, same count)
 generate_user_join_readers() {
     local count=$1
+    
     for i in $(seq 1 $count); do
         # First reader has simpler container name for backward compatibility
         local container_name
@@ -613,7 +606,7 @@ generate_user_join_readers() {
         fi
         
         cat >> docker-compose.yaml << EOF
-  # User Join Reader ${i} (Query 4 - reads from partition files)
+  # User Join Reader ${i} (Query 4 - paired with Writer ${i}, reads from local partition files)
   user-join-reader-${i}:
     build:
       context: .
@@ -622,15 +615,21 @@ generate_user_join_readers() {
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-writer-1:
+      user-partition-writer-${i}:
+        condition: service_started
+      in-file-join-orchestrator:
+        condition: service_started
+      query4-top-users-worker:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      READER_ID: ${i}
+      NUM_WRITERS: ${count}
     volumes:
-      - shared-data:/shared-data
+      - user-writer-${i}-data:/shared-data
     profiles: ["orchestration"]
 
 EOF
@@ -718,7 +717,7 @@ generate_user_partition_splitter $USER_PARTITION_WRITERS
 echo -e "${BLUE}Generating user partition writers...${NC}"
 generate_user_partition_writers $USER_PARTITION_WRITERS
 
-echo -e "${BLUE}Generating user join readers...${NC}"
+echo -e "${BLUE}Generating user join readers (paired 1:1 with writers)...${NC}"
 generate_user_join_readers $USER_JOIN_READERS
 
 # Generate query gateways
@@ -728,23 +727,23 @@ generate_query_gateway $QUERY_GATEWAY_COUNT
 
 # Generate Query 2 components
 echo -e "${BLUE}Generating Query 2 partitioners, groupby workers, and orchestrators...${NC}"
-generate_partitioner 2 $Q2_PARTITIONER_COUNT $Q2_GROUPBY_WORKER_COUNT
-generate_groupby_workers 2 $Q2_GROUPBY_WORKER_COUNT $Q2_PARTITIONER_COUNT
+generate_partitioner 2 $Q2_PARTITIONER_COUNT $Q2_GROUPBY_WORKER_COUNT $Q2_NUM_PARTITIONS
+generate_groupby_workers 2 $Q2_GROUPBY_WORKER_COUNT $Q2_PARTITIONER_COUNT $Q2_NUM_PARTITIONS
 generate_orchestrators 2 $Q2_GROUPBY_WORKER_COUNT
-generate_top_worker 2 "items" $Q2_GROUPBY_WORKER_COUNT
+generate_top_worker 2 "items" $Q2_GROUPBY_WORKER_COUNT $Q2_NUM_PARTITIONS
 
 # Generate Query 3 components
 echo -e "${BLUE}Generating Query 3 partitioners, groupby workers, and orchestrators...${NC}"
-generate_partitioner 3 $Q3_PARTITIONER_COUNT $Q3_GROUPBY_WORKER_COUNT
-generate_groupby_workers 3 $Q3_GROUPBY_WORKER_COUNT $Q3_PARTITIONER_COUNT
+generate_partitioner 3 $Q3_PARTITIONER_COUNT $Q3_GROUPBY_WORKER_COUNT $Q3_NUM_PARTITIONS
+generate_groupby_workers 3 $Q3_GROUPBY_WORKER_COUNT $Q3_PARTITIONER_COUNT $Q3_NUM_PARTITIONS
 generate_orchestrators 3 $Q3_GROUPBY_WORKER_COUNT
 
 # Generate Query 4 components
 echo -e "${BLUE}Generating Query 4 partitioners, groupby workers, and orchestrators...${NC}"
-generate_partitioner 4 $Q4_PARTITIONER_COUNT $Q4_GROUPBY_WORKER_COUNT
-generate_groupby_workers 4 $Q4_GROUPBY_WORKER_COUNT $Q4_PARTITIONER_COUNT
+generate_partitioner 4 $Q4_PARTITIONER_COUNT $Q4_GROUPBY_WORKER_COUNT $Q4_NUM_PARTITIONS
+generate_groupby_workers 4 $Q4_GROUPBY_WORKER_COUNT $Q4_PARTITIONER_COUNT $Q4_NUM_PARTITIONS
 generate_orchestrators 4 $Q4_GROUPBY_WORKER_COUNT
-generate_top_worker 4 "users" $Q4_GROUPBY_WORKER_COUNT
+generate_top_worker 4 "users" $Q4_GROUPBY_WORKER_COUNT $Q4_NUM_PARTITIONS
 
 
 # Generate server service with dependencies on all filter workers
@@ -973,6 +972,18 @@ EOF_FOOTER
 
 # Generate per-worker volumes for groupby workers
 echo -e "${BLUE}Generating per-worker volumes...${NC}"
+
+# Generate user partition writer volumes
+cat >> docker-compose.yaml << EOF
+  # User partition writer volumes (each writer has its own volume)
+EOF
+for i in $(seq 1 $USER_PARTITION_WRITERS); do
+    cat >> docker-compose.yaml << EOF
+  user-writer-${i}-data:
+    driver: local
+EOF
+done
+
 cat >> docker-compose.yaml << EOF
   # Query 2 worker volumes
 EOF
@@ -1013,6 +1024,7 @@ echo -e "  Query Gateway:          ${YELLOW}${QUERY_GATEWAY_COUNT}${NC} instance
 echo -e "  Join Data Handler:      ${YELLOW}${JOIN_DATA_HANDLER_COUNT}${NC} instance(s)"
 echo -e "  ItemID Join Workers:    ${YELLOW}${ITEMID_JOIN_WORKER_COUNT}${NC} instance(s)"
 echo -e "  StoreID Join Workers:   ${YELLOW}${STOREID_JOIN_WORKER_COUNT}${NC} instance(s)"
+echo -e "  User Partition Workers: ${YELLOW}${USER_PARTITION_WORKERS}${NC} paired writer+reader node(s)"
 echo -e "  User Partition Writers: ${YELLOW}${USER_PARTITION_WRITERS}${NC} instance(s)"
 echo -e "  User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC} instance(s)"
 echo -e "  Clients:                ${YELLOW}${CLIENT_COUNT}${NC} instance(s)"

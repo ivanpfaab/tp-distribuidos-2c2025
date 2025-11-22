@@ -101,10 +101,9 @@ func (cp *ChunkProcessor) ProcessQuery4ChunkForCSV(chunkMsg *chunk.Chunk, worker
 
 // ProcessQuery2ChunkForCSV extracts month, item_id, quantity, subtotal from chunk for CSV append strategy
 // Returns records that should be appended to CSV files, grouped by partition
-// Note: For Query 2, each worker handles one partition, so all records in the chunk belong to that partition
-func (cp *ChunkProcessor) ProcessQuery2ChunkForCSV(chunkMsg *chunk.Chunk, workerPartitions []int) (map[int][]shared.Query2Record, error) {
+func (cp *ChunkProcessor) ProcessQuery2ChunkForCSV(chunkMsg *chunk.Chunk, workerPartitions []int, numPartitions int) (map[int][]shared.Query2Record, error) {
 	extractor := &Query2RecordExtractor{}
-	partitionRecords, err := cp.processChunkForCSV(chunkMsg, workerPartitions, 0, extractor) // numPartitions not used for Q2
+	partitionRecords, err := cp.processChunkForCSV(chunkMsg, workerPartitions, numPartitions, extractor)
 	if err != nil {
 		return nil, err
 	}
@@ -122,10 +121,9 @@ func (cp *ChunkProcessor) ProcessQuery2ChunkForCSV(chunkMsg *chunk.Chunk, worker
 
 // ProcessQuery3ChunkForCSV extracts store_id, final_amount from chunk for CSV append strategy
 // Returns records that should be appended to CSV files, grouped by partition
-// Note: For Query 3, each worker handles one partition, so all records in the chunk belong to that partition
-func (cp *ChunkProcessor) ProcessQuery3ChunkForCSV(chunkMsg *chunk.Chunk, workerPartitions []int) (map[int][]shared.Query3Record, error) {
+func (cp *ChunkProcessor) ProcessQuery3ChunkForCSV(chunkMsg *chunk.Chunk, workerPartitions []int, numPartitions int) (map[int][]shared.Query3Record, error) {
 	extractor := &Query3RecordExtractor{}
-	partitionRecords, err := cp.processChunkForCSV(chunkMsg, workerPartitions, 0, extractor) // numPartitions not used for Q3
+	partitionRecords, err := cp.processChunkForCSV(chunkMsg, workerPartitions, numPartitions, extractor)
 	if err != nil {
 		return nil, err
 	}

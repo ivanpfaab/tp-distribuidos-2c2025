@@ -21,25 +21,31 @@ func (e *Query2RecordExtractor) GetQueryName() string {
 
 func (e *Query2RecordExtractor) ExtractRecord(record []string, workerPartitions map[int]bool, numPartitions int) (int, interface{}, error) {
 	// Parse fields
+	transactionID := strings.TrimSpace(record[0])
 	itemID := strings.TrimSpace(record[1])
 	quantity := strings.TrimSpace(record[2])
 	subtotal := strings.TrimSpace(record[4])
 
-	// Validate quantity and subtotal are not empty
-	if quantity == "" || subtotal == "" {
-		return 0, nil, fmt.Errorf("empty quantity or subtotal")
+	// Validate fields are not empty
+	if transactionID == "" || quantity == "" || subtotal == "" {
+		return 0, nil, fmt.Errorf("empty transaction_id, quantity, or subtotal")
 	}
 
-	// Parse created_at to extract month and calculate partition
+	// Parse created_at to extract year and month
 	createdAt, err := common.ParseDate(strings.TrimSpace(record[5]))
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid date: %v", err)
 	}
 
+	year := fmt.Sprintf("%d", createdAt.Year())
 	month := fmt.Sprintf("%d", createdAt.Month())
 
-	// Calculate partition using common utility
-	partition := common.CalculateTimeBasedPartition(createdAt)
+	// Calculate partition using transaction_id hash (transaction_items doesn't have user_id)
+	// Use transaction_id as proxy since each transaction belongs to one user
+	partition, err := common.CalculateStringHashPartition(transactionID, numPartitions)
+	if err != nil {
+		return 0, nil, fmt.Errorf("invalid transaction_id %s: %v", transactionID, err)
+	}
 
 	// Only process records belonging to partitions this worker owns
 	if !workerPartitions[partition] {
@@ -48,6 +54,7 @@ func (e *Query2RecordExtractor) ExtractRecord(record []string, workerPartitions 
 
 	// Create record
 	rec := shared.Query2Record{
+		Year:     year,
 		Month:    month,
 		ItemID:   itemID,
 		Quantity: quantity,
@@ -70,22 +77,32 @@ func (e *Query3RecordExtractor) GetQueryName() string {
 
 func (e *Query3RecordExtractor) ExtractRecord(record []string, workerPartitions map[int]bool, numPartitions int) (int, interface{}, error) {
 	// Parse fields
+	transactionID := strings.TrimSpace(record[0])
 	storeID := strings.TrimSpace(record[1])
 	finalAmount := strings.TrimSpace(record[7])
 
 	// Validate fields are not empty
-	if storeID == "" || finalAmount == "" {
-		return 0, nil, fmt.Errorf("empty store_id or final_amount")
+	if transactionID == "" || storeID == "" || finalAmount == "" {
+		return 0, nil, fmt.Errorf("empty transaction_id, store_id, or final_amount")
 	}
 
-	// Parse created_at and calculate partition using common utility
+	// Parse created_at to extract year and semester
 	createdAt, err := common.ParseDate(strings.TrimSpace(record[8]))
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid date: %v", err)
 	}
 
-	// Calculate partition using common utility
-	partition := common.CalculateTimeBasedPartition(createdAt)
+	year := fmt.Sprintf("%d", createdAt.Year())
+	semester := "1"
+	if createdAt.Month() >= 7 {
+		semester = "2"
+	}
+
+	// Calculate partition using transaction_id hash (consistent with Query 2)
+	partition, err := common.CalculateStringHashPartition(transactionID, numPartitions)
+	if err != nil {
+		return 0, nil, fmt.Errorf("invalid transaction_id %s: %v", transactionID, err)
+	}
 
 	// Only process records belonging to partitions this worker owns
 	if !workerPartitions[partition] {
@@ -94,6 +111,8 @@ func (e *Query3RecordExtractor) ExtractRecord(record []string, workerPartitions 
 
 	// Create record
 	rec := shared.Query3Record{
+		Year:        year,
+		Semester:    semester,
 		StoreID:     storeID,
 		FinalAmount: finalAmount,
 	}
@@ -142,4 +161,3 @@ func (e *Query4RecordExtractor) ExtractRecord(record []string, workerPartitions 
 
 	return recordPartition, rec, nil
 }
-

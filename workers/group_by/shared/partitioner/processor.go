@@ -94,47 +94,27 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 	}
 
 	// Group partitions by worker and send one chunk per worker
-	// For Query 2 & 3: 1:1 mapping (Worker 1 → Partition 0, Worker 2 → Partition 1, Worker 3 → Partition 2)
-	// For Query 4: Modulo-based distribution (many partitions distributed across workers)
-	if p.QueryType == 2 || p.QueryType == 3 {
-		// Direct 1:1 mapping for Query 2 & 3
-		for workerID := 1; workerID <= p.NumWorkers; workerID++ {
-			// Worker ID is 1-based, partition is 0-based
-			// Worker 1 → Partition 0, Worker 2 → Partition 1, Worker 3 → Partition 2
-			partition := workerID - 1
-			workerRecords := []Record{}
-			if records, exists := partitionedRecords[partition]; exists {
-				workerRecords = append(workerRecords, records...)
-			}
-
-			// Send chunk to this worker
-			if err := p.sendToWorker(workerID, workerRecords, chunkMessage); err != nil {
-				return fmt.Errorf("failed to send to worker %d: %v", workerID, err)
-			}
-		}
-	} else {
-		// Modulo-based distribution for Query 4 (many partitions)
-		// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
-		// Note: workerID starts from 1 (not 0) to match docker-compose configuration
-		// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
-		// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
-		// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
-		for workerID := 1; workerID <= p.NumWorkers; workerID++ {
-			// Collect all records for this worker from its assigned partitions
-			workerRecords := []Record{}
-			targetRemainder := workerID % p.NumWorkers
-			for partition := 0; partition < p.NumPartitions; partition++ {
-				if partition%p.NumWorkers == targetRemainder {
-					if records, exists := partitionedRecords[partition]; exists {
-						workerRecords = append(workerRecords, records...)
-					}
+	// Modulo-based distribution for all queries (many partitions distributed across workers)
+	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
+	// Note: workerID starts from 1 (not 0) to match docker-compose configuration
+	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
+	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
+	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
+	for workerID := 1; workerID <= p.NumWorkers; workerID++ {
+		// Collect all records for this worker from its assigned partitions
+		workerRecords := []Record{}
+		targetRemainder := workerID % p.NumWorkers
+		for partition := 0; partition < p.NumPartitions; partition++ {
+			if partition%p.NumWorkers == targetRemainder {
+				if records, exists := partitionedRecords[partition]; exists {
+					workerRecords = append(workerRecords, records...)
 				}
 			}
+		}
 
-			// Send chunk to this worker
-			if err := p.sendToWorker(workerID, workerRecords, chunkMessage); err != nil {
-				return fmt.Errorf("failed to send to worker %d: %v", workerID, err)
-			}
+		// Send chunk to this worker
+		if err := p.sendToWorker(workerID, workerRecords, chunkMessage); err != nil {
+			return fmt.Errorf("failed to send to worker %d: %v", workerID, err)
 		}
 	}
 
@@ -206,16 +186,15 @@ func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtInd
 }
 
 // getPartition calculates the partition for a record based on query type
-// Query 2/3: Time-based partitioning (semester)
-// Query 4: User-based partitioning (user_id % NUM_PARTITIONS)
 func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 	switch p.QueryType {
-	case 2:
-		// Query 2: Time-based partitioning (created_at is at index 5)
-		return p.getTimeBasedPartition(record, 5)
-	case 3:
-		// Query 3: Time-based partitioning (created_at is at index 8)
-		return p.getTimeBasedPartition(record, 8)
+	case 2, 3:
+		// Query 2 & 3: transaction_id based partitioning (consistent hash-based distribution)
+		if len(record.Fields) < 1 {
+			return 0, fmt.Errorf("record does not have transaction_id field")
+		}
+		transactionID := record.Fields[0]
+		return common.CalculateStringHashPartition(transactionID, p.NumPartitions)
 	case 4:
 		// Query 4: User-based partitioning (user_id is at index 4)
 		if 4 >= len(record.Fields) {

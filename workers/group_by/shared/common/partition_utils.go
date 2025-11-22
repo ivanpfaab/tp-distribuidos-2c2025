@@ -9,8 +9,8 @@ import (
 )
 
 // CalculateTimeBasedPartition calculates partition based on year and semester
-// Used by Query 2 and Query 3
-// Partition 0 = 2024-S1, Partition 1 = 2024-S2, Partition 2 = 2025-S1
+// DEPRECATED: This function is no longer used. All queries now use user-based partitioning.
+// Kept for backward compatibility only.
 func CalculateTimeBasedPartition(createdAt time.Time) int {
 	year := createdAt.Year()
 	semester := 1
@@ -45,17 +45,30 @@ func CalculateUserBasedPartition(userID string, numPartitions int) (int, error) 
 	return userIDInt % numPartitions, nil
 }
 
-// GetPartitionsForWorker returns the list of partitions a worker handles
-// For Query 2 & 3: 1:1 mapping (Worker 1 → Partition 0, Worker 2 → Partition 1, Worker 3 → Partition 2)
-// For Query 4: Modulo-based distribution (many partitions distributed across workers)
-func GetPartitionsForWorker(queryType, workerID, numWorkers, numPartitions int) []int {
-	// For Q2/Q3: worker ID maps to partition (1:1 mapping)
-	// Worker IDs are 1-based (1, 2, 3), partitions are 0-based (0, 1, 2)
-	if queryType == 2 || queryType == 3 {
-		return []int{workerID - 1}
+// CalculateStringHashPartition calculates partition based on string hash
+// Used by Query 2 and 3 for transaction_id (UUID) based partitioning
+func CalculateStringHashPartition(id string, numPartitions int) (int, error) {
+	if id == "" {
+		return 0, fmt.Errorf("empty id string")
 	}
 
-	// For Q4: worker handles multiple partitions based on modulo
+	// Simple hash: sum of byte values
+	hash := 0
+	for i := 0; i < len(id); i++ {
+		hash = hash*31 + int(id[i])
+	}
+
+	// Make hash positive and calculate partition
+	if hash < 0 {
+		hash = -hash
+	}
+	return hash % numPartitions, nil
+}
+
+// GetPartitionsForWorker returns the list of partitions a worker handles
+// All queries use modulo-based distribution (many partitions distributed across workers)
+func GetPartitionsForWorker(queryType, workerID, numWorkers, numPartitions int) []int {
+	// Worker handles multiple partitions based on modulo
 	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
 	// Since workerID starts from 1:
 	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
@@ -109,4 +122,3 @@ func ParseDate(dateStr string) (time.Time, error) {
 
 	return time.Time{}, fmt.Errorf("unable to parse date: %s", dateStr)
 }
-

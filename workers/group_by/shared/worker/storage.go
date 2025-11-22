@@ -110,7 +110,7 @@ func (fm *FileManager) AppendQuery2RecordsToPartitionCSV(clientID string, partit
 		csvRecords[i] = records[i]
 	}
 
-	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"month", "item_id", "quantity", "subtotal"}, csvRecords)
+	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"year", "month", "item_id", "quantity", "subtotal"}, csvRecords)
 }
 
 // AppendQuery3RecordsToPartitionCSV appends multiple store_id,final_amount records to a Query 3 partition CSV file
@@ -127,5 +127,5 @@ func (fm *FileManager) AppendQuery3RecordsToPartitionCSV(clientID string, partit
 		csvRecords[i] = records[i]
 	}
 
-	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"store_id", "final_amount"}, csvRecords)
+	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"year", "semester", "store_id", "final_amount"}, csvRecords)
 }

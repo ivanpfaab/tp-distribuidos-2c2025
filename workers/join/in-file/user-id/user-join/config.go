@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	// Reader data directory (volume-specific)
-	SharedDataDir = "/app/reader-data"
+	// Reader data directory (volume-specific, shared with writers)
+	SharedDataDir = "/shared-data"
 
 	// Alias queue names from centralized config
 	JoinUserIdDictionaryQueue = queues.JoinUserIdDictionaryQueue

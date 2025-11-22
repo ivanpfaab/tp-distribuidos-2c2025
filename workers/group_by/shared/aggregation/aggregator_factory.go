@@ -10,9 +10,9 @@ import (
 func NewAggregator(queryType int, partition int) (Aggregator, error) {
 	switch queryType {
 	case 2:
-		return NewQuery2Aggregator(partition)
+		return NewQuery2Aggregator()
 	case 3:
-		return NewQuery3Aggregator(partition)
+		return NewQuery3Aggregator()
 	case 4:
 		return NewQuery4Aggregator()
 	default:

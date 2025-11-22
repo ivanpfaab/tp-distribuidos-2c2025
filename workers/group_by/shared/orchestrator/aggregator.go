@@ -33,8 +33,7 @@ type FileResult struct {
 }
 
 // AggregateClientFiles aggregates partition files for a client
-// For Query 4: processes files individually (one result per file)
-// For Query 2/3: aggregates all files into one result (backward compatible)
+// All queries: processes files individually (one result per file)
 func (fa *FileAggregator) AggregateClientFiles(clientID string) ([]FileResult, error) {
 	// Get all partition files for this client
 	files, err := fa.fileManager.GetClientFiles(clientID)
@@ -49,16 +48,11 @@ func (fa *FileAggregator) AggregateClientFiles(clientID string) ([]FileResult, e
 	// Sort files for consistent processing
 	sort.Strings(files)
 
-	// For Query 4: process files individually to reduce memory usage
-	if fa.queryType == 4 {
-		return fa.processFilesIndividually(files)
-	}
-
-	// For Query 2/3: aggregate all files (backward compatible)
-	return fa.processFilesAggregated(files)
+	// All queries: process files individually to reduce memory usage
+	return fa.processFilesIndividually(files)
 }
 
-// processFilesIndividually processes each file separately (for Query 4)
+// processFilesIndividually processes each file separately (for all queries)
 func (fa *FileAggregator) processFilesIndividually(files []string) ([]FileResult, error) {
 	results := make([]FileResult, 0, len(files))
 

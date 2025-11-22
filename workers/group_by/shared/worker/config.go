@@ -62,13 +62,11 @@ func LoadConfig() (*WorkerConfig, error) {
 	// Determine number of workers based on query type
 	numWorkers := getNumWorkersForQuery(queryType)
 
-	// Load NUM_WORKERS for Query 4 (configurable)
-	if queryType == 4 {
-		numWorkersStr := os.Getenv("NUM_WORKERS")
-		if numWorkersStr != "" {
-			if parsed, err := strconv.Atoi(numWorkersStr); err == nil && parsed > 0 {
-				numWorkers = parsed
-			}
+	// Load NUM_WORKERS from environment (configurable for all queries)
+	numWorkersStr := os.Getenv("NUM_WORKERS")
+	if numWorkersStr != "" {
+		if parsed, err := strconv.Atoi(numWorkersStr); err == nil && parsed > 0 {
+			numWorkers = parsed
 		}
 	}
 

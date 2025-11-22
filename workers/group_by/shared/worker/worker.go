@@ -175,10 +175,10 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 	switch w.config.QueryType {
 	case 2:
 		appender = &Query2RecordAppender{fileManager: w.fileManager}
-		partitionRecords, err = w.processor.ProcessQuery2ChunkForCSV(chunkMessage, partitions)
+		partitionRecords, err = w.processor.ProcessQuery2ChunkForCSV(chunkMessage, partitions, w.config.NumPartitions)
 	case 3:
 		appender = &Query3RecordAppender{fileManager: w.fileManager}
-		partitionRecords, err = w.processor.ProcessQuery3ChunkForCSV(chunkMessage, partitions)
+		partitionRecords, err = w.processor.ProcessQuery3ChunkForCSV(chunkMessage, partitions, w.config.NumPartitions)
 	case 4:
 		appender = &Query4RecordAppender{fileManager: w.fileManager}
 		partitionRecords, err = w.processor.ProcessQuery4ChunkForCSV(chunkMessage, partitions, w.config.NumPartitions)

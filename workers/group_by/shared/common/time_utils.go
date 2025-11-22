@@ -1,7 +1,8 @@
 package common
 
 // GetYearFromPartition returns year string from partition number
-// Partition 0 = 2024-S1, Partition 1 = 2024-S2, Partition 2 = 2025-S1
+// DEPRECATED: This function is no longer used with user-based partitioning.
+// Kept for backward compatibility only.
 func GetYearFromPartition(partition int) string {
 	switch partition {
 	case 0, 1:
@@ -14,7 +15,8 @@ func GetYearFromPartition(partition int) string {
 }
 
 // GetYearSemesterFromPartition returns year and semester strings from partition number
-// Partition 0 = 2024-S1, Partition 1 = 2024-S2, Partition 2 = 2025-S1
+// DEPRECATED: This function is no longer used with user-based partitioning.
+// Kept for backward compatibility only.
 func GetYearSemesterFromPartition(partition int) (string, string) {
 	switch partition {
 	case 0:
