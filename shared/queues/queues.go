@@ -74,14 +74,14 @@ const (
 	Query3GroupByExchange = "query3-groupby-exchange"
 	Query4GroupByExchange = "query4-groupby-exchange"
 
-	// Query 2 Routing Keys
+	// Query 2 Routing Keys - DEPRECATED (now using user_id-based partitioning)
 	Query2RoutingKeyS2_2023 = "query2.semester.2.2023"
 	Query2RoutingKeyS1_2024 = "query2.semester.1.2024"
 	Query2RoutingKeyS2_2024 = "query2.semester.2.2024"
 	Query2RoutingKeyS1_2025 = "query2.semester.1.2025"
 	Query2RoutingKeyS2_2025 = "query2.semester.2.2025"
 
-	// Query 3 Routing Keys
+	// Query 3 Routing Keys - DEPRECATED (now using user_id-based partitioning)
 	Query3RoutingKeyS2_2023 = "query3.semester.2.2023"
 	Query3RoutingKeyS1_2024 = "query3.semester.1.2024"
 	Query3RoutingKeyS2_2024 = "query3.semester.2.2024"
@@ -96,7 +96,6 @@ const (
 	// Top Classification Queues
 	Query2TopItemsQueue = "query2-top-items-queue"
 	Query4TopUsersQueue = "query4-top-users-queue"
-
 
 	// ============================================================================
 	// Query Gateway Queues
@@ -136,6 +135,8 @@ const (
 )
 
 // GetQuery2RoutingKey returns the routing key for a specific semester in Query 2
+// DEPRECATED: Query 2 now uses user_id-based partitioning, not time-based.
+// Kept for backward compatibility only.
 func GetQuery2RoutingKey(year int, semester int) string {
 	if year == 2023 && semester == 2 {
 		return Query2RoutingKeyS2_2023
@@ -152,6 +153,8 @@ func GetQuery2RoutingKey(year int, semester int) string {
 }
 
 // GetQuery3RoutingKey returns the routing key for a specific semester in Query 3
+// DEPRECATED: Query 3 now uses user_id-based partitioning, not time-based.
+// Kept for backward compatibility only.
 func GetQuery3RoutingKey(year int, semester int) string {
 	if year == 2023 && semester == 2 {
 		return Query3RoutingKeyS2_2023
