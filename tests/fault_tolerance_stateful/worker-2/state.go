@@ -27,20 +27,19 @@ func (t *TestClientState) IsReady() bool {
 	return t.ready
 }
 
-// UpdateFromMessage updates state from a message
-func (t *TestClientState) UpdateFromMessage(message interface{}) error {
-	chunkMsg, ok := message.(*chunk.Chunk)
-	if !ok {
+// UpdateState updates state from a CSV metadata row
+func (t *TestClientState) UpdateState(csvRow []string) error {
+	if len(csvRow) < 3 {
 		return nil
 	}
 
-	chunkNum := int(chunkMsg.ChunkNumber)
-
-	// Parse value from chunk data
-	valueStr := strings.TrimSpace(chunkMsg.ChunkData)
-	value, err := strconv.Atoi(valueStr)
+	chunkNum, err := strconv.Atoi(csvRow[1])
 	if err != nil {
-		// If not a number, skip
+		return nil
+	}
+
+	value, err := strconv.Atoi(csvRow[2])
+	if err != nil {
 		return nil
 	}
 

@@ -16,7 +16,7 @@ import (
 type ClientState interface {
 	GetClientID() string
 	IsReady() bool
-	UpdateFromMessage(message interface{}) error
+	UpdateState(csvRow []string) error // Update state from CSV row (used for both messages and rebuild)
 }
 
 // StatusBuilderFunc rebuilds client state from CSV metadata rows
@@ -71,25 +71,25 @@ func (swm *StatefulWorkerManager) RebuildState() error {
 		// Extract clientID from filename: {clientID}.csv
 		clientID := strings.TrimSuffix(file.Name(), ".csv")
 
-		// Read CSV file
+		// Initialize empty state
 		filePath := filepath.Join(swm.metadataDir, file.Name())
-		rows, err := readMetadataCSV(filePath)
+		state, err := swm.buildStatus(clientID, [][]string{})
 		if err != nil {
-			log.Printf("StatefulWorkerManager: Failed to read metadata for client %s: %v", clientID, err)
+			log.Printf("StatefulWorkerManager: Failed to initialize state for client %s: %v", clientID, err)
 			continue
 		}
 
-		// Build state from CSV rows
-		state, err := swm.buildStatus(clientID, rows)
+		// Read CSV file line-by-line and update state incrementally
+		rowCount, err := swm.rebuildState(filePath, state)
 		if err != nil {
-			log.Printf("StatefulWorkerManager: Failed to build state for client %s: %v", clientID, err)
+			log.Printf("StatefulWorkerManager: Failed to rebuild state from CSV for client %s: %v", clientID, err)
 			continue
 		}
 
 		// Only keep non-ready clients
 		if !state.IsReady() {
 			swm.clientStates[clientID] = state
-			log.Printf("StatefulWorkerManager: Rebuilt state for client %s (%d unique rows)", clientID, len(rows))
+			log.Printf("StatefulWorkerManager: Rebuilt state for client %s (%d rows)", clientID, rowCount)
 		} else {
 			// Client already ready, delete CSV file
 			if err := os.Remove(filePath); err != nil {
@@ -101,6 +101,52 @@ func (swm *StatefulWorkerManager) RebuildState() error {
 	}
 
 	return nil
+}
+
+// rebuildState reads CSV file line-by-line and updates state incrementally
+func (swm *StatefulWorkerManager) rebuildState(filePath string, state ClientState) (int, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	rowCount := 0
+
+	// Read header (first line) - skip it
+	_, err = reader.Read()
+	if err == io.EOF {
+		return 0, nil // Empty file
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	// Read data rows line by line and update state incrementally
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return rowCount, err
+		}
+
+		// Update state from this row (incremental)
+		if err := state.UpdateState(row); err != nil {
+			log.Printf("StatefulWorkerManager: Failed to update state from CSV row: %v", err)
+			// Continue with next row
+			continue
+		}
+
+		rowCount++
+	}
+
+	return rowCount, nil
 }
 
 // ProcessMessage processes a message: checks duplicates, updates state, appends to CSV
@@ -122,13 +168,13 @@ func (swm *StatefulWorkerManager) ProcessMessage(message interface{}) error {
 	// Get or create client state
 	state := swm.getOrCreateClientState(clientID)
 
-	// Update state from message
-	if err := state.UpdateFromMessage(message); err != nil {
+	// Extract metadata row from message (CSV format)
+	metadataRow := swm.extractMetadata(message)
+
+	// Update state from CSV row (same format used for rebuild)
+	if err := state.UpdateState(metadataRow); err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
-
-	// Extract metadata row from message
-	metadataRow := swm.extractMetadata(message)
 
 	// Append to CSV metadata file
 	csvPath := filepath.Join(swm.metadataDir, clientID+".csv")
