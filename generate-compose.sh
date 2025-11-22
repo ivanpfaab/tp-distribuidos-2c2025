@@ -58,15 +58,15 @@ echo ""
 echo -e "${BLUE}Configure Join Workers (in-memory dictionary with broadcasting)${NC}"
 echo ""
 
-ITEMID_JOIN_WORKER_COUNT=$(prompt_worker_count "itemid-join-worker" 2)
-STOREID_JOIN_WORKER_COUNT=$(prompt_worker_count "storeid-join-worker" 2)
+ITEMID_JOIN_WORKER_COUNT=$(prompt_worker_count "itemid-join-worker" 1)
+STOREID_JOIN_WORKER_COUNT=$(prompt_worker_count "storeid-join-worker" 1)
 
 echo ""
 echo -e "${BLUE}Configure User Join Workers (Query 4 - distributed write/read)${NC}"
 echo ""
 
 USER_PARTITION_WRITERS=$(prompt_worker_count "user-partition-writer" 5)
-USER_JOIN_READERS=$(prompt_worker_count "user-join-reader" 2)
+USER_JOIN_READERS=$(prompt_worker_count "user-join-reader" 5)
 echo ""
 echo -e "${BLUE}Configure Group By Components${NC}"
 echo ""
@@ -593,7 +593,7 @@ generate_user_partition_writers() {
       WRITER_ID: ${i}
       NUM_WRITERS: ${count}
     volumes:
-      - shared-data:/shared-data
+      - user-partition-writer-${i}-data:/app/writer-data
     profiles: ["orchestration"]
 
 EOF
@@ -604,33 +604,28 @@ EOF
 generate_user_join_readers() {
     local count=$1
     for i in $(seq 1 $count); do
-        # First reader has simpler container name for backward compatibility
-        local container_name
-        if [ $i -eq 1 ]; then
-            container_name="user-join-reader"
-        else
-            container_name="user-join-reader-${i}"
-        fi
-        
         cat >> docker-compose.yaml << EOF
   # User Join Reader ${i} (Query 4 - reads from partition files)
   user-join-reader-${i}:
     build:
       context: .
       dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
-    container_name: ${container_name}
+    container_name: user-join-reader-${i}
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-writer-1:
+      user-partition-writer-${i}:
+        condition: service_started
+      query4-top-users-worker:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      READER_ID: ${i}
     volumes:
-      - shared-data:/shared-data
+      - user-partition-writer-${i}-data:/app/reader-data
     profiles: ["orchestration"]
 
 EOF
@@ -967,9 +962,19 @@ cat >> docker-compose.yaml << 'EOF_FOOTER'
     tty: true
 
 volumes:
-  shared-data:
-    driver: local
 EOF_FOOTER
+
+# Generate per-worker volumes for user partition writers
+echo -e "${BLUE}Generating user partition writer volumes...${NC}"
+cat >> docker-compose.yaml << EOF
+  # User partition writer volumes
+EOF
+for i in $(seq 1 $USER_PARTITION_WRITERS); do
+    cat >> docker-compose.yaml << EOF
+  user-partition-writer-${i}-data:
+    driver: local
+EOF
+done
 
 # Generate per-worker volumes for groupby workers
 echo -e "${BLUE}Generating per-worker volumes...${NC}"
