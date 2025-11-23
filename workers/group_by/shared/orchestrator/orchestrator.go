@@ -35,7 +35,7 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 
 	orchestrator := &GroupByOrchestrator{
 		config:         config,
-		fileAggregator: NewFileAggregator(queryType, config.WorkerID),
+		fileAggregator: NewFileAggregator(queryType, config.WorkerID, config.NumPartitions, config.NumWorkers),
 	}
 
 	// Create completion tracker with callback to send termination signals

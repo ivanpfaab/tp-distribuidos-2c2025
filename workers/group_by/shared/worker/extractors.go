@@ -38,13 +38,13 @@ func (e *Query2RecordExtractor) ExtractRecord(record []string, workerPartitions 
 	}
 
 	year := fmt.Sprintf("%d", createdAt.Year())
-	month := fmt.Sprintf("%d", createdAt.Month())
+	month := fmt.Sprintf("%02d", createdAt.Month()) // Zero-padded to match partitioner
 
-	// Calculate partition using transaction_id hash (transaction_items doesn't have user_id)
-	// Use transaction_id as proxy since each transaction belongs to one user
-	partition, err := common.CalculateStringHashPartition(transactionID, numPartitions)
+	// Calculate partition using composite key (year, month, itemID)
+	// MUST match the partitioner's logic for consistent routing
+	partition, err := common.CalculateCompositeHashPartition([]string{year, month, itemID}, numPartitions)
 	if err != nil {
-		return 0, nil, fmt.Errorf("invalid transaction_id %s: %v", transactionID, err)
+		return 0, nil, fmt.Errorf("failed to calculate partition: %v", err)
 	}
 
 	// Only process records belonging to partitions this worker owns
@@ -93,15 +93,19 @@ func (e *Query3RecordExtractor) ExtractRecord(record []string, workerPartitions 
 	}
 
 	year := fmt.Sprintf("%d", createdAt.Year())
+
+	// Calculate semester using the EXACT same logic as the partitioner
+	monthInt := int(createdAt.Month())
 	semester := "1"
-	if createdAt.Month() >= 7 {
+	if monthInt >= 7 && monthInt <= 12 {
 		semester = "2"
 	}
 
-	// Calculate partition using transaction_id hash (consistent with Query 2)
-	partition, err := common.CalculateStringHashPartition(transactionID, numPartitions)
+	// Calculate partition using composite key (year, semester, storeID)
+	// MUST match the partitioner's logic for consistent routing
+	partition, err := common.CalculateCompositeHashPartition([]string{year, semester, storeID}, numPartitions)
 	if err != nil {
-		return 0, nil, fmt.Errorf("invalid transaction_id %s: %v", transactionID, err)
+		return 0, nil, fmt.Errorf("failed to calculate partition: %v", err)
 	}
 
 	// Only process records belonging to partitions this worker owns

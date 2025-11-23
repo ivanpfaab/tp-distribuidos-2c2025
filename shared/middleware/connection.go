@@ -98,19 +98,19 @@ func CreateMiddlewareChannel(config *ConnectionConfig) (MiddlewareChannel, error
 		return nil, err
 	}
 
-	// // Set QoS to prefetch only 1 message at a time
-	// // This prevents RabbitMQ from delivering all messages at once,
-	// // which can cause high memory consumption (2GB+)
-	// err = ch.Qos(
-	// 	1,     // prefetch count - only 1 message at a time
-	// 	0,     // prefetch size - 0 means no byte limit
-	// 	false, // global - false means apply per-consumer
-	// )
-	// if err != nil {
-	// 	ch.Close()
-	// 	conn.Close()
-	// 	return nil, fmt.Errorf("failed to set QoS: %w", err)
-	// }
+	// Set QoS to prefetch only 1 message at a time
+	// This prevents RabbitMQ from delivering all messages at once,
+	// which can cause high memory consumption (2GB+)
+	err = ch.Qos(
+		1,     // prefetch count - only 1 message at a time
+		0,     // prefetch size - 0 means no byte limit
+		false, // global - false means apply per-consumer
+	)
+	if err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to set QoS: %w", err)
+	}
 
 	return ch, nil
 }

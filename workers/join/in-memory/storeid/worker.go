@@ -283,7 +283,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 
 	// Get expected number of partitions from environment (set in docker-compose)
 	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
-	numPartitions := 10 // Default to 10 if not set
+	numPartitions := 100 // Default to 100 if not set
 	if numPartitionsStr != "" {
 		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
 			numPartitions = n

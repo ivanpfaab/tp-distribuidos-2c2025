@@ -90,6 +90,7 @@ func (p *PartitionerProcessor) ProcessChunk(chunkMessage *chunk.Chunk) error {
 		if err != nil {
 			continue
 		}
+		testing_utils.LogInfo("Partitioner Processor", "Partitioned record %v to partition %d", record, partition)
 		partitionedRecords[partition] = append(partitionedRecords[partition], record)
 	}
 

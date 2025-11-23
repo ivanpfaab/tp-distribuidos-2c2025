@@ -58,21 +58,18 @@ func CalculateUserBasedPartition(userID string, numPartitions int) (int, error) 
 }
 
 // GetPartitionsForWorker returns the list of partitions a worker handles
-// For Query 2 & 3: 1:1 mapping (Worker 1 → Partition 0, Worker 2 → Partition 1, Worker 3 → Partition 2)
-// For Query 4: Modulo-based distribution (many partitions distributed across workers)
+// All queries use modulo-based distribution (many partitions distributed across workers)
+// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
 func GetPartitionsForWorker(queryType, workerID, numWorkers, numPartitions int) []int {
-	// For Q2/Q3: worker ID maps to partition (1:1 mapping)
-	// Worker IDs are 1-based (1, 2, 3), partitions are 0-based (0, 1, 2)
-	if queryType == 2 || queryType == 3 {
-		return []int{workerID - 1}
-	}
-
-	// For Q4: worker handles multiple partitions based on modulo
+	// All queries: worker handles multiple partitions based on modulo
 	// Worker i gets partitions where: partition % numWorkers == (workerID % numWorkers)
 	// Since workerID starts from 1:
-	// Worker 1: partitions 1, 4, 7, 10, ... (partition % 3 == 1)
-	// Worker 2: partitions 2, 5, 8, 11, ... (partition % 3 == 2)
-	// Worker 3: partitions 0, 3, 6, 9, ... (partition % 3 == 0)
+	// With 5 workers and 100 partitions:
+	//   Worker 1: partitions 1, 6, 11, 16, 21, ... (partition % 5 == 1)
+	//   Worker 2: partitions 2, 7, 12, 17, 22, ... (partition % 5 == 2)
+	//   Worker 3: partitions 3, 8, 13, 18, 23, ... (partition % 5 == 3)
+	//   Worker 4: partitions 4, 9, 14, 19, 24, ... (partition % 5 == 4)
+	//   Worker 5: partitions 0, 5, 10, 15, 20, ... (partition % 5 == 0)
 	partitions := []int{}
 	targetRemainder := workerID % numWorkers
 	for partition := 0; partition < numPartitions; partition++ {

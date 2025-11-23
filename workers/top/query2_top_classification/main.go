@@ -57,7 +57,7 @@ func NewTopItemsWorker() *TopItemsWorker {
 
 	// Get NUM_PARTITIONS from environment (total partitions across all orchestrators)
 	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
-	numPartitions := 10 // Default to 10 if not set
+	numPartitions := 100 // Default to 100 if not set
 	if numPartitionsStr != "" {
 		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
 			numPartitions = n
@@ -129,7 +129,7 @@ func (tw *TopItemsWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	}
 
 	clientID := chunkMsg.ClientID
-	chunkNumber := int(chunkMsg.ChunkNumber)
+	chunkNumber := int(chunkMsg.ChunkNumber) // ChunkNumber = partition number (0-99)
 	clientState := tw.getOrCreateClientState(clientID)
 
 	log.Printf("Top Items Worker: Received chunk %d (partition %d) for client %s (expecting %d total chunks)",
