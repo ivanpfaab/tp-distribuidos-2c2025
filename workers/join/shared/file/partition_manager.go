@@ -98,7 +98,7 @@ func (pm *PartitionManager) LookupEntity(clientID string, entityID string, parse
 // Called by readers after processing completes (readers share volume with their paired writer)
 func (pm *PartitionManager) CleanupClientFiles(clientID string) error {
 	pattern := filepath.Join(pm.sharedDataDir, fmt.Sprintf("%s-users-partition-*.csv", clientID))
-	
+
 	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return fmt.Errorf("error finding files for client %s: %w", clientID, err)
@@ -106,7 +106,7 @@ func (pm *PartitionManager) CleanupClientFiles(clientID string) error {
 
 	var deleteErrors []error
 	deletedCount := 0
-	
+
 	for _, file := range files {
 		if err := os.Remove(file); err != nil {
 			// Ignore "file not found" (already deleted)
