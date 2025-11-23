@@ -39,22 +39,24 @@ func (pm *PartitionManager) GetPartitionFilePath(opts WriteOptions, partitionNum
 }
 
 // WritePartition writes partition data, handling incomplete writes
-func (pm *PartitionManager) WritePartition(data PartitionData, chunkID string, opts WriteOptions) error {
+func (pm *PartitionManager) WritePartition(data PartitionData, opts WriteOptions) error {
 	filePath := pm.GetPartitionFilePath(opts, data.Number)
 
 	// Check if file exists and has incomplete last line
-	hasIncomplete, incompleteLine, err := pm.checkIncompleteLastLine(filePath)
+	hasIncomplete, err := pm.hasIncompleteLastLine(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to check incomplete line: %w", err)
 	}
 
 	if hasIncomplete {
-		// Fix incomplete line and append new data
-		return pm.fixIncompleteLineAndAppend(filePath, incompleteLine, data.Lines, opts)
-	} else {
-		// Normal append (file doesn't exist or is complete)
-		return pm.appendToPartitionFile(filePath, data.Lines, opts)
+		// Delete incomplete line by truncating file
+		if err := pm.removeIncompleteLastLine(filePath); err != nil {
+			return fmt.Errorf("failed to remove incomplete line: %w", err)
+		}
 	}
+
+	// Normal append
+	return pm.appendToPartitionFile(filePath, data.Lines, opts)
 }
 
 // appendToPartitionFile appends lines to a partition file
@@ -87,12 +89,12 @@ func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []strin
 			return fmt.Errorf("failed to parse CSV line: %w", err)
 		}
 
-		testing_utils.LogInfo("Partition Manager", "Writing record: %v", record)
-
 		// Write record
 		if err := writer.Write(record); err != nil {
 			return fmt.Errorf("failed to write record: %w", err)
 		}
+
+		testing_utils.LogInfo("Partition Manager", "Writing record: %v", record)
 	}
 
 	// Sync to ensure data is written to disk
@@ -109,34 +111,27 @@ func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []strin
 	return nil
 }
 
-// checkIncompleteLastLine checks if the last line in a file is incomplete (missing \n)
-// Returns: (hasIncomplete, incompleteLine, error)
-func (pm *PartitionManager) checkIncompleteLastLine(filePath string) (bool, string, error) {
+// hasIncompleteLastLine checks if the last line in a file is incomplete (missing \n)
+func (pm *PartitionManager) hasIncompleteLastLine(filePath string) (bool, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, "", nil // File doesn't exist, no incomplete line
+			return false, nil // File doesn't exist, no incomplete line
 		}
-		return false, "", err
+		return false, err
 	}
 	defer file.Close()
 
 	stat, err := file.Stat()
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
 
 	if stat.Size() == 0 {
-		return false, "", nil // Empty file
+		return false, nil // Empty file
 	}
 
-	// Read last portion of file to find last line and check if it's complete.
-	// We use 2KB as a buffer size because:
-	// - CSV lines are typically short (50-200 bytes), so 2KB covers many lines
-	// - This allows us to find the last newline without reading the entire file
-	// - For very large files, this is more efficient than reading everything
-	// - If no newline is found in 2KB, we fall back to reading the entire file
-	// Note: 2KB is a heuristic; for typical CSV partition files this is sufficient
+	// Read last 2KB to check if file ends with newline
 	readSize := int64(2048)
 	if stat.Size() < readSize {
 		readSize = stat.Size()
@@ -145,107 +140,63 @@ func (pm *PartitionManager) checkIncompleteLastLine(filePath string) (bool, stri
 	buffer := make([]byte, readSize)
 	_, err = file.ReadAt(buffer, stat.Size()-readSize)
 	if err != nil {
-		return false, "", err
-	}
-
-	// Find last newline
-	lastNewline := bytes.LastIndexByte(buffer, '\n')
-	if lastNewline == -1 {
-		// No newline found in last 2KB, entire file might be one incomplete line
-		return pm.readIncompleteLine(filePath)
+		return false, err
 	}
 
 	// Check if file ends with newline
 	if buffer[len(buffer)-1] == '\n' {
-		return false, "", nil // File ends with newline, no incomplete line
+		return false, nil // File ends with newline, no incomplete line
 	}
 
-	// Last line is incomplete, extract it
-	incompleteLine := string(buffer[lastNewline+1:])
-	return true, incompleteLine, nil
+	// If no newline found in last 2KB, read entire file
+	if bytes.LastIndexByte(buffer, '\n') == -1 {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return false, err
+		}
+		if len(data) > 0 && data[len(data)-1] == '\n' {
+			return false, nil
+		}
+	}
+
+	return true, nil // Last line is incomplete
 }
 
-// readIncompleteLine reads the entire file if it's one incomplete line
-func (pm *PartitionManager) readIncompleteLine(filePath string) (bool, string, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return false, "", err
-	}
-
-	// Check if file ends with newline
-	if len(data) > 0 && data[len(data)-1] == '\n' {
-		return false, "", nil
-	}
-
-	// File is one incomplete line
-	return true, string(data), nil
-}
-
-// fixIncompleteLineAndAppend fixes an incomplete line and appends new data
-func (pm *PartitionManager) fixIncompleteLineAndAppend(
-	filePath string,
-	incompleteLine string,
-	newLines []string,
-	opts WriteOptions,
-) error {
-	// Open file for read-write
+// removeIncompleteLastLine removes the incomplete last line by truncating the file
+func (pm *PartitionManager) removeIncompleteLastLine(filePath string) error {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open file for read-write: %w", err)
+		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
-	// Get file size
 	stat, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	// Always truncate to remove the incomplete line first
-	// We'll decide later whether to write it back (if it doesn't match any new line)
-	newSize := stat.Size() - int64(len(incompleteLine))
-	if err := file.Truncate(newSize); err != nil {
-		return fmt.Errorf("failed to truncate file: %w", err)
+	// Read last 2KB to find last newline
+	readSize := int64(2048)
+	if stat.Size() < readSize {
+		readSize = stat.Size()
 	}
 
-	// Check if incomplete line matches any of the new lines (to avoid duplicates)
-	linesToWrite := newLines
-	if len(newLines) > 0 {
-		recordIncomplete, errIncomplete := parseCSVLine(incompleteLine)
-
-		if errIncomplete == nil {
-			// Check if incomplete line matches any of the new lines
-			foundMatch := false
-			for _, newLine := range newLines {
-				recordNew, errNew := parseCSVLine(newLine)
-				if errNew == nil {
-					// Check if records are equal or if incomplete is a partial version of new line
-					if recordsEqual(recordIncomplete, recordNew) || isPartialRecord(recordIncomplete, recordNew) {
-						foundMatch = true
-						break
-					}
-				}
-			}
-
-			if foundMatch {
-				// Incomplete line matches a new line - it's already deleted, just write new lines
-				linesToWrite = newLines
-			} else {
-				// No match found - incomplete line is different from all new lines
-				// Write back the incomplete line (completed) along with new lines
-				linesToWrite = append([]string{incompleteLine + "\n"}, newLines...)
-			}
-		} else {
-			// Parsing failed, be safe and write back the incomplete line (completed)
-			linesToWrite = append([]string{incompleteLine + "\n"}, newLines...)
-		}
-	} else {
-		// No new lines, just write back the incomplete line (completed)
-		linesToWrite = []string{incompleteLine + "\n"}
+	buffer := make([]byte, readSize)
+	_, err = file.ReadAt(buffer, stat.Size()-readSize)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	// Write all lines
-	return pm.appendToPartitionFile(filePath, linesToWrite, opts)
+	// Find last newline
+	lastNewline := bytes.LastIndexByte(buffer, '\n')
+	if lastNewline == -1 {
+		// No newline found, entire file is incomplete - truncate to 0
+		return file.Truncate(0)
+	}
+
+	// Truncate to remove incomplete line
+	newSize := stat.Size() - int64(len(buffer)-lastNewline-1)
+	return file.Truncate(newSize)
 }
 
 // parseCSVLine parses a CSV line (with optional trailing newline) into a record
@@ -253,57 +204,6 @@ func parseCSVLine(line string) ([]string, error) {
 	line = strings.TrimSuffix(line, "\n")
 	reader := csv.NewReader(strings.NewReader(line))
 	return reader.Read()
-}
-
-// recordsEqual compares two CSV records for equality
-func recordsEqual(r1, r2 []string) bool {
-	if len(r1) != len(r2) {
-		return false
-	}
-	for i := range r1 {
-		if r1[i] != r2[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// isPartialRecord checks if incomplete (record1) is a partial version of complete (record2)
-// This handles cases where a crash occurred mid-write, leaving a truncated record.
-// Since CSV writes happen left-to-right, incomplete fields will be prefixes of complete fields.
-// Examples:
-//   - ["149", "E"] (incomplete) is a partial version of ["149", "Eve"] (complete)
-//   - ["14", "E"] (incomplete) is a partial version of ["149", "Eve"] (complete)
-//   - ["149", "Ev"] (incomplete) is a partial version of ["149", "Eve"] (complete)
-func isPartialRecord(incomplete, complete []string) bool {
-	// Both records must have the same number of fields
-	if len(incomplete) != len(complete) {
-		return false
-	}
-
-	// Check all fields: each incomplete field must be a prefix of the corresponding complete field
-	// At least one field must be shorter (incomplete)
-	hasIncompleteField := false
-	for i := 0; i < len(incomplete); i++ {
-		incompleteField := incomplete[i]
-		completeField := complete[i]
-
-		// Incomplete field must be shorter or equal, and must be a prefix of complete field
-		if len(incompleteField) > len(completeField) {
-			return false
-		}
-		if incompleteField != completeField[:len(incompleteField)] {
-			return false
-		}
-
-		// Track if at least one field is actually incomplete (shorter)
-		if len(incompleteField) < len(completeField) {
-			hasIncompleteField = true
-		}
-	}
-
-	// At least one field must be incomplete, otherwise records are identical
-	return hasIncompleteField
 }
 
 // GetNumPartitions returns the number of partitions
@@ -314,4 +214,126 @@ func (pm *PartitionManager) GetNumPartitions() int {
 // GetPartitionsDir returns the partitions directory
 func (pm *PartitionManager) GetPartitionsDir() string {
 	return pm.partitionsDir
+}
+
+// GetLastLines reads the last N lines from a partition file
+func (pm *PartitionManager) GetLastLines(filePath string, n int) ([]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil // File doesn't exist, return empty
+		}
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	if stat.Size() == 0 {
+		return []string{}, nil // Empty file
+	}
+
+	// Read last 2KB (should be enough for 2 lines)
+	readSize := int64(2048)
+	if stat.Size() < readSize {
+		readSize = stat.Size()
+	}
+
+	buffer := make([]byte, readSize)
+	_, err = file.ReadAt(buffer, stat.Size()-readSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Find all newlines in buffer (from end to start)
+	lines := []string{}
+	start := len(buffer)
+	for i := len(buffer) - 1; i >= 0; i-- {
+		if buffer[i] == '\n' {
+			if start < len(buffer) {
+				line := string(buffer[i+1 : start])
+				lines = append([]string{line}, lines...)
+				if len(lines) >= n {
+					break
+				}
+			}
+			start = i
+		}
+	}
+
+	// Handle case where we didn't find enough newlines (file might be shorter)
+	if start > 0 && len(lines) < n {
+		line := string(buffer[0:start])
+		lines = append([]string{line}, lines...)
+	}
+
+	// Return last N lines
+	if len(lines) > n {
+		return lines[len(lines)-n:], nil
+	}
+	return lines, nil
+}
+
+// WriteOnlyMissingLines writes only lines that haven't been written yet, avoiding duplicates
+func (pm *PartitionManager) WriteOnlyMissingLines(filePath string, lastLines []string, newLines []string, opts WriteOptions) error {
+	// If no last lines, write all new lines
+	if len(lastLines) == 0 {
+		return pm.appendToPartitionFile(filePath, newLines, opts)
+	}
+
+	testing_utils.LogInfo("Partition Manager", "new lines: %v", newLines)
+	testing_utils.LogInfo("Partition Manager", "old lines: %v", lastLines)
+
+	// Compare last written line with first new line
+	lastWrittenLine := strings.TrimSuffix(lastLines[len(lastLines)-1], "\n")
+	if len(newLines) > 0 {
+		for i, newLine := range newLines {
+			line := strings.TrimSuffix(newLine, "\n")
+			if lastWrittenLine == line {
+				// Last written line matches first new line - skip it
+				return pm.appendToPartitionFile(filePath, newLines[(i+1):], opts)
+			}
+		}
+	}
+
+	return pm.appendToPartitionFile(filePath, newLines, opts)
+}
+
+// RecoverIncompleteWrites checks all partition files in the directory for incomplete writes and fixes them
+func (pm *PartitionManager) RecoverIncompleteWrites() (int, error) {
+	fixedCount := 0
+
+	// Read all files in partitions directory
+	entries, err := os.ReadDir(pm.partitionsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // Directory doesn't exist, nothing to recover
+		}
+		return 0, fmt.Errorf("failed to read partitions directory: %w", err)
+	}
+
+	// Check each CSV file for incomplete writes
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".csv") {
+			continue
+		}
+
+		filePath := filepath.Join(pm.partitionsDir, entry.Name())
+		hasIncomplete, err := pm.hasIncompleteLastLine(filePath)
+		if err != nil {
+			continue // Skip files that can't be read
+		}
+
+		if hasIncomplete {
+			if err := pm.removeIncompleteLastLine(filePath); err != nil {
+				continue // Skip files that can't be fixed
+			}
+			fixedCount++
+		}
+	}
+
+	return fixedCount, nil
 }
