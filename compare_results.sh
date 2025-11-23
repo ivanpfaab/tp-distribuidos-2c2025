@@ -54,7 +54,7 @@ extract_client_data() {
         # Q1 pattern: transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at
         if ($0 ~ /transaction_id.*store_id.*payment_method_id/) is_header = 1
         
-        # Q2 pattern: year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal
+        # Q2 pattern: year,month,item_id,quantity,subtotal,category,item_name,coffee_category,price,is_seasonal
         if ($0 ~ /year.*month.*item_id.*quantity/) is_header = 1
         
         # Q3 pattern: year,semester,store_id,total_final_amount,count,store_name,street,postal_code,city,state,latitude,longitude
@@ -112,45 +112,45 @@ compare_q2() {
     
     echo "Comparing Q2 (Categories) for $client_id..."
     
-    # Split by category: coffee vs non-coffee
-    # Category 1 (best selling) = coffee category
-    # Category 2 (most profits) = non-coffee category
+    # Split by category field (top classification indicator)
+    # Category 1 = best selling (top by quantity)
+    # Category 2 = most profits (top by revenue)
     
-    # Extract coffee category (best selling)
-    # Client format: year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal
+    # Extract category 1 (best selling - top by quantity)
+    # Client format: year,month,item_id,quantity,subtotal,category,item_name,coffee_category,price,is_seasonal
     # We need: year_month_created_at (col1-col2), item_name (col7), sellings_qty (col4)
-    awk -F',' '$8=="coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, $4}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_best_selling.csv"
+    awk -F',' '$6=="1" {printf "%s-%02d,%s,%d\n", $1, $2, $7, $4}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_best_selling.csv"
     
-    # Extract non-coffee category (most profits)
+    # Extract category 2 (most profits - top by revenue)
     # We need: year_month_created_at (col1-col2), item_name (col7), profit_sum (col5) - treat as integer
-    awk -F',' '$8=="non-coffee" {printf "%s-%02d,%s,%d\n", $1, $2, $7, int($5)}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_most_profits.csv"
+    awk -F',' '$6=="2" {printf "%s-%02d,%s,%d\n", $1, $2, $7, int($5)}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_most_profits.csv"
     
-    # Compare coffee category against best_selling
-    local coffee_source="$SOURCE_OF_TRUTH_DIR/q2_best_selling.csv"
-    tail -n +2 "$coffee_source" | sort > "${coffee_source}.sorted"
+    # Compare category 1 (top by quantity) against best_selling
+    local best_selling_source="$SOURCE_OF_TRUTH_DIR/q2_best_selling.csv"
+    tail -n +2 "$best_selling_source" | sort > "${best_selling_source}.sorted"
     
-    if diff -q "$TEMP_DIR/${client_id}_q2_best_selling.csv" "${coffee_source}.sorted" > /dev/null 2>&1; then
-        echo -e "  Q2 Best Selling (coffee): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_best_selling.csv") rows)"
+    if diff -q "$TEMP_DIR/${client_id}_q2_best_selling.csv" "${best_selling_source}.sorted" > /dev/null 2>&1; then
+        echo -e "  Q2 Best Selling (category=1): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_best_selling.csv") rows)"
     else
-        echo -e "  Q2 Best Selling (coffee): ${RED}❌ FAIL${NC}"
+        echo -e "  Q2 Best Selling (category=1): ${RED}❌ FAIL${NC}"
         echo "    Client: $(wc -l < "$TEMP_DIR/${client_id}_q2_best_selling.csv") rows"
-        echo "    Source: $(tail -n +2 "$coffee_source" | wc -l) rows"
+        echo "    Source: $(tail -n +2 "$best_selling_source" | wc -l) rows"
     fi
     
-    # Compare non-coffee category against most_profits
+    # Compare category 2 (top by revenue) against most_profits
     local profits_source="$SOURCE_OF_TRUTH_DIR/q2_most_profits.csv"
     tail -n +2 "$profits_source" | awk -F',' '{printf "%s,%s,%d\n", $1, $2, int($3)}' | sort > "${profits_source}.sorted"
     
     if diff -q "$TEMP_DIR/${client_id}_q2_most_profits.csv" "${profits_source}.sorted" > /dev/null 2>&1; then
-        echo -e "  Q2 Most Profits (non-coffee): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_most_profits.csv") rows)"
+        echo -e "  Q2 Most Profits (category=2): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_most_profits.csv") rows)"
     else
-        echo -e "  Q2 Most Profits (non-coffee): ${RED}❌ FAIL${NC}"
+        echo -e "  Q2 Most Profits (category=2): ${RED}❌ FAIL${NC}"
         echo "    Client: $(wc -l < "$TEMP_DIR/${client_id}_q2_most_profits.csv") rows"
         echo "    Source: $(tail -n +2 "$profits_source" | wc -l) rows"
     fi
     
     # Clean up: remove original categories file and temporary sorted files
-    rm -f "$client_file" "${coffee_source}.sorted" "${profits_source}.sorted"
+    rm -f "$client_file" "${best_selling_source}.sorted" "${profits_source}.sorted"
 }
 
 # Function to compare Q3 (with year-semester transformation)
