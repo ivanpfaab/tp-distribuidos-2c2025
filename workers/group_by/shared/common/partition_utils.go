@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"hash/fnv"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -9,7 +10,7 @@ import (
 )
 
 // CalculateTimeBasedPartition calculates partition based on year and semester
-// DEPRECATED: This function is no longer used. All queries now use user-based partitioning.
+// DEPRECATED: This function is no longer used. All queries now use grouping-key-based partitioning.
 // Kept for backward compatibility only.
 func CalculateTimeBasedPartition(createdAt time.Time) int {
 	year := createdAt.Year()
@@ -46,7 +47,8 @@ func CalculateUserBasedPartition(userID string, numPartitions int) (int, error) 
 }
 
 // CalculateStringHashPartition calculates partition based on string hash
-// Used by Query 2 and 3 for transaction_id (UUID) based partitioning
+// DEPRECATED: Use CalculateCompositeHashPartition for grouping-based partitioning
+// Kept for backward compatibility only.
 func CalculateStringHashPartition(id string, numPartitions int) (int, error) {
 	if id == "" {
 		return 0, fmt.Errorf("empty id string")
@@ -63,6 +65,26 @@ func CalculateStringHashPartition(id string, numPartitions int) (int, error) {
 		hash = -hash
 	}
 	return hash % numPartitions, nil
+}
+
+// CalculateCompositeHashPartition calculates partition for composite key using FNV-1a hash
+// This ensures all records with the same composite key go to the same partition,
+// enabling complete aggregation within a single worker without requiring a second stage.
+// Used by Query 2 (year, month, item_id) and Query 3 (year, semester, store_id)
+func CalculateCompositeHashPartition(keys []string, numPartitions int) (int, error) {
+	if numPartitions <= 0 {
+		return 0, fmt.Errorf("numPartitions must be positive, got %d", numPartitions)
+	}
+
+	// Create composite key string with separator
+	compositeKey := strings.Join(keys, "|")
+
+	// Use FNV-1a hash (fast, excellent distribution, used by Go's internal map)
+	h := fnv.New32a()
+	h.Write([]byte(compositeKey))
+	hashValue := h.Sum32()
+
+	return int(hashValue % uint32(numPartitions)), nil
 }
 
 // GetPartitionsForWorker returns the list of partitions a worker handles

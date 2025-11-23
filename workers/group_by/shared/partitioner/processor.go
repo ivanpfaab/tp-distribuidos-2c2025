@@ -188,13 +188,60 @@ func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtInd
 // getPartition calculates the partition for a record based on query type
 func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 	switch p.QueryType {
-	case 2, 3:
-		// Query 2 & 3: transaction_id based partitioning (consistent hash-based distribution)
-		if len(record.Fields) < 1 {
-			return 0, fmt.Errorf("record does not have transaction_id field")
+	case 2:
+		// Query 2: Partition by composite key (year, month, item_id)
+		// This ensures all records for the same year+month+item_id go to the same partition
+		// Schema: transaction_id, item_id, quantity, unit_price, subtotal, created_at
+		if len(record.Fields) < 6 {
+			return 0, fmt.Errorf("record does not have enough fields for Query 2")
 		}
-		transactionID := record.Fields[0]
-		return common.CalculateStringHashPartition(transactionID, p.NumPartitions)
+
+		// Extract year and month from created_at (index 5)
+		// Format: "2024-01-15 10:30:00"
+		createdAt := record.Fields[5]
+		if len(createdAt) < 7 {
+			return 0, fmt.Errorf("invalid created_at format: %s", createdAt)
+		}
+		year := createdAt[0:4]  // "2024"
+		month := createdAt[5:7] // "01"
+		itemID := record.Fields[1]
+
+		// Composite key partitioning
+		return common.CalculateCompositeHashPartition([]string{year, month, itemID}, p.NumPartitions)
+
+	case 3:
+		// Query 3: Partition by composite key (year, semester, store_id)
+		// This ensures all records for the same year+semester+store_id go to the same partition
+		// Schema: transaction_id, store_id, payment_method_id, voucher_id,
+		//         user_id, original_amount, discount_applied, final_amount, created_at
+		if len(record.Fields) < 9 {
+			return 0, fmt.Errorf("record does not have enough fields for Query 3")
+		}
+
+		// Extract year and month from created_at (index 8)
+		// Format: "2024-01-15 10:30:00"
+		createdAt := record.Fields[8]
+		if len(createdAt) < 7 {
+			return 0, fmt.Errorf("invalid created_at format: %s", createdAt)
+		}
+		year := createdAt[0:4]     // "2024"
+		monthStr := createdAt[5:7] // "01"
+
+		// Calculate semester (1 or 2)
+		semester := "1"
+		if len(monthStr) == 2 {
+			if monthStr[0] == '0' && monthStr[1] >= '7' { // "07", "08", "09"
+				semester = "2"
+			} else if monthStr[0] == '1' { // "10", "11", "12"
+				semester = "2"
+			}
+		}
+
+		storeID := record.Fields[1]
+
+		// Composite key partitioning
+		return common.CalculateCompositeHashPartition([]string{year, semester, storeID}, p.NumPartitions)
+
 	case 4:
 		// Query 4: User-based partitioning (user_id is at index 4)
 		if 4 >= len(record.Fields) {
@@ -202,6 +249,7 @@ func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 		}
 		userID := record.Fields[4]
 		return common.CalculateUserBasedPartition(userID, p.NumPartitions)
+
 	default:
 		return 0, fmt.Errorf("unsupported query type: %d", p.QueryType)
 	}
