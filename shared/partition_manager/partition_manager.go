@@ -131,35 +131,15 @@ func (pm *PartitionManager) hasIncompleteLastLine(filePath string) (bool, error)
 		return false, nil // Empty file
 	}
 
-	// Read last 2KB to check if file ends with newline
-	readSize := int64(2048)
-	if stat.Size() < readSize {
-		readSize = stat.Size()
-	}
-
-	buffer := make([]byte, readSize)
-	_, err = file.ReadAt(buffer, stat.Size()-readSize)
+	// Read the last byte to check if file ends with newline
+	lastByte := make([]byte, 1)
+	_, err = file.ReadAt(lastByte, stat.Size()-1)
 	if err != nil {
 		return false, err
 	}
 
-	// Check if file ends with newline
-	if buffer[len(buffer)-1] == '\n' {
-		return false, nil // File ends with newline, no incomplete line
-	}
-
-	// If no newline found in last 2KB, read entire file
-	if bytes.LastIndexByte(buffer, '\n') == -1 {
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return false, err
-		}
-		if len(data) > 0 && data[len(data)-1] == '\n' {
-			return false, nil
-		}
-	}
-
-	return true, nil // Last line is incomplete
+	// If last byte is not '\n', the last line is incomplete
+	return lastByte[0] != '\n', nil
 }
 
 // removeIncompleteLastLine removes the incomplete last line by truncating the file
@@ -175,28 +155,44 @@ func (pm *PartitionManager) removeIncompleteLastLine(filePath string) error {
 		return fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	// Read last 2KB to find last newline
-	readSize := int64(2048)
-	if stat.Size() < readSize {
-		readSize = stat.Size()
+	if stat.Size() == 0 {
+		return nil // Empty file, nothing to remove
 	}
 
-	buffer := make([]byte, readSize)
-	_, err = file.ReadAt(buffer, stat.Size()-readSize)
-	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
+	// Read file backward in chunks until we find a newline
+	const chunkSize = int64(512) // Read 512 bytes at a time
+	offset := stat.Size()        // Start from the end
+
+	for offset > 0 {
+		// Calculate how much to read in this chunk
+		readSize := chunkSize
+		if offset < chunkSize {
+			readSize = offset
+		}
+
+		// Read chunk from file (starting at offset - readSize)
+		readOffset := offset - readSize
+		buffer := make([]byte, readSize)
+		_, err = file.ReadAt(buffer, readOffset)
+		if err != nil {
+			return fmt.Errorf("failed to read file: %w", err)
+		}
+
+		// Search backward in this chunk for newline
+		lastNewline := bytes.LastIndexByte(buffer, '\n')
+		if lastNewline != -1 {
+			// Found newline at position lastNewline within this chunk
+			// Truncate file at: readOffset + lastNewline + 1 (to keep the newline)
+			newSize := readOffset + int64(lastNewline) + 1
+			return file.Truncate(newSize)
+		}
+
+		// No newline in this chunk, continue reading backward
+		offset = readOffset
 	}
 
-	// Find last newline
-	lastNewline := bytes.LastIndexByte(buffer, '\n')
-	if lastNewline == -1 {
-		// No newline found, entire file is incomplete - truncate to 0
-		return file.Truncate(0)
-	}
-
-	// Truncate to remove incomplete line
-	newSize := stat.Size() - int64(len(buffer)-lastNewline-1)
-	return file.Truncate(newSize)
+	// No newline found in entire file, truncate to 0
+	return file.Truncate(0)
 }
 
 // parseCSVLine parses a CSV line (with optional trailing newline) into a record
@@ -217,6 +213,7 @@ func (pm *PartitionManager) GetPartitionsDir() string {
 }
 
 // GetLastLines reads the last N lines from a partition file
+// Returns lines in the same format as partition.Lines (raw CSV strings like "48,Paul\n")
 func (pm *PartitionManager) GetLastLines(filePath string, n int) ([]string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -236,45 +233,88 @@ func (pm *PartitionManager) GetLastLines(filePath string, n int) ([]string, erro
 		return []string{}, nil // Empty file
 	}
 
-	// Read last 2KB (should be enough for 2 lines)
-	readSize := int64(2048)
-	if stat.Size() < readSize {
-		readSize = stat.Size()
+	// Read file backward in chunks to find the Nth newline from the end
+	const chunkSize = int64(512)
+	offset := stat.Size()
+	newlineCount := 0
+	startOffset := stat.Size() // Position where we'll start reading from
+
+	// Read backward until we find N newlines (or reach the beginning)
+	for offset > 0 && newlineCount < n {
+		// Calculate how much to read in this chunk
+		readSize := chunkSize
+		if offset < chunkSize {
+			readSize = offset
+		}
+
+		// Read chunk from file (starting at offset - readSize)
+		readOffset := offset - readSize
+		buffer := make([]byte, readSize)
+		_, err = file.ReadAt(buffer, readOffset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read file: %w", err)
+		}
+
+		// Count newlines in this chunk (from end to start)
+		for i := len(buffer) - 1; i >= 0; i-- {
+			if buffer[i] == '\n' {
+				newlineCount++
+				if newlineCount == n {
+					// Found the Nth newline - record position (after the newline)
+					startOffset = readOffset + int64(i) + 1
+					break
+				}
+			}
+		}
+
+		offset = readOffset
 	}
 
-	buffer := make([]byte, readSize)
-	_, err = file.ReadAt(buffer, stat.Size()-readSize)
+	// If we didn't find N newlines, start from the beginning of the file
+	if newlineCount < n {
+		startOffset = 0
+	}
+
+	// Read from startOffset to the end of the file
+	readSize := stat.Size() - startOffset
+	data := make([]byte, readSize)
+	_, err = file.ReadAt(data, startOffset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	// Find all newlines in buffer (from end to start)
-	lines := []string{}
-	start := len(buffer)
-	for i := len(buffer) - 1; i >= 0; i-- {
-		if buffer[i] == '\n' {
-			if start < len(buffer) {
-				line := string(buffer[i+1 : start])
-				lines = append([]string{line}, lines...)
-				if len(lines) >= n {
-					break
-				}
-			}
-			start = i
+	// Parse CSV data from the read portion
+	reader := csv.NewReader(strings.NewReader(string(data)))
+	allRecords, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV: %w", err)
+	}
+
+	// Filter out header if present
+	records := allRecords
+	if len(records) > 0 && len(records[0]) > 0 {
+		// Check if first record is header (common headers: user_id, id, etc.)
+		firstField := strings.ToLower(records[0][0])
+		if firstField == "user_id" || firstField == "id" {
+			records = records[1:]
 		}
 	}
 
-	// Handle case where we didn't find enough newlines (file might be shorter)
-	if start > 0 && len(lines) < n {
-		line := string(buffer[0:start])
-		lines = append([]string{line}, lines...)
+	// Convert last N records to the same format as partition.Lines
+	// Format: "field1,field2\n" (matching partitionData function)
+	result := []string{}
+	start := len(records) - n
+	if start < 0 {
+		start = 0
 	}
 
-	// Return last N lines
-	if len(lines) > n {
-		return lines[len(lines)-n:], nil
+	for i := start; i < len(records); i++ {
+		// Convert record back to CSV line format (same as partitionData does)
+		csvLine := strings.Join(records[i], ",") + "\n"
+		result = append(result, csvLine)
 	}
-	return lines, nil
+
+	return result, nil
 }
 
 // WriteOnlyMissingLines writes only lines that haven't been written yet, avoiding duplicates
@@ -283,9 +323,6 @@ func (pm *PartitionManager) WriteOnlyMissingLines(filePath string, lastLines []s
 	if len(lastLines) == 0 {
 		return pm.appendToPartitionFile(filePath, newLines, opts)
 	}
-
-	testing_utils.LogInfo("Partition Manager", "new lines: %v", newLines)
-	testing_utils.LogInfo("Partition Manager", "old lines: %v", lastLines)
 
 	// Compare last written line with first new line
 	lastWrittenLine := strings.TrimSuffix(lastLines[len(lastLines)-1], "\n")
