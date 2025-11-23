@@ -145,10 +145,12 @@ func (e *Query4RecordExtractor) ExtractRecord(record []string, workerPartitions 
 		return 0, nil, fmt.Errorf("empty user_id")
 	}
 
-	// Calculate partition for this record using common utility
-	recordPartition, err := common.CalculateUserBasedPartition(userID, numPartitions)
+	// Calculate partition using composite key (user_id)
+	// MUST match the partitioner's logic for consistent routing
+	// Using same approach as Query 2/3 for consistency
+	recordPartition, err := common.CalculateCompositeHashPartition([]string{userID}, numPartitions)
 	if err != nil {
-		return 0, nil, fmt.Errorf("invalid user_id %s: %v", userID, err)
+		return 0, nil, fmt.Errorf("failed to calculate partition: %v", err)
 	}
 
 	// Only process records belonging to partitions this worker owns

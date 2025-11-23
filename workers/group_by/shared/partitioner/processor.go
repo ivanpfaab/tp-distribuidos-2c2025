@@ -244,12 +244,17 @@ func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 		return common.CalculateCompositeHashPartition([]string{year, semester, storeID}, p.NumPartitions)
 
 	case 4:
-		// Query 4: User-based partitioning (user_id is at index 4)
+		// Query 4: Partition by composite key (user_id)
+		// This ensures all records for the same user_id go to the same partition
+		// Schema: transaction_id, store_id, payment_method_id, voucher_id, user_id, ...
 		if 4 >= len(record.Fields) {
 			return 0, fmt.Errorf("record does not have enough fields for user_id")
 		}
 		userID := record.Fields[4]
-		return common.CalculateUserBasedPartition(userID, p.NumPartitions)
+
+		// Composite key partitioning (single key: user_id)
+		// Using same approach as Query 2/3 for consistency
+		return common.CalculateCompositeHashPartition([]string{userID}, p.NumPartitions)
 
 	default:
 		return 0, fmt.Errorf("unsupported query type: %d", p.QueryType)
