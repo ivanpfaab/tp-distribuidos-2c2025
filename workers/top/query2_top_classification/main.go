@@ -245,9 +245,10 @@ func (tw *TopItemsWorker) processChunkData(chunkMsg *chunk.Chunk, clientState *C
 // sendTopItems sends the final top items to the join worker
 func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
 	// Convert top items to CSV
-	// Schema must match what ItemID join worker expects: year,month,item_id,quantity,subtotal,count
+	// Schema: year,month,item_id,quantity,subtotal,category
+	// 'category' field indicates: 1=top by quantity, 2=top by revenue
 	var csvBuilder strings.Builder
-	csvBuilder.WriteString("year,month,item_id,quantity,subtotal,count\n")
+	csvBuilder.WriteString("year,month,item_id,quantity,subtotal,category\n")
 
 	for _, monthTop := range clientState.topItemsByMonth {
 		// Add top by quantity
@@ -258,7 +259,7 @@ func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState
 				monthTop.TopByQuantity.ItemID,
 				monthTop.TopByQuantity.TotalQuantity,
 				monthTop.TopByQuantity.TotalSubtotal,
-				1, // count = 1 (top item indicator)
+				1, // category = 1 (top by quantity)
 			))
 		}
 
@@ -271,7 +272,7 @@ func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState
 					monthTop.TopByRevenue.ItemID,
 					monthTop.TopByRevenue.TotalQuantity,
 					monthTop.TopByRevenue.TotalSubtotal,
-					2, // count = 2 (top revenue indicator, different from top quantity)
+					2, // category = 2 (top by revenue)
 				))
 			}
 		}

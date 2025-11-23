@@ -330,7 +330,7 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 	var joinedData string
 
 	// Check if this is grouped data from GroupBy
-	if parser.IsGroupedData(chunkMsg.ChunkData, "year", "count", "item_id") {
+	if parser.IsGroupedData(chunkMsg.ChunkData, "year", "category", "item_id") {
 		fmt.Printf("ItemID Join Worker: Received grouped data, joining with menu items\n")
 		
 		groupedData, err := parser.ParseGroupedTransactionItems(chunkMsg.ChunkData)
