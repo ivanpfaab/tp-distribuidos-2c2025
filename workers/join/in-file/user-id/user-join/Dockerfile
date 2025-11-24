@@ -25,6 +25,9 @@ RUN apk --no-cache add ca-certificates
 # Create shared data directory
 RUN mkdir -p /shared-data
 
+# Create worker data directory for state files
+RUN mkdir -p /app/worker-data
+
 # Set working directory
 WORKDIR /root/
 
@@ -34,7 +37,8 @@ COPY --from=builder /app/user-join-worker .
 # Create a non-root user
 RUN adduser -D -s /bin/sh appuser && \
     chown -R appuser:appuser /root && \
-    chown -R appuser:appuser /shared-data
+    chown -R appuser:appuser /shared-data && \
+    chown -R appuser:appuser /app/worker-data
 
 # Switch to non-root user
 USER appuser

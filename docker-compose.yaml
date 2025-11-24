@@ -398,6 +398,7 @@ services:
       NUM_WRITERS: 5
     volumes:
       - user-writer-1-data:/shared-data
+      - user-join-reader-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Join Reader 2 (Query 4 - paired with Writer 2, reads from local partition files)
@@ -424,6 +425,7 @@ services:
       NUM_WRITERS: 5
     volumes:
       - user-writer-2-data:/shared-data
+      - user-join-reader-2-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Join Reader 3 (Query 4 - paired with Writer 3, reads from local partition files)
@@ -450,6 +452,7 @@ services:
       NUM_WRITERS: 5
     volumes:
       - user-writer-3-data:/shared-data
+      - user-join-reader-3-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Join Reader 4 (Query 4 - paired with Writer 4, reads from local partition files)
@@ -476,6 +479,7 @@ services:
       NUM_WRITERS: 5
     volumes:
       - user-writer-4-data:/shared-data
+      - user-join-reader-4-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Join Reader 5 (Query 4 - paired with Writer 5, reads from local partition files)
@@ -502,6 +506,7 @@ services:
       NUM_WRITERS: 5
     volumes:
       - user-writer-5-data:/shared-data
+      - user-join-reader-5-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Query Gateway 1
@@ -1811,6 +1816,17 @@ volumes:
     driver: local
   # StoreID join worker volume
   storeid-join-worker-1-data:
+    driver: local
+  # User join reader volumes
+  user-join-reader-1-data:
+    driver: local
+  user-join-reader-2-data:
+    driver: local
+  user-join-reader-3-data:
+    driver: local
+  user-join-reader-4-data:
+    driver: local
+  user-join-reader-5-data:
     driver: local
   # Query 2 worker volumes
   query2-groupby-worker-1-data:

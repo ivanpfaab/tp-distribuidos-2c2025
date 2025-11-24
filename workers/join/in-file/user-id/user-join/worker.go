@@ -2,12 +2,15 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -25,6 +28,7 @@ type JoinByUserIdWorker struct {
 	config             *middleware.ConnectionConfig
 	readerConfig       *Config
 	workerID           string
+	messageManager     *messagemanager.MessageManager
 
 	// Completion tracking (no buffering needed)
 	completionSignals map[string]bool // clientID -> completion received
@@ -82,6 +86,25 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 	// Generate worker ID from reader config
 	workerID := fmt.Sprintf("userid-reader-%d", readerConfig.ReaderID)
 
+	// Initialize MessageManager for fault tolerance
+	// Directory is created in Dockerfile with correct ownership, but ensure it exists as safety measure
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		topUsersConsumer.Close()
+		completionConsumer.Close()
+		producer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("Join by User ID Worker: Loaded %d processed chunks\n", count)
+	}
+
 	// Initialize shared components
 	partitionManager := file.NewPartitionManager(SharedDataDir, NumPartitions)
 	chunkSender := joinchunk.NewSender(producer)
@@ -93,6 +116,7 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 		config:             config,
 		readerConfig:       readerConfig,
 		workerID:           workerID,
+		messageManager:     messageManager,
 		completionSignals:  make(map[string]bool),
 		partitionManager:   partitionManager,
 		chunkSender:        chunkSender,
@@ -121,6 +145,10 @@ func (jw *JoinByUserIdWorker) Start() middleware.MessageMiddlewareError {
 // Close closes all connections
 func (jw *JoinByUserIdWorker) Close() {
 	fmt.Println("Join by User ID Worker: Shutting down...")
+
+	if jw.messageManager != nil {
+		jw.messageManager.Close()
+	}
 
 	if jw.stopChan != nil {
 		close(jw.stopChan)
@@ -178,6 +206,13 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	// Check if chunk was already processed
+	if jw.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("Join by User ID Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
+		delivery.Ack(false)
+		return 0
+	}
+
 	fmt.Printf("Join by User ID Worker: Received chunk - ClientID: %s, ChunkNumber: %d (reader %d), IsLastChunk: %t\n",
 		chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
 
@@ -211,6 +246,12 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 		fmt.Printf("Join by User ID Worker: Failed to process chunk: %v\n", err)
 		delivery.Nack(false, true)
 		return err
+	}
+
+	// Mark chunk as processed after successful processing
+	if err := jw.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		fmt.Printf("Join by User ID Worker: Failed to mark chunk as processed: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Perform cleanup for partition files (reader shares volume with paired writer)
