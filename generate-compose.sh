@@ -58,8 +58,8 @@ echo ""
 echo -e "${BLUE}Configure Join Workers (in-memory dictionary with broadcasting)${NC}"
 echo ""
 
-ITEMID_JOIN_WORKER_COUNT=$(prompt_worker_count "itemid-join-worker" 2)
-STOREID_JOIN_WORKER_COUNT=$(prompt_worker_count "storeid-join-worker" 2)
+ITEMID_JOIN_WORKER_COUNT=$(prompt_worker_count "itemid-join-worker" 1)
+STOREID_JOIN_WORKER_COUNT=$(prompt_worker_count "storeid-join-worker" 1)
 
 echo ""
 echo -e "${BLUE}Configure User Join Workers (Query 4 - distributed write/read)${NC}"
@@ -597,21 +597,13 @@ generate_user_join_readers() {
     local count=$1
     
     for i in $(seq 1 $count); do
-        # First reader has simpler container name for backward compatibility
-        local container_name
-        if [ $i -eq 1 ]; then
-            container_name="user-join-reader"
-        else
-            container_name="user-join-reader-${i}"
-        fi
-        
         cat >> docker-compose.yaml << EOF
   # User Join Reader ${i} (Query 4 - paired with Writer ${i}, reads from local partition files)
   user-join-reader-${i}:
     build:
       context: .
       dockerfile: ./workers/join/in-file/user-id/user-join/Dockerfile
-    container_name: ${container_name}
+    container_name: user-join-reader-${i}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -966,9 +958,19 @@ cat >> docker-compose.yaml << 'EOF_FOOTER'
     tty: true
 
 volumes:
-  shared-data:
-    driver: local
 EOF_FOOTER
+
+# Generate per-worker volumes for user partition writers
+echo -e "${BLUE}Generating user partition writer volumes...${NC}"
+cat >> docker-compose.yaml << EOF
+  # User partition writer volumes
+EOF
+for i in $(seq 1 $USER_PARTITION_WRITERS); do
+    cat >> docker-compose.yaml << EOF
+  user-partition-writer-${i}-data:
+    driver: local
+EOF
+done
 
 # Generate per-worker volumes for groupby workers
 echo -e "${BLUE}Generating per-worker volumes...${NC}"

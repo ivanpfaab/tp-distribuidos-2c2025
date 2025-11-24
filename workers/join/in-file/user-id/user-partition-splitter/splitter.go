@@ -223,17 +223,17 @@ func (ups *UserPartitionSplitter) flushBuffer(writerID int, originalChunk *chunk
 	csvData := ups.bufferToCSV(writerID)
 
 	// Create chunk for writer
-	writerChunk := &chunk.Chunk{
-		ClientID:        originalChunk.ClientID,
-		FileID:          originalChunk.FileID,
-		QueryType:       originalChunk.QueryType,
-		ChunkNumber:     (originalChunk.ChunkNumber-1) * ups.splitterConfig.NumWriters + (writerID+1),
-		IsLastChunk:     originalChunk.IsLastChunk && writerID == ups.splitterConfig.NumWriters-1,
-		IsLastFromTable: originalChunk.IsLastFromTable && writerID == ups.splitterConfig.NumWriters-1,
-		ChunkSize:       len(ups.buffers[writerID]),
-		TableID:         originalChunk.TableID,
-		ChunkData:       csvData,
-	}
+	writerChunk := chunk.NewChunk(
+		originalChunk.ClientID,
+		originalChunk.FileID,
+		originalChunk.QueryType,
+		(originalChunk.ChunkNumber-1)*ups.splitterConfig.NumWriters+(writerID+1),
+		originalChunk.IsLastChunk && writerID == ups.splitterConfig.NumWriters-1,
+		originalChunk.IsLastFromTable && writerID == ups.splitterConfig.NumWriters-1,
+		len(ups.buffers[writerID]),
+		originalChunk.TableID,
+		csvData,
+	)
 
 	// Serialize and send
 	chunkMessage := chunk.NewChunkMessage(writerChunk)

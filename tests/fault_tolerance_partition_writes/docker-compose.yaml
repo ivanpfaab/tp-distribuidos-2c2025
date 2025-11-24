@@ -1,0 +1,101 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: partition-writes-rabbitmq
+    ports:
+      - "5674:5672"   # Different port to avoid conflicts
+      - "15674:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker-1:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance_partition_writes/worker-1/Dockerfile
+    container_name: partition-writes-worker-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      OUTPUT_QUEUE: queue-1-2
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  worker-2:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance_partition_writes/worker-2/Dockerfile
+    container_name: partition-writes-worker-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - worker-2-partitions:/app/worker-data/partitions
+      - worker-2-state:/app/worker-data/state
+    environment:
+      INPUT_QUEUE: queue-1-2
+      OUTPUT_QUEUE: queue-2-3
+      NUM_PARTITIONS: ${NUM_PARTITIONS:-5}
+      DEBUG_MODE: true
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  worker-3:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance_partition_writes/worker-3/Dockerfile
+    container_name: partition-writes-worker-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      worker-2:
+        condition: service_started
+    volumes:
+      - worker-2-partitions:/app/worker-data/partitions:ro  # Read-only access to partitions
+    environment:
+      INPUT_QUEUE: queue-2-3
+      NUM_PARTITIONS: ${NUM_PARTITIONS:-5}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: ./tests/fault_tolerance_partition_writes/test-runner/Dockerfile
+    container_name: partition-writes-test-runner
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      worker-1:
+        condition: service_started
+      worker-2:
+        condition: service_started
+      worker-3:
+        condition: service_started
+    environment:
+      OUTPUT_QUEUE: queue-1-2
+      NUM_CHUNKS: ${NUM_CHUNKS:-20}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+
+volumes:
+  worker-2-partitions:
+    driver: local
+  worker-2-state:
+    driver: local
+

@@ -402,17 +402,17 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 	}
 
 	// Create new chunk with joined data
-	joinedChunk := &chunk.Chunk{
-		ClientID:        chunkMsg.ClientID,
-		FileID:          chunkMsg.FileID,
-		QueryType:       chunkMsg.QueryType,
-		ChunkNumber:     chunkMsg.ChunkNumber,
-		IsLastChunk:     chunkMsg.IsLastChunk,
-		IsLastFromTable: chunkMsg.IsLastFromTable,
-		ChunkSize:       len(joinedData),
-		TableID:         chunkMsg.TableID,
-		ChunkData:       joinedData,
-	}
+	joinedChunk := chunk.NewChunk(
+		chunkMsg.ClientID,
+		chunkMsg.FileID,
+		chunkMsg.QueryType,
+		chunkMsg.ChunkNumber,
+		chunkMsg.IsLastChunk,
+		chunkMsg.IsLastFromTable,
+		len(joinedData),
+		chunkMsg.TableID,
+		joinedData,
+	)
 
 	return joinedChunk, nil
 }

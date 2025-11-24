@@ -2,6 +2,7 @@ package chunk
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
@@ -9,6 +10,7 @@ import (
 type Chunk struct {
 	ClientID        string
 	FileID          string
+	ID              string 
 	QueryType       byte
 	TableID         int
 	ChunkSize       int
@@ -19,9 +21,13 @@ type Chunk struct {
 }
 
 func NewChunk(clientID, fileID string, queryType byte, chunkNumber int, isLastChunk, isLastFromTable bool, chunkSize, tableID int, chunkData string) *Chunk {
+	// Generate ID: ClientID (4 bytes) + ChunkNumber (8 bytes as uint64)
+	id := fmt.Sprintf("%s%08d", clientID, uint64(chunkNumber))
+	
 	return &Chunk{
 		ClientID:        clientID,
 		FileID:          fileID,
+		ID:              id,
 		QueryType:       queryType,
 		ChunkNumber:     chunkNumber,
 		IsLastChunk:     isLastChunk,
@@ -42,9 +48,14 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 	clientID := string(clientIDBytes)
 	offset += ClientIDSize
 
-	fileIDBytes := data[offset : offset+4] // FileID is 4 bytes
+	fileIDBytes := data[offset : offset+FileIDSize]
 	fileID := string(fileIDBytes)
-	offset += 4
+	offset += FileIDSize
+
+	// Read ID (12 bytes: ClientID + ChunkNumber)
+	idBytes := data[offset : offset+IDSize]
+	id := string(idBytes)
+	offset += IDSize
 
 	queryType := data[offset]
 	offset += QueryTypeSize
@@ -73,6 +84,7 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 	return &Chunk{
 		ClientID:        clientID,
 		FileID:          fileID,
+		ID:              id,
 		QueryType:       queryType,
 		TableID:         tableID,
 		ChunkSize:       chunkSize,
