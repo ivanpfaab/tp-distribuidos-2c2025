@@ -120,6 +120,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - amount-filter-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # ItemID Join Worker 1 (scalable with dictionary broadcasting)
@@ -1722,6 +1724,9 @@ volumes:
   time-filter-worker-1-data:
     driver: local
   time-filter-worker-2-data:
+    driver: local
+  # Amount filter worker volumes
+  amount-filter-worker-1-data:
     driver: local
   # User partition writer volumes
   user-partition-writer-1-data:

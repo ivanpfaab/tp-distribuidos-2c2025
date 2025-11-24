@@ -70,6 +70,12 @@ func (afw *AmountFilterWorker) processMessage(delivery amqp.Delivery) middleware
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	// Check if already processed
+	if afw.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("Amount Filter Worker: Chunk ID %s already processed, skipping\n", chunkMsg.ID)
+		return 0 // Return 0 to ACK (handled by createCallback)
+	}
+
 	// Process the chunk (amount filter logic)
 	fmt.Printf("Amount Filter Worker: Processing chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d\n",
 		chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber)
@@ -80,12 +86,12 @@ func (afw *AmountFilterWorker) processMessage(delivery amqp.Delivery) middleware
 		return msgErr
 	}
 
-	// Send to reply bus
-	return afw.sendReply(&responseChunk)
+	// Send to reply bus (pass chunk ID for marking as processed)
+	return afw.sendReply(&responseChunk, chunkMsg.ID)
 }
 
 // sendReply sends a processed chunk as a reply back to the reply bus
-func (afw *AmountFilterWorker) sendReply(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+func (afw *AmountFilterWorker) sendReply(chunkMsg *chunk.Chunk, chunkID string) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 
@@ -100,6 +106,12 @@ func (afw *AmountFilterWorker) sendReply(chunkMsg *chunk.Chunk) middleware.Messa
 	if err := afw.replyProducer.Send(replyData); err != 0 {
 		fmt.Printf("Amount Filter Worker: Failed to send reply to reply bus: %v\n", err)
 		return err
+	}
+
+	// Mark as processed (must be after successful send)
+	if err := afw.messageManager.MarkProcessed(chunkID); err != nil {
+		fmt.Printf("Amount Filter Worker: Failed to mark chunk as processed: %v\n", err)
+		return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 	}
 
 	fmt.Printf("Amount Filter Worker: Reply sent successfully for ClientID: %s, ChunkNumber: %d\n",

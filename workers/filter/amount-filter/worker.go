@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -13,6 +14,7 @@ type AmountFilterWorker struct {
 	consumer      *workerqueue.QueueConsumer
 	replyProducer *workerqueue.QueueMiddleware
 	config        *middleware.ConnectionConfig
+	messageManager *messagemanager.MessageManager
 }
 
 // NewAmountFilterWorker creates a new AmountFilterWorker instance
@@ -60,10 +62,20 @@ func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWo
 		return nil, fmt.Errorf("failed to declare reply queue: %v", err)
 	}
 
+	// Initialize MessageManager for fault tolerance
+	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("Amount Filter Worker: Warning - failed to load processed IDs: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("Amount Filter Worker: Loaded %d processed IDs\n", count)
+	}
+
 	return &AmountFilterWorker{
-		consumer:      consumer,
-		replyProducer: replyProducer,
-		config:        config,
+		consumer:       consumer,
+		replyProducer:  replyProducer,
+		config:         config,
+		messageManager: messageManager,
 	}, nil
 }
 
@@ -81,6 +93,9 @@ func (afw *AmountFilterWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (afw *AmountFilterWorker) Close() {
+	if afw.messageManager != nil {
+		afw.messageManager.Close()
+	}
 	if afw.consumer != nil {
 		afw.consumer.Close()
 	}
