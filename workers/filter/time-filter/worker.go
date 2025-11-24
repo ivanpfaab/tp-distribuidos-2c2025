@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -14,6 +15,7 @@ type TimeFilterWorker struct {
 	amountFilterProducer *workerqueue.QueueMiddleware
 	replyProducer        *workerqueue.QueueMiddleware
 	config               *middleware.ConnectionConfig
+	messageManager       *messagemanager.MessageManager
 }
 
 // NewTimeFilterWorker creates a new TimeFilterWorker instance
@@ -80,11 +82,21 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 		return nil, fmt.Errorf("failed to declare reply queue: %v", err)
 	}
 
+	// Initialize MessageManager for fault tolerance
+	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("Time Filter Worker: Warning - failed to load processed IDs: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("Time Filter Worker: Loaded %d processed IDs\n", count)
+	}
+
 	return &TimeFilterWorker{
 		consumer:             consumer,
 		amountFilterProducer: amountFilterProducer,
 		replyProducer:        replyProducer,
 		config:               config,
+		messageManager:       messageManager,
 	}, nil
 }
 
@@ -102,6 +114,9 @@ func (tfw *TimeFilterWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (tfw *TimeFilterWorker) Close() {
+	if tfw.messageManager != nil {
+		tfw.messageManager.Close()
+	}
 	if tfw.consumer != nil {
 		tfw.consumer.Close()
 	}
