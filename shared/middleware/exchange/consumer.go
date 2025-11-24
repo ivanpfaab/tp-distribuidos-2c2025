@@ -8,6 +8,7 @@ import (
 // ExchangeConsumer wraps the middleware.MessageMiddlewareExchange with consumer methods
 type ExchangeConsumer struct {
 	*middleware.MessageMiddlewareExchange
+	queueName string // Optional named queue (empty = temporary auto-generated)
 }
 
 // NewExchangeConsumer creates a new ExchangeConsumer instance
@@ -29,7 +30,14 @@ func NewExchangeConsumer(
 			RouteKeys:    routeKeys,
 			AmqpChannel:  channel,
 		},
+		queueName: "", // Default to temporary queue
 	}
+}
+
+// SetQueueName sets the queue name for persistent queue (call before StartConsuming)
+// If not set or empty, creates a temporary auto-generated queue
+func (m *ExchangeConsumer) SetQueueName(queueName string) {
+	m.queueName = queueName
 }
 
 func (m *ExchangeConsumer) StartConsuming(
@@ -43,15 +51,15 @@ func (m *ExchangeConsumer) StartConsuming(
 		"Starting consumer for exchange '%s' with route keys '%v'",
 		m.ExchangeName, m.RouteKeys)
 
-	// 1. Create a temporary queue for this consumer
-	// Empty name means RabbitMQ auto-generates one
+	// 1. Create a queue for this consumer
+	// If queueName is empty, RabbitMQ auto-generates a temporary one
 	queue, err := (*m.AmqpChannel).QueueDeclare(
-		"",    // name (empty for auto-generated)
-		false, // durable
-		false, // delete when unused
-		false, // exclusive (only this consumer can use it)
-		false, // no-wait
-		nil,   // arguments
+		m.queueName,       	// name (empty for auto-generated)
+		false, 				// durable (true if named, false if temporary)
+		false, 				// delete when unused (true if temporary, false if named)
+		false,             	// exclusive (only this consumer can use it)
+		false,             	// no-wait
+		nil,              	// arguments (empty)
 	)
 	if err != nil {
 		testing_utils.LogError("Exchange Consumer",
