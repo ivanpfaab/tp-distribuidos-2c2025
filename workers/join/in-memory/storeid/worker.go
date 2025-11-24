@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -11,7 +10,6 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
-	"github.com/tp-distribuidos-2c2025/workers/join/shared/batch"
 	joinchunk "github.com/tp-distribuidos-2c2025/workers/join/shared/chunk"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/dictionary"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/handler"
@@ -35,7 +33,6 @@ type StoreIdJoinWorker struct {
 	dictManager          *dictionary.Manager[*Store]
 	dictHandler          *handler.DictionaryHandler[*Store]
 	completionHandler    *handler.CompletionHandler[*Store]
-	batchManager         *batch.Manager
 	chunkSender          *joinchunk.Sender
 	completionNotifier   *notifier.CompletionNotifier
 	orchestratorNotifier *notifier.OrchestratorNotifier
@@ -165,7 +162,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 	}
 	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, "StoreID Join Worker")
 	completionHandler := handler.NewCompletionHandler(dictManager, "StoreID Join Worker")
-	batchManager := batch.NewManager()
 	chunkSender := joinchunk.NewSender(outputProducer)
 	completionNotifier := notifier.NewCompletionNotifier(completionProducer, workerID, "stores")
 	orchestratorNotifier := notifier.NewOrchestratorNotifier(orchestratorProducer, "storeid-join-worker")
@@ -182,7 +178,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		dictManager:          dictManager,
 		dictHandler:          dictHandler,
 		completionHandler:    completionHandler,
-		batchManager:         batchManager,
 		chunkSender:          chunkSender,
 		completionNotifier:   completionNotifier,
 		orchestratorNotifier: orchestratorNotifier,
@@ -262,7 +257,7 @@ func (w *StoreIdJoinWorker) createChunkCallback() func(middleware.ConsumeChannel
 	}
 }
 
-// processChunkMessage processes chunk messages for joining with batching
+// processChunkMessage processes chunk messages for joining
 func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
 	fmt.Printf("StoreID Join Worker: Received chunk message\n")
 
@@ -273,70 +268,18 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	clientID := chunkMsg.ClientID
-	chunkNumber := int(chunkMsg.ChunkNumber)
-
 	// Check if dictionary is ready
-	if !w.dictManager.IsReady(clientID) {
-		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", clientID)
+	if !w.dictManager.IsReady(chunkMsg.ClientID) {
+		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
 		delivery.Nack(false, true)
 		return 0
 	}
 
-	// Add chunk to batch
-	w.batchManager.AddChunk(clientID, chunkMsg)
-	fmt.Printf("StoreID Join Worker: Added chunk %d (partition %d) for client %s to batch\n", chunkNumber, chunkNumber, clientID)
-
-	// Get expected number of partitions from environment (set in docker-compose)
-	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
-	numPartitions := 100 // Default to 100 if not set
-	if numPartitionsStr != "" {
-		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
-			numPartitions = n
-		}
-	}
-
-	// Get all chunks for this client
-	chunks := w.batchManager.GetChunks(clientID)
-
-	// Check if we've received all expected chunks (chunk numbers 0 through numPartitions-1)
-	receivedChunkNumbers := make(map[int]bool)
-	for _, ch := range chunks {
-		receivedChunkNumbers[int(ch.ChunkNumber)] = true
-	}
-
-	allChunksReceived := true
-	for i := 0; i < numPartitions; i++ {
-		if !receivedChunkNumbers[i] {
-			allChunksReceived = false
-			break
-		}
-	}
-
-	if allChunksReceived {
-		fmt.Printf("StoreID Join Worker: Received all %d chunks (partitions 0-%d) for client %s, processing batch...\n", numPartitions, numPartitions-1, clientID)
-
-		// Combine and process batch
-		combinedChunk, err := w.batchManager.CombineChunks(clientID)
-		if err != nil {
-			fmt.Printf("StoreID Join Worker: Failed to combine chunks: %v\n", err)
-			delivery.Nack(false, true)
-			return middleware.MessageMiddlewareMessageError
-		}
-
-		// Process the combined chunk
-		if err := w.processChunk(combinedChunk); err != 0 {
-			fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
-			delivery.Nack(false, true)
-			return err
-		}
-
-		// Clear batch
-		w.batchManager.ClearClient(clientID)
-		fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
-	} else {
-		receivedCount := len(receivedChunkNumbers)
-		fmt.Printf("StoreID Join Worker: Client %s has %d/%d chunks (partitions), waiting for more...\n", clientID, receivedCount, numPartitions)
+	// Process the chunk
+	if err := w.processChunk(chunkMsg); err != 0 {
+		fmt.Printf("StoreID Join Worker: Failed to process chunk: %v\n", err)
+		delivery.Nack(false, false)
+		return middleware.MessageMiddlewareMessageError
 	}
 
 	delivery.Ack(false)
