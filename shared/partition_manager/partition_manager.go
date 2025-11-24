@@ -331,6 +331,9 @@ func (pm *PartitionManager) WriteOnlyMissingLines(filePath string, lastLines []s
 			line := strings.TrimSuffix(newLine, "\n")
 			if lastWrittenLine == line {
 				// Last written line matches first new line - skip it
+				if i+1 >= len(newLines) {
+					return nil
+				}
 				return pm.appendToPartitionFile(filePath, newLines[(i+1):], opts)
 			}
 		}
