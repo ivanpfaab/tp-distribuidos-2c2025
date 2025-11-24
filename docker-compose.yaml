@@ -30,6 +30,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - year-filter-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Year Filter Worker 2
@@ -46,6 +48,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - year-filter-worker-2-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Year Filter Worker 3
@@ -62,6 +66,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - year-filter-worker-3-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Time Filter Worker 1
@@ -1701,6 +1707,13 @@ services:
     tty: true
 
 volumes:
+  # Year filter worker volumes
+  year-filter-worker-1-data:
+    driver: local
+  year-filter-worker-2-data:
+    driver: local
+  year-filter-worker-3-data:
+    driver: local
   # User partition writer volumes
   user-partition-writer-1-data:
     driver: local

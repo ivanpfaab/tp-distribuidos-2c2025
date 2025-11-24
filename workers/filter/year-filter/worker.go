@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -14,6 +15,7 @@ type YearFilterWorker struct {
 	timeFilterProducer *workerqueue.QueueMiddleware
 	replyProducer      *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
+	messageManager     *messagemanager.MessageManager
 }
 
 // NewYearFilterWorker creates a new YearFilterWorker instance
@@ -80,11 +82,21 @@ func NewYearFilterWorker(config *middleware.ConnectionConfig) (*YearFilterWorker
 		return nil, fmt.Errorf("failed to declare reply queue: %v", err)
 	}
 
+	// Initialize MessageManager for fault tolerance
+	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("Year Filter Worker: Warning - failed to load processed IDs: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("Year Filter Worker: Loaded %d processed IDs\n", count)
+	}
+
 	return &YearFilterWorker{
 		consumer:           consumer,
 		timeFilterProducer: timeFilterProducer,
 		replyProducer:      replyProducer,
 		config:             config,
+		messageManager:     messageManager,
 	}, nil
 }
 
@@ -102,6 +114,9 @@ func (yfw *YearFilterWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (yfw *YearFilterWorker) Close() {
+	if yfw.messageManager != nil {
+		yfw.messageManager.Close()
+	}
 	if yfw.consumer != nil {
 		yfw.consumer.Close()
 	}

@@ -7,10 +7,22 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
 
+// ensureSize ensures a string is exactly the specified size by padding with spaces or truncating
+func ensureSize(s string, size int) string {
+	if len(s) > size {
+		return s[:size]
+	}
+	if len(s) < size {
+		// Pad with spaces
+		return fmt.Sprintf("%-*s", size, s)
+	}
+	return s
+}
+
 type Chunk struct {
 	ClientID        string
 	FileID          string
-	ID              string 
+	ID              string
 	QueryType       byte
 	TableID         int
 	ChunkSize       int
@@ -21,9 +33,14 @@ type Chunk struct {
 }
 
 func NewChunk(clientID, fileID string, queryType byte, chunkNumber int, isLastChunk, isLastFromTable bool, chunkSize, tableID int, chunkData string) *Chunk {
-	// Generate ID: ClientID (4 bytes) + ChunkNumber (8 bytes as uint64)
-	id := fmt.Sprintf("%s%08d", clientID, uint64(chunkNumber))
-	
+	// Generate ID: ClientID (4 bytes) + FileID (4 bytes) + QueryType (1 byte) + ChunkNumber (8 bytes as uint64)
+	// Ensure each component has the correct size
+	clientIDFixed := ensureSize(clientID, ClientIDSize)
+	fileIDFixed := ensureSize(fileID, FileIDSize)
+	queryTypeStr := fmt.Sprintf("%d", queryType)               // QueryType is 1 byte (single digit 1-4)
+	chunkNumberStr := fmt.Sprintf("%08d", uint64(chunkNumber)) // ChunkNumber is 8 bytes (8-digit zero-padded)
+	id := clientIDFixed + fileIDFixed + queryTypeStr + chunkNumberStr
+
 	return &Chunk{
 		ClientID:        clientID,
 		FileID:          fileID,
@@ -52,7 +69,7 @@ func DeserializeChunk(data []byte) (*Chunk, error) {
 	fileID := string(fileIDBytes)
 	offset += FileIDSize
 
-	// Read ID (12 bytes: ClientID + ChunkNumber)
+	// Read ID (17 bytes: ClientID + FileID + QueryType + ChunkNumber)
 	idBytes := data[offset : offset+IDSize]
 	id := string(idBytes)
 	offset += IDSize
