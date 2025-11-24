@@ -33,17 +33,17 @@ type MonthTopItems struct {
 // ClientState holds the state for a specific client
 type ClientState struct {
 	topItemsByMonth map[string]*MonthTopItems // key: "YYYY-MM"
-	receivedChunks  map[int]bool               // Track which chunk numbers we've received (chunk number = worker ID)
-	numWorkers      int                        // Expected number of chunks
+	receivedChunks  map[int]bool              // Track which chunk numbers we've received (chunk number = partition number)
+	numPartitions   int                       // Expected number of chunks (one per partition)
 }
 
 // TopItemsWorker processes month-level aggregations and selects top items
 type TopItemsWorker struct {
-	consumer     *workerqueue.QueueConsumer
-	producer     *workerqueue.QueueMiddleware
-	config       *middleware.ConnectionConfig
-	clientStates map[string]*ClientState // key: ClientID
-	numWorkers   int                     // Number of workers (from environment)
+	consumer      *workerqueue.QueueConsumer
+	producer      *workerqueue.QueueMiddleware
+	config        *middleware.ConnectionConfig
+	clientStates  map[string]*ClientState // key: ClientID
+	numPartitions int                     // Total number of partitions (from environment)
 }
 
 // NewTopItemsWorker creates a new top items worker
@@ -55,15 +55,15 @@ func NewTopItemsWorker() *TopItemsWorker {
 		Password: "password",
 	}
 
-	// Get NUM_WORKERS from environment
-	numWorkersStr := os.Getenv("NUM_WORKERS")
-	numWorkers := 3 // Default to 3 if not set
-	if numWorkersStr != "" {
-		if n, err := strconv.Atoi(numWorkersStr); err == nil && n > 0 {
-			numWorkers = n
+	// Get NUM_PARTITIONS from environment (total partitions across all orchestrators)
+	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
+	numPartitions := 100 // Default to 100 if not set
+	if numPartitionsStr != "" {
+		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
+			numPartitions = n
 		}
 	}
-	log.Printf("Top Items Worker: Expecting %d chunks per client", numWorkers)
+	log.Printf("Top Items Worker: Expecting %d chunks per client (one per partition)", numPartitions)
 
 	// Create consumer for top items queue
 	consumer := workerqueue.NewQueueConsumer(queues.Query2TopItemsQueue, config)
@@ -99,11 +99,11 @@ func NewTopItemsWorker() *TopItemsWorker {
 	}
 
 	return &TopItemsWorker{
-		consumer:     consumer,
-		producer:     producer,
-		config:       config,
-		clientStates: make(map[string]*ClientState),
-		numWorkers:   numWorkers,
+		consumer:      consumer,
+		producer:      producer,
+		config:        config,
+		clientStates:  make(map[string]*ClientState),
+		numPartitions: numPartitions,
 	}
 }
 
@@ -113,7 +113,7 @@ func (tw *TopItemsWorker) getOrCreateClientState(clientID string) *ClientState {
 		tw.clientStates[clientID] = &ClientState{
 			topItemsByMonth: make(map[string]*MonthTopItems),
 			receivedChunks:  make(map[int]bool),
-			numWorkers:      tw.numWorkers,
+			numPartitions:   tw.numPartitions,
 		}
 	}
 	return tw.clientStates[clientID]
@@ -129,17 +129,18 @@ func (tw *TopItemsWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	}
 
 	clientID := chunkMsg.ClientID
-	chunkNumber := int(chunkMsg.ChunkNumber)
+	chunkNumber := int(chunkMsg.ChunkNumber) // ChunkNumber = partition number (0-99)
 	clientState := tw.getOrCreateClientState(clientID)
 
-	log.Printf("Top Items Worker: Received chunk %d for client %s (expecting chunks 1-%d)", chunkNumber, clientID, clientState.numWorkers)
+	log.Printf("Top Items Worker: Received chunk %d (partition %d) for client %s (expecting %d total chunks)",
+		chunkNumber, chunkNumber, clientID, clientState.numPartitions)
 
-	// Mark this chunk as received
+	// Mark this chunk as received (using partition number as key)
 	clientState.receivedChunks[chunkNumber] = true
 
 	// Process the chunk data first (if it has data)
 	if chunkMsg.ChunkSize > 0 && len(chunkMsg.ChunkData) > 0 {
-		log.Printf("Top Items Worker: Processing data chunk %d for client %s", chunkNumber, clientID)
+		log.Printf("Top Items Worker: Processing data chunk %d (partition %d) for client %s", chunkNumber, chunkNumber, clientID)
 		if err := tw.processChunkData(chunkMsg, clientState); err != nil {
 			log.Printf("Top Items Worker: Failed to process chunk data: %v", err)
 			return middleware.MessageMiddlewareMessageError
@@ -147,9 +148,9 @@ func (tw *TopItemsWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 		log.Printf("Top Items Worker: Processed chunk %d for client %s - Now tracking %d months", chunkNumber, clientID, len(clientState.topItemsByMonth))
 	}
 
-	// Check if we've received all expected chunks (1 through numWorkers)
+	// Check if we've received all expected chunks (all partitions 0 through numPartitions-1)
 	allChunksReceived := true
-	for i := 1; i <= clientState.numWorkers; i++ {
+	for i := 0; i < clientState.numPartitions; i++ {
 		if !clientState.receivedChunks[i] {
 			allChunksReceived = false
 			break
@@ -157,7 +158,8 @@ func (tw *TopItemsWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	}
 
 	if allChunksReceived {
-		log.Printf("Top Items Worker: Received all %d chunks for client %s, sending top items...", clientState.numWorkers, clientID)
+		log.Printf("Top Items Worker: Received all %d chunks (partitions 0-%d) for client %s, sending top items...",
+			clientState.numPartitions, clientState.numPartitions-1, clientID)
 		log.Printf("Top Items Worker: Client state has %d months of data", len(clientState.topItemsByMonth))
 
 		if err := tw.sendTopItems(clientID, clientState); err != 0 {
@@ -169,7 +171,7 @@ func (tw *TopItemsWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 		delete(tw.clientStates, clientID)
 	} else {
 		receivedCount := len(clientState.receivedChunks)
-		log.Printf("Top Items Worker: Client %s has %d/%d chunks, waiting for more...", clientID, receivedCount, clientState.numWorkers)
+		log.Printf("Top Items Worker: Client %s has %d/%d chunks (partitions), waiting for more...", clientID, receivedCount, clientState.numPartitions)
 	}
 
 	return 0
@@ -243,9 +245,10 @@ func (tw *TopItemsWorker) processChunkData(chunkMsg *chunk.Chunk, clientState *C
 // sendTopItems sends the final top items to the join worker
 func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState) middleware.MessageMiddlewareError {
 	// Convert top items to CSV
-	// Schema must match what ItemID join worker expects: year,month,item_id,quantity,subtotal,count
+	// Schema: year,month,item_id,quantity,subtotal,category
+	// 'category' field indicates: 1=top by quantity, 2=top by revenue
 	var csvBuilder strings.Builder
-	csvBuilder.WriteString("year,month,item_id,quantity,subtotal,count\n")
+	csvBuilder.WriteString("year,month,item_id,quantity,subtotal,category\n")
 
 	for _, monthTop := range clientState.topItemsByMonth {
 		// Add top by quantity
@@ -256,7 +259,7 @@ func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState
 				monthTop.TopByQuantity.ItemID,
 				monthTop.TopByQuantity.TotalQuantity,
 				monthTop.TopByQuantity.TotalSubtotal,
-				1, // count = 1 (top item indicator)
+				1, // category = 1 (top by quantity)
 			))
 		}
 
@@ -269,7 +272,7 @@ func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState
 					monthTop.TopByRevenue.ItemID,
 					monthTop.TopByRevenue.TotalQuantity,
 					monthTop.TopByRevenue.TotalSubtotal,
-					2, // count = 2 (top revenue indicator, different from top quantity)
+					2, // category = 2 (top by revenue)
 				))
 			}
 		}

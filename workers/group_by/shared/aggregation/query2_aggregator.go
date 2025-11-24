@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/grouping"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
@@ -21,10 +20,8 @@ type Query2Aggregator struct {
 }
 
 // NewQuery2Aggregator creates a new Query 2 aggregator
-func NewQuery2Aggregator(partition int) (*Query2Aggregator, error) {
-	// Get year from partition
-	year := common.GetYearFromPartition(partition)
-	grouper := grouping.NewQuery2Grouper(year)
+func NewQuery2Aggregator() (*Query2Aggregator, error) {
+	grouper := grouping.NewQuery2Grouper()
 
 	return &Query2Aggregator{
 		grouper: grouper,
@@ -61,9 +58,9 @@ func (a *Query2Aggregator) AggregatePartitionFile(filePath string, aggregatedDat
 		}
 
 		// Parse quantity and subtotal from the already-aggregated partition file
-		// Record format: month,item_id,quantity,subtotal (from worker)
-		quantity, _ := strconv.Atoi(strings.TrimSpace(record[2]))
-		subtotal, _ := strconv.ParseFloat(strings.TrimSpace(record[3]), 64)
+		// Record format: year,month,item_id,quantity,subtotal (from worker)
+		quantity, _ := strconv.Atoi(strings.TrimSpace(record[3]))
+		subtotal, _ := strconv.ParseFloat(strings.TrimSpace(record[4]), 64)
 
 		// Aggregate across partition files
 		if aggregatedData[key] == nil {

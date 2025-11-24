@@ -13,6 +13,8 @@ type OrchestratorConfig struct {
 	RabbitMQConfig *middleware.ConnectionConfig
 	QueryType      int
 	WorkerID       int
+	NumPartitions  int
+	NumWorkers     int
 }
 
 // NewOrchestratorConfig creates a new orchestrator configuration
@@ -32,6 +34,21 @@ func NewOrchestratorConfig(queryType int) (*OrchestratorConfig, error) {
 		return nil, fmt.Errorf("WORKER_ID must be >= 1 (got %d)", workerID)
 	}
 
+	// Load NUM_PARTITIONS and NUM_WORKERS from environment
+	numPartitions := 100 // Default
+	if numPartitionsStr := os.Getenv("NUM_PARTITIONS"); numPartitionsStr != "" {
+		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
+			numPartitions = n
+		}
+	}
+
+	numWorkers := 5 // Default
+	if numWorkersStr := os.Getenv("NUM_WORKERS"); numWorkersStr != "" {
+		if n, err := strconv.Atoi(numWorkersStr); err == nil && n > 0 {
+			numWorkers = n
+		}
+	}
+
 	return &OrchestratorConfig{
 		RabbitMQConfig: &middleware.ConnectionConfig{
 			Host:     "rabbitmq",
@@ -39,7 +56,9 @@ func NewOrchestratorConfig(queryType int) (*OrchestratorConfig, error) {
 			Username: "admin",
 			Password: "password",
 		},
-		QueryType: queryType,
-		WorkerID:  workerID,
+		QueryType:     queryType,
+		WorkerID:      workerID,
+		NumPartitions: numPartitions,
+		NumWorkers:    numWorkers,
 	}, nil
 }

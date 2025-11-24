@@ -14,18 +14,17 @@ type Query2AggregatedData struct {
 	Count         int
 }
 
-// Query2Grouper groups Query 2 records by month|item_id
+// Query2Grouper groups Query 2 records by year|month|item_id
 type Query2Grouper struct {
-	year string // Extracted from partition
 }
 
-// NewQuery2Grouper creates a new Query 2 grouper with the specified year
-func NewQuery2Grouper(year string) *Query2Grouper {
-	return &Query2Grouper{year: year}
+// NewQuery2Grouper creates a new Query 2 grouper
+func NewQuery2Grouper() *Query2Grouper {
+	return &Query2Grouper{}
 }
 
 func (g *Query2Grouper) GetMinFieldCount() int {
-	return 4 // month, item_id, quantity, subtotal
+	return 5 // year, month, item_id, quantity, subtotal
 }
 
 func (g *Query2Grouper) GetHeader() string {
@@ -33,12 +32,13 @@ func (g *Query2Grouper) GetHeader() string {
 }
 
 func (g *Query2Grouper) ProcessRecord(record []string) (string, bool, error) {
-	month := strings.TrimSpace(record[0])
-	itemID := strings.TrimSpace(record[1])
-	quantityStr := strings.TrimSpace(record[2])
-	subtotalStr := strings.TrimSpace(record[3])
+	year := strings.TrimSpace(record[0])
+	month := strings.TrimSpace(record[1])
+	itemID := strings.TrimSpace(record[2])
+	quantityStr := strings.TrimSpace(record[3])
+	subtotalStr := strings.TrimSpace(record[4])
 
-	if month == "" || itemID == "" || quantityStr == "" || subtotalStr == "" {
+	if year == "" || month == "" || itemID == "" || quantityStr == "" || subtotalStr == "" {
 		return "", false, nil // Skip this record
 	}
 
@@ -50,8 +50,8 @@ func (g *Query2Grouper) ProcessRecord(record []string) (string, bool, error) {
 		return "", false, fmt.Errorf("invalid subtotal: %v", err)
 	}
 
-	// Create composite key
-	key := fmt.Sprintf("%s|%s", month, itemID)
+	// Create composite key including year
+	key := fmt.Sprintf("%s|%s|%s", year, month, itemID)
 	return key, true, nil
 }
 
@@ -72,15 +72,16 @@ func (g *Query2Grouper) FormatOutput(groupedData map[string]interface{}) string 
 	// Write aggregated records
 	for _, key := range keys {
 		parts := strings.Split(key, "|")
-		if len(parts) != 2 {
+		if len(parts) != 3 {
 			continue
 		}
-		month := parts[0]
-		itemID := parts[1]
+		year := parts[0]
+		month := parts[1]
+		itemID := parts[2]
 		agg := groupedData[key].(*Query2AggregatedData)
 
 		csvBuilder.WriteString(fmt.Sprintf("%s,%s,%s,%d,%.2f,%d\n",
-			g.year, month, itemID, agg.TotalQuantity, agg.TotalSubtotal, agg.Count))
+			year, month, itemID, agg.TotalQuantity, agg.TotalSubtotal, agg.Count))
 	}
 
 	return csvBuilder.String()

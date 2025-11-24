@@ -21,25 +21,31 @@ func (e *Query2RecordExtractor) GetQueryName() string {
 
 func (e *Query2RecordExtractor) ExtractRecord(record []string, workerPartitions map[int]bool, numPartitions int) (int, interface{}, error) {
 	// Parse fields
+	transactionID := strings.TrimSpace(record[0])
 	itemID := strings.TrimSpace(record[1])
 	quantity := strings.TrimSpace(record[2])
 	subtotal := strings.TrimSpace(record[4])
 
-	// Validate quantity and subtotal are not empty
-	if quantity == "" || subtotal == "" {
-		return 0, nil, fmt.Errorf("empty quantity or subtotal")
+	// Validate fields are not empty
+	if transactionID == "" || quantity == "" || subtotal == "" {
+		return 0, nil, fmt.Errorf("empty transaction_id, quantity, or subtotal")
 	}
 
-	// Parse created_at to extract month and calculate partition
+	// Parse created_at to extract year and month
 	createdAt, err := common.ParseDate(strings.TrimSpace(record[5]))
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid date: %v", err)
 	}
 
-	month := fmt.Sprintf("%d", createdAt.Month())
+	year := fmt.Sprintf("%d", createdAt.Year())
+	month := fmt.Sprintf("%02d", createdAt.Month()) // Zero-padded to match partitioner
 
-	// Calculate partition using common utility
-	partition := common.CalculateTimeBasedPartition(createdAt)
+	// Calculate partition using composite key (year, month, itemID)
+	// MUST match the partitioner's logic for consistent routing
+	partition, err := common.CalculateCompositeHashPartition([]string{year, month, itemID}, numPartitions)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to calculate partition: %v", err)
+	}
 
 	// Only process records belonging to partitions this worker owns
 	if !workerPartitions[partition] {
@@ -48,6 +54,7 @@ func (e *Query2RecordExtractor) ExtractRecord(record []string, workerPartitions 
 
 	// Create record
 	rec := shared.Query2Record{
+		Year:     year,
 		Month:    month,
 		ItemID:   itemID,
 		Quantity: quantity,
@@ -70,22 +77,36 @@ func (e *Query3RecordExtractor) GetQueryName() string {
 
 func (e *Query3RecordExtractor) ExtractRecord(record []string, workerPartitions map[int]bool, numPartitions int) (int, interface{}, error) {
 	// Parse fields
+	transactionID := strings.TrimSpace(record[0])
 	storeID := strings.TrimSpace(record[1])
 	finalAmount := strings.TrimSpace(record[7])
 
 	// Validate fields are not empty
-	if storeID == "" || finalAmount == "" {
-		return 0, nil, fmt.Errorf("empty store_id or final_amount")
+	if transactionID == "" || storeID == "" || finalAmount == "" {
+		return 0, nil, fmt.Errorf("empty transaction_id, store_id, or final_amount")
 	}
 
-	// Parse created_at and calculate partition using common utility
+	// Parse created_at to extract year and semester
 	createdAt, err := common.ParseDate(strings.TrimSpace(record[8]))
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid date: %v", err)
 	}
 
-	// Calculate partition using common utility
-	partition := common.CalculateTimeBasedPartition(createdAt)
+	year := fmt.Sprintf("%d", createdAt.Year())
+
+	// Calculate semester using the EXACT same logic as the partitioner
+	monthInt := int(createdAt.Month())
+	semester := "1"
+	if monthInt >= 7 && monthInt <= 12 {
+		semester = "2"
+	}
+
+	// Calculate partition using composite key (year, semester, storeID)
+	// MUST match the partitioner's logic for consistent routing
+	partition, err := common.CalculateCompositeHashPartition([]string{year, semester, storeID}, numPartitions)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to calculate partition: %v", err)
+	}
 
 	// Only process records belonging to partitions this worker owns
 	if !workerPartitions[partition] {
@@ -94,6 +115,8 @@ func (e *Query3RecordExtractor) ExtractRecord(record []string, workerPartitions 
 
 	// Create record
 	rec := shared.Query3Record{
+		Year:        year,
+		Semester:    semester,
 		StoreID:     storeID,
 		FinalAmount: finalAmount,
 	}
@@ -122,10 +145,12 @@ func (e *Query4RecordExtractor) ExtractRecord(record []string, workerPartitions 
 		return 0, nil, fmt.Errorf("empty user_id")
 	}
 
-	// Calculate partition for this record using common utility
-	recordPartition, err := common.CalculateUserBasedPartition(userID, numPartitions)
+	// Calculate partition using composite key (user_id)
+	// MUST match the partitioner's logic for consistent routing
+	// Using same approach as Query 2/3 for consistency
+	recordPartition, err := common.CalculateCompositeHashPartition([]string{userID}, numPartitions)
 	if err != nil {
-		return 0, nil, fmt.Errorf("invalid user_id %s: %v", userID, err)
+		return 0, nil, fmt.Errorf("failed to calculate partition: %v", err)
 	}
 
 	// Only process records belonging to partitions this worker owns
@@ -142,4 +167,3 @@ func (e *Query4RecordExtractor) ExtractRecord(record []string, workerPartitions 
 
 	return recordPartition, rec, nil
 }
-

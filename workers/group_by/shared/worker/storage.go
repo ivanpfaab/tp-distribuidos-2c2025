@@ -37,7 +37,7 @@ func (fm *FileManager) AppendToPartitionCSV(clientID string, partition int, user
 	}
 
 	filePath := fm.GetFilePath(clientID, partition)
-	
+
 	// Ensure base directory exists
 	if err := fm.storageManager.EnsureBaseDir(); err != nil {
 		return err
@@ -110,7 +110,7 @@ func (fm *FileManager) AppendQuery2RecordsToPartitionCSV(clientID string, partit
 		csvRecords[i] = records[i]
 	}
 
-	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"month", "item_id", "quantity", "subtotal"}, csvRecords)
+	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"year", "month", "item_id", "quantity", "subtotal"}, csvRecords)
 }
 
 // AppendQuery3RecordsToPartitionCSV appends multiple store_id,final_amount records to a Query 3 partition CSV file
@@ -127,5 +127,7 @@ func (fm *FileManager) AppendQuery3RecordsToPartitionCSV(clientID string, partit
 		csvRecords[i] = records[i]
 	}
 
-	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"store_id", "final_amount"}, csvRecords)
+	// Header must match Query3Grouper.GetHeader(): year,semester,store_id,total_final_amount,count
+	// Note: The grouper aggregates these records, so we use the raw fields here
+	return fm.appendRecordsToPartitionCSV(clientID, partition, []string{"year", "semester", "store_id", "final_amount"}, csvRecords)
 }

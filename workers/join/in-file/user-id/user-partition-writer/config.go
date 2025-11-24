@@ -12,8 +12,8 @@ const (
 	// Partition configuration
 	NumPartitions = 100 // Total number of partition files
 
-	// Writer data directory (volume-specific)
-	SharedDataDir = "/app/writer-data"
+	// Writer data directory (volume-specific, shared with readers)
+	SharedDataDir = "/shared-data"
 
 	// Default configuration
 	DefaultRabbitMQHost = "localhost"

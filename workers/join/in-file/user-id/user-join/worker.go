@@ -207,6 +207,7 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 		return err
 	}
 
+	// Perform cleanup for partition files (reader shares volume with paired writer)
 	jw.performCleanup(chunkMsg.ClientID)
 
 	// Remove completion signal tracking for this client
@@ -297,8 +298,7 @@ func (jw *JoinByUserIdWorker) lookupUserFromFile(userID string, clientID string)
 }
 
 // performCleanup performs cleanup operations for partition files
-// Since each reader only has access to its own volume, it will automatically only delete
-// the partition files that belong to it (volume isolation ensures this)
+// Reader shares a volume with its paired writer (same compute node simulation)
 func (jw *JoinByUserIdWorker) performCleanup(clientID string) {
 	fmt.Printf("Join by User ID Worker: Performing cleanup for client: %s (reader %d)\n",
 		clientID, jw.readerConfig.ReaderID)

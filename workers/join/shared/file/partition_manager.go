@@ -95,8 +95,7 @@ func (pm *PartitionManager) LookupEntity(clientID string, entityID string, parse
 }
 
 // CleanupClientFiles deletes all partition files for a client
-// Since each reader only has access to its own volume (which contains only its partitions),
-// this will automatically only delete the partitions owned by this reader
+// Called by readers after processing completes (readers share volume with their paired writer)
 func (pm *PartitionManager) CleanupClientFiles(clientID string) error {
 	pattern := filepath.Join(pm.sharedDataDir, fmt.Sprintf("%s-users-partition-*.csv", clientID))
 
@@ -106,10 +105,21 @@ func (pm *PartitionManager) CleanupClientFiles(clientID string) error {
 	}
 
 	var deleteErrors []error
+	deletedCount := 0
+
 	for _, file := range files {
 		if err := os.Remove(file); err != nil {
-			deleteErrors = append(deleteErrors, fmt.Errorf("error deleting file %s: %w", file, err))
+			// Ignore "file not found" (already deleted)
+			if !os.IsNotExist(err) {
+				deleteErrors = append(deleteErrors, fmt.Errorf("error deleting file %s: %w", file, err))
+			}
+		} else {
+			deletedCount++
 		}
+	}
+
+	if deletedCount > 0 {
+		fmt.Printf("Cleanup: Successfully deleted %d partition files for client %s\n", deletedCount, clientID)
 	}
 
 	if len(deleteErrors) > 0 {

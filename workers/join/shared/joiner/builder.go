@@ -40,7 +40,7 @@ func BuildTransactionItemMenuJoin(
 	transactionItems []map[string]string,
 	menuItems map[string]*MenuItem,
 ) string {
-	builder := NewCSVBuilder("transaction_id,item_id,quantity,unit_price,subtotal,created_at,item_name,category,price,is_seasonal")
+	builder := NewCSVBuilder("transaction_id,item_id,quantity,unit_price,subtotal,created_at,item_name,coffee_category,price,is_seasonal")
 
 	for _, item := range transactionItems {
 		itemID := item["item_id"]
@@ -54,7 +54,7 @@ func BuildTransactionItemMenuJoin(
 				item["subtotal"],
 				item["created_at"],
 				menuItem.ItemName,
-				menuItem.Category,
+				menuItem.CoffeeCategory,
 				menuItem.Price,
 				menuItem.IsSeasonal,
 			)
@@ -80,7 +80,7 @@ func BuildGroupedTransactionItemMenuJoin(
 	groupedItems []map[string]string,
 	menuItems map[string]*MenuItem,
 ) string {
-	builder := NewCSVBuilder("year,month,item_id,quantity,subtotal,count,item_name,category,price,is_seasonal")
+	builder := NewCSVBuilder("year,month,item_id,quantity,subtotal,category,item_name,coffee_category,price,is_seasonal")
 
 	for _, item := range groupedItems {
 		itemID := item["item_id"]
@@ -92,9 +92,9 @@ func BuildGroupedTransactionItemMenuJoin(
 				item["item_id"],
 				item["quantity"],
 				item["subtotal"],
-				item["count"],
+				item["category"],
 				menuItem.ItemName,
-				menuItem.Category,
+				menuItem.CoffeeCategory,
 				menuItem.Price,
 				menuItem.IsSeasonal,
 			)
@@ -106,7 +106,7 @@ func BuildGroupedTransactionItemMenuJoin(
 				item["item_id"],
 				item["quantity"],
 				item["subtotal"],
-				item["count"],
+				item["category"],
 				"", "", "", "",
 			)
 		}

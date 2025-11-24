@@ -90,15 +90,26 @@ func (ct *CompletionTracker) ProcessChunkNotification(notification *signals.Chun
 	// Increment chunks received
 	fileStatus.ChunksReceived++
 
-	log.Printf("[%s] Client %s - File %s (Table %d): Received chunk %d/%d (Total chunks: %d)",
-		ct.trackerName, notification.ClientID, notification.FileID, notification.TableID,
-		notification.ChunkNumber, fileStatus.LastChunkNumber,
-		fileStatus.ChunksReceived)
-
 	// If this is the last chunk, update last chunk info
 	if notification.IsLastChunk {
 		fileStatus.LastChunkNumber = notification.ChunkNumber
 		fileStatus.LastChunkReceived = true
+	}
+
+	// Log chunk receipt (after updating LastChunkNumber if this is the last chunk)
+	if fileStatus.LastChunkNumber > 0 {
+		log.Printf("[%s] Client %s - File %s (Table %d): Received chunk %d/%d (Total: %d chunks)",
+			ct.trackerName, notification.ClientID, notification.FileID, notification.TableID,
+			notification.ChunkNumber, fileStatus.LastChunkNumber,
+			fileStatus.ChunksReceived)
+	} else {
+		log.Printf("[%s] Client %s - File %s (Table %d): Received chunk %d (Total: %d chunks, last chunk not yet known)",
+			ct.trackerName, notification.ClientID, notification.FileID, notification.TableID,
+			notification.ChunkNumber, fileStatus.ChunksReceived)
+	}
+
+	// If this was the last chunk, log it explicitly
+	if notification.IsLastChunk {
 
 		log.Printf("[%s] Client %s - File %s (Table %d): Received LAST chunk %d",
 			ct.trackerName, notification.ClientID, notification.FileID, notification.TableID, notification.ChunkNumber)

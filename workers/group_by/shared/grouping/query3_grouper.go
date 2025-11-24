@@ -13,19 +13,17 @@ type Query3AggregatedData struct {
 	Count            int
 }
 
-// Query3Grouper groups Query 3 records by store_id
+// Query3Grouper groups Query 3 records by year|semester|store_id
 type Query3Grouper struct {
-	year     string
-	semester string
 }
 
-// NewQuery3Grouper creates a new Query 3 grouper with the specified year and semester
-func NewQuery3Grouper(year, semester string) *Query3Grouper {
-	return &Query3Grouper{year: year, semester: semester}
+// NewQuery3Grouper creates a new Query 3 grouper
+func NewQuery3Grouper() *Query3Grouper {
+	return &Query3Grouper{}
 }
 
 func (g *Query3Grouper) GetMinFieldCount() int {
-	return 2 // store_id, final_amount
+	return 4 // year, semester, store_id, final_amount
 }
 
 func (g *Query3Grouper) GetHeader() string {
@@ -33,10 +31,12 @@ func (g *Query3Grouper) GetHeader() string {
 }
 
 func (g *Query3Grouper) ProcessRecord(record []string) (string, bool, error) {
-	storeID := strings.TrimSpace(record[0])
-	finalAmountStr := strings.TrimSpace(record[1])
+	year := strings.TrimSpace(record[0])
+	semester := strings.TrimSpace(record[1])
+	storeID := strings.TrimSpace(record[2])
+	finalAmountStr := strings.TrimSpace(record[3])
 
-	if storeID == "" || finalAmountStr == "" {
+	if year == "" || semester == "" || storeID == "" || finalAmountStr == "" {
 		return "", false, nil // Skip this record
 	}
 
@@ -45,8 +45,9 @@ func (g *Query3Grouper) ProcessRecord(record []string) (string, bool, error) {
 		return "", false, fmt.Errorf("invalid final_amount: %v", err)
 	}
 
-	// Key is just store_id
-	return storeID, true, nil
+	// Create composite key including year and semester
+	key := fmt.Sprintf("%s|%s|%s", year, semester, storeID)
+	return key, true, nil
 }
 
 func (g *Query3Grouper) FormatOutput(groupedData map[string]interface{}) string {
@@ -56,18 +57,25 @@ func (g *Query3Grouper) FormatOutput(groupedData map[string]interface{}) string 
 	csvBuilder.Grow(estimatedSize)
 	csvBuilder.WriteString(g.GetHeader())
 
-	// Sort store IDs for consistent ordering
-	storeIDs := make([]string, 0, len(groupedData))
-	for storeID := range groupedData {
-		storeIDs = append(storeIDs, storeID)
+	// Sort keys for consistent ordering
+	keys := make([]string, 0, len(groupedData))
+	for key := range groupedData {
+		keys = append(keys, key)
 	}
-	sort.Strings(storeIDs)
+	sort.Strings(keys)
 
 	// Write aggregated records
-	for _, storeID := range storeIDs {
-		agg := groupedData[storeID].(*Query3AggregatedData)
+	for _, key := range keys {
+		parts := strings.Split(key, "|")
+		if len(parts) != 3 {
+			continue
+		}
+		year := parts[0]
+		semester := parts[1]
+		storeID := parts[2]
+		agg := groupedData[key].(*Query3AggregatedData)
 		csvBuilder.WriteString(fmt.Sprintf("%s,%s,%s,%.2f,%d\n",
-			g.year, g.semester, storeID, agg.TotalFinalAmount, agg.Count))
+			year, semester, storeID, agg.TotalFinalAmount, agg.Count))
 	}
 
 	return csvBuilder.String()

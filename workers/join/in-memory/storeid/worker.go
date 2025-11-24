@@ -279,28 +279,28 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 
 	// Add chunk to batch
 	w.batchManager.AddChunk(clientID, chunkMsg)
-	fmt.Printf("StoreID Join Worker: Added chunk %d for client %s to batch\n", chunkNumber, clientID)
+	fmt.Printf("StoreID Join Worker: Added chunk %d (partition %d) for client %s to batch\n", chunkNumber, chunkNumber, clientID)
 
-	// Get expected number of workers from environment (set in docker-compose)
-	numWorkersStr := os.Getenv("NUM_WORKERS")
-	numWorkers := 3 // Default to 3 if not set
-	if numWorkersStr != "" {
-		if n, err := strconv.Atoi(numWorkersStr); err == nil && n > 0 {
-			numWorkers = n
+	// Get expected number of partitions from environment (set in docker-compose)
+	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
+	numPartitions := 100 // Default to 100 if not set
+	if numPartitionsStr != "" {
+		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
+			numPartitions = n
 		}
 	}
 
 	// Get all chunks for this client
 	chunks := w.batchManager.GetChunks(clientID)
-	
-	// Check if we've received all expected chunks (chunk numbers 1 through numWorkers)
+
+	// Check if we've received all expected chunks (chunk numbers 0 through numPartitions-1)
 	receivedChunkNumbers := make(map[int]bool)
 	for _, ch := range chunks {
 		receivedChunkNumbers[int(ch.ChunkNumber)] = true
 	}
 
 	allChunksReceived := true
-	for i := 1; i <= numWorkers; i++ {
+	for i := 0; i < numPartitions; i++ {
 		if !receivedChunkNumbers[i] {
 			allChunksReceived = false
 			break
@@ -308,7 +308,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 	}
 
 	if allChunksReceived {
-		fmt.Printf("StoreID Join Worker: Received all %d chunks for client %s, processing batch...\n", numWorkers, clientID)
+		fmt.Printf("StoreID Join Worker: Received all %d chunks (partitions 0-%d) for client %s, processing batch...\n", numPartitions, numPartitions-1, clientID)
 
 		// Combine and process batch
 		combinedChunk, err := w.batchManager.CombineChunks(clientID)
@@ -330,7 +330,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 		fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
 	} else {
 		receivedCount := len(receivedChunkNumbers)
-		fmt.Printf("StoreID Join Worker: Client %s has %d/%d chunks, waiting for more...\n", clientID, receivedCount, numWorkers)
+		fmt.Printf("StoreID Join Worker: Client %s has %d/%d chunks (partitions), waiting for more...\n", clientID, receivedCount, numPartitions)
 	}
 
 	delivery.Ack(false)

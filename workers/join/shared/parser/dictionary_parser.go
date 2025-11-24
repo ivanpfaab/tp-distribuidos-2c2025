@@ -7,13 +7,13 @@ import (
 
 // MenuItem represents a menu item record
 type MenuItem struct {
-	ItemID        string
-	ItemName      string
-	Category      string
-	Price         string
-	IsSeasonal    string
-	AvailableFrom string
-	AvailableTo   string
+	ItemID         string
+	ItemName       string
+	CoffeeCategory string
+	Price          string
+	IsSeasonal     string
+	AvailableFrom  string
+	AvailableTo    string
 }
 
 // Store represents a store record
@@ -49,13 +49,13 @@ func ParseMenuItems(csvData string, clientID string) (map[string]*MenuItem, erro
 		}
 
 		menuItem := &MenuItem{
-			ItemID:        record[0],
-			ItemName:      record[1],
-			Category:      record[2],
-			Price:         record[3],
-			IsSeasonal:    record[4],
-			AvailableFrom: record[5],
-			AvailableTo:   record[6],
+			ItemID:         record[0],
+			ItemName:       record[1],
+			CoffeeCategory: record[2],
+			Price:          record[3],
+			IsSeasonal:     record[4],
+			AvailableFrom:  record[5],
+			AvailableTo:    record[6],
 		}
 		menuItems[menuItem.ItemID] = menuItem
 	}
@@ -206,7 +206,7 @@ func ParseGroupedTransactionItems(csvData string) ([]map[string]string, error) {
 			"item_id":  record[2],
 			"quantity": record[3],
 			"subtotal": record[4],
-			"count":    record[5],
+			"category": record[5],
 		}
 		groupedItems = append(groupedItems, item)
 	}
@@ -244,4 +244,3 @@ func ParseGroupedTransactions(csvData string) ([]map[string]string, error) {
 
 	return groupedTransactions, nil
 }
-

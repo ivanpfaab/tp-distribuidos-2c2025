@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/grouping"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
@@ -21,10 +20,8 @@ type Query3Aggregator struct {
 }
 
 // NewQuery3Aggregator creates a new Query 3 aggregator
-func NewQuery3Aggregator(partition int) (*Query3Aggregator, error) {
-	// Get year and semester from partition
-	year, semester := common.GetYearSemesterFromPartition(partition)
-	grouper := grouping.NewQuery3Grouper(year, semester)
+func NewQuery3Aggregator() (*Query3Aggregator, error) {
+	grouper := grouping.NewQuery3Grouper()
 
 	return &Query3Aggregator{
 		grouper: grouper,
@@ -61,8 +58,8 @@ func (a *Query3Aggregator) AggregatePartitionFile(filePath string, aggregatedDat
 		}
 
 		// Parse final_amount from the already-aggregated partition file
-		// Record format: store_id,final_amount (from worker)
-		finalAmount, _ := strconv.ParseFloat(strings.TrimSpace(record[1]), 64)
+		// Record format: year,semester,store_id,final_amount (from worker)
+		finalAmount, _ := strconv.ParseFloat(strings.TrimSpace(record[3]), 64)
 
 		// Aggregate across partition files
 		if aggregatedData[key] == nil {
