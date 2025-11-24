@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/csv"
 	"fmt"
 	"log"
@@ -23,9 +22,8 @@ type Worker struct {
 	consumer            *workerqueue.QueueConsumer
 	producer            *workerqueue.QueueMiddleware
 	processedChunks     *messagemanager.MessageManager
-	partitionChunkState *messagemanager.MessageManager
 	partitionManager    *partitionmanager.PartitionManager
-	recoveryState       map[string]bool // "chunkID" -> needs duplicate check for all partitions
+	firstChunkProcessed bool // Tracks if we've processed the first chunk after startup
 }
 
 func NewWorker(config *Config) (*Worker, error) {
@@ -87,15 +85,6 @@ func NewWorker(config *Config) (*Worker, error) {
 		log.Printf("Worker 2: Loaded %d processed chunks", count)
 	}
 
-	// Initialize MessageManager for partition-chunk pairs
-	partitionChunkState := messagemanager.NewMessageManager("/app/worker-data/state/written-partition-chunks.txt")
-	if err := partitionChunkState.LoadProcessedIDs(); err != nil {
-		log.Printf("Worker 2: Warning - failed to load partition-chunk state: %v (starting with empty state)", err)
-	} else {
-		count := partitionChunkState.GetProcessedCount()
-		log.Printf("Worker 2: Loaded %d partition-chunk pairs", count)
-	}
-
 	// Initialize PartitionManager
 	partitionManager, err := partitionmanager.NewPartitionManager(
 		"/app/worker-data/partitions",
@@ -113,13 +102,12 @@ func NewWorker(config *Config) (*Worker, error) {
 		consumer:            consumer,
 		producer:            producer,
 		processedChunks:     processedChunks,
-		partitionChunkState: partitionChunkState,
 		partitionManager:    partitionManager,
-		recoveryState:       make(map[string]bool),
+		firstChunkProcessed: false,
 	}
 
 	// On startup, check and fix any incomplete partition writes
-	if err := worker.recoverIncompleteWrites(); err != nil {
+	if err := worker.deleteIncompleteLines(); err != nil {
 		consumer.Close()
 		producer.Close()
 		return nil, fmt.Errorf("failed to recover incomplete writes: %w", err)
@@ -162,7 +150,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	log.Printf("Worker 2: Processing chunk %s", chunkMsg.ID)
 
 	// Parse CSV data
-	records, err := parseCSV(chunkMsg.ChunkData)
+	records, err := parseCSV(chunkMsg.ID, chunkMsg.ChunkData)
 	if err != nil {
 		log.Printf("Worker 2: Failed to parse CSV: %v", err)
 		return middleware.MessageMiddlewareMessageError
@@ -173,22 +161,19 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 
 	// Write each partition
 	for _, partition := range partitions {
-		partitionChunkKey := fmt.Sprintf("%d:%s", partition.Number, chunkMsg.ID)
-
 		opts := partitionmanager.WriteOptions{
 			FilePrefix: "users-partition",
-			Header:     []string{"user_id", "name"},
+			Header:     []string{"chunk_id", "user_id", "name"},
 			ClientID:   chunkMsg.ClientID,
 			DebugMode:  w.config.DebugMode,
 		}
 
-		// Check if this chunk needs duplicate checking (was partially written)
-		// This check must come BEFORE the state file check, because recoveryState indicates
-		// a potentially partial write that needs verification even if marked in state file
-		if w.recoveryState[chunkMsg.ID] {
-			// This chunk was partially written - need to check for duplicates in ALL partitions
+		// Check if this is the first chunk after startup - need to check for duplicates
+		if !w.firstChunkProcessed {
+			// First chunk after restart - check for duplicates/incomplete writes
 			filePath := w.partitionManager.GetPartitionFilePath(opts, partition.Number)
-			lastLines, err := w.partitionManager.GetLastLines(filePath, 2)
+			linesCount := len(partition.Lines)
+			lastLines, err := w.partitionManager.GetLastLines(filePath, linesCount)
 			if err != nil {
 				log.Printf("Worker 2: Failed to get last lines for partition %d: %v", partition.Number, err)
 				return middleware.MessageMiddlewareMessageError
@@ -199,14 +184,8 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 				return middleware.MessageMiddlewareMessageError
 			}
 
-			log.Printf("Worker 2: Wrote missing lines to partition %d from chunk %s (recovery)", partition.Number, chunkMsg.ID)
+			log.Printf("Worker 2: Wrote missing lines to partition %d from chunk %s (first chunk after restart)", partition.Number, chunkMsg.ID)
 		} else {
-			// Check if this partition-chunk pair was already written (normal duplicate check)
-			if w.partitionChunkState.IsProcessed(partitionChunkKey) {
-				log.Printf("Worker 2: Partition %d from chunk %s already written, skipping", partition.Number, chunkMsg.ID)
-				continue
-			}
-
 			// Normal write (WritePartition handles incomplete writes automatically)
 			if err := w.partitionManager.WritePartition(partition, opts); err != nil {
 				log.Printf("Worker 2: Failed to write partition %d: %v", partition.Number, err)
@@ -215,18 +194,12 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 
 			log.Printf("Worker 2: Wrote partition %d from chunk %s", partition.Number, chunkMsg.ID)
 		}
-
-		// Mark partition-chunk pair as written
-		if err := w.partitionChunkState.MarkProcessed(partitionChunkKey); err != nil {
-			log.Printf("Worker 2: Failed to mark partition-chunk pair: %v", err)
-			return middleware.MessageMiddlewareMessageError
-		}
 	}
 
-	// If this chunk was in recovery state, remove it now (all partitions processed)
-	if w.recoveryState[chunkMsg.ID] {
-		delete(w.recoveryState, chunkMsg.ID)
-		log.Printf("Worker 2: Completed recovery for chunk %s", chunkMsg.ID)
+	// After processing the first chunk, mark it as processed
+	if !w.firstChunkProcessed {
+		w.firstChunkProcessed = true
+		log.Printf("Worker 2: First chunk processed, switching to normal write mode")
 	}
 
 	// Forward chunk to Worker 3
@@ -253,7 +226,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 }
 
 // parseCSV parses CSV text into records
-func parseCSV(csvData string) ([][]string, error) {
+func parseCSV(chunkID string, csvData string) ([][]string, error) {
 	reader := csv.NewReader(strings.NewReader(csvData))
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -266,13 +239,11 @@ func parseCSV(csvData string) ([][]string, error) {
 		if len(record) == 0 {
 			continue
 		}
-		// Skip header
-		if strings.ToLower(record[0]) == "user_id" {
-			continue
-		}
-		if len(record) >= 2 {
-			result = append(result, record)
-		}
+		
+		formattedRecord := []string{chunkID}
+		formattedRecord = append(formattedRecord, record...)
+
+		result = append(result, formattedRecord)
 	}
 
 	return result, nil
@@ -287,7 +258,7 @@ func partitionData(records [][]string, numPartitions int) []partitionmanager.Par
 			continue
 		}
 
-		userIDStr := record[0]
+		userIDStr := record[1]
 		userID, err := strconv.Atoi(userIDStr)
 		if err != nil {
 			log.Printf("Worker 2: Invalid user_id: %s, skipping", userIDStr)
@@ -313,130 +284,19 @@ func partitionData(records [][]string, numPartitions int) []partitionmanager.Par
 	return result
 }
 
-// recoverIncompleteWrites checks all partition files for incomplete writes and fixes them on startup
-// It also populates recoveryState with partition-chunk pairs that were partially written
-func (w *Worker) recoverIncompleteWrites() error {
+// Cleans up incomplete lines from all partition files
+func (w *Worker) deleteIncompleteLines() error {
 	log.Println("Worker 2: Checking for incomplete partition writes...")
 
-	// First, fix incomplete last lines in all partition files
-	fixedCount, err := w.partitionManager.RecoverIncompleteWrites()
+	fixedCount, err := w.partitionManager.DeleteIncompleteLines()
 	if err != nil {
 		return fmt.Errorf("failed to recover incomplete writes: %w", err)
 	}
 
 	if fixedCount > 0 {
 		log.Printf("Worker 2: Fixed %d incomplete last lines", fixedCount)
-	}
-
-	// Now, identify partition-chunk pairs that were partially written
-	// We need to find the LAST chunk that wrote to each partition (only that one might be partial)
-	// Read written-partition-chunks.txt to find which partitions exist
-	file, err := os.Open("/app/worker-data/state/written-partition-chunks.txt")
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Println("Worker 2: No partition state file found, no recovery needed")
-			return nil
-		}
-		return fmt.Errorf("failed to open state file: %w", err)
-	}
-	defer file.Close()
-
-	// First pass: collect all partition-chunk pairs and find the last chunk per (clientID, partition)
-	// Map: "clientID:partitionNum" -> (chunkID, chunkNumber)
-	lastChunkPerPartition := make(map[string]struct {
-		chunkID     string
-		chunkNumber int
-	})
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		// Format: "partitionNum:chunkID" where chunkID is "CLIENTID%08d"
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		partitionNum := parts[0]
-		chunkID := parts[1]
-
-		// Extract client ID and chunk number from chunkID
-		if len(chunkID) < 8 {
-			continue
-		}
-		clientID := chunkID[:4]
-		chunkNumberStr := chunkID[len(chunkID)-8:]
-		chunkNumber, err := strconv.Atoi(chunkNumberStr)
-		if err != nil {
-			continue
-		}
-
-		// Track the last (highest) chunk number for each (clientID, partition) pair
-		key := fmt.Sprintf("%s:%s", clientID, partitionNum)
-		if last, exists := lastChunkPerPartition[key]; !exists || chunkNumber > last.chunkNumber {
-			lastChunkPerPartition[key] = struct {
-				chunkID     string
-				chunkNumber int
-			}{chunkID: chunkID, chunkNumber: chunkNumber}
-		}
-	}
-
-	// Second pass: collect all unique chunks that are "last chunk" for any partition
-	// and check if any of their partitions have data (indicating potential partial write)
-	chunksToCheck := make(map[string]bool) // chunkID -> needs checking
-
-	for key, lastChunk := range lastChunkPerPartition {
-		// Key format: "clientID:partitionNum"
-		keyParts := strings.SplitN(key, ":", 2)
-		if len(keyParts) != 2 {
-			continue
-		}
-		clientID := keyParts[0]
-		partitionNum := keyParts[1]
-
-		// Build partition file path
-		opts := partitionmanager.WriteOptions{
-			FilePrefix: "users-partition",
-			Header:     []string{"user_id", "name"},
-			ClientID:   clientID,
-			DebugMode:  false,
-		}
-
-		// Parse partition number
-		partitionNumInt, err := strconv.Atoi(partitionNum)
-		if err != nil {
-			continue
-		}
-
-		filePath := w.partitionManager.GetPartitionFilePath(opts, partitionNumInt)
-
-		// Check if partition file exists and has data
-		stat, err := os.Stat(filePath)
-		if err != nil {
-			continue // File doesn't exist, not a partial write
-		}
-
-		if stat.Size() > 0 {
-			// File exists and has data - the last chunk that wrote to this partition might be partial
-			// Mark the entire chunk for duplicate checking (all its partitions)
-			chunksToCheck[lastChunk.chunkID] = true
-		}
-	}
-
-	// Mark all chunks that need duplicate checking
-	for chunkID := range chunksToCheck {
-		w.recoveryState[chunkID] = true
-		log.Printf("Worker 2: Found potentially partial write - chunk %s (will check all partitions)", chunkID)
-	}
-
-	if len(chunksToCheck) > 0 {
-		log.Printf("Worker 2: Identified %d chunks that need duplicate checking", len(chunksToCheck))
 	} else {
-		log.Println("Worker 2: No partially written chunks found")
+		log.Println("Worker 2: No incomplete last lines found")
 	}
 
 	return nil
@@ -446,9 +306,6 @@ func (w *Worker) Close() {
 	if w.processedChunks != nil {
 		w.processedChunks.Close()
 	}
-	if w.partitionChunkState != nil {
-		w.partitionChunkState.Close()
-	}
 	if w.consumer != nil {
 		w.consumer.Close()
 	}
@@ -456,4 +313,3 @@ func (w *Worker) Close() {
 		w.producer.Close()
 	}
 }
-

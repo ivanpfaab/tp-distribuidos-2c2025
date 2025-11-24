@@ -323,27 +323,23 @@ func (pm *PartitionManager) WriteOnlyMissingLines(filePath string, lastLines []s
 	if len(lastLines) == 0 {
 		return pm.appendToPartitionFile(filePath, newLines, opts)
 	}
-
-	// Compare last written line with first new line
-	lastWrittenLine := strings.TrimSuffix(lastLines[len(lastLines)-1], "\n")
+	
+	writtenLinesCounter := 0
 	if len(newLines) > 0 {
-		for i, newLine := range newLines {
-			line := strings.TrimSuffix(newLine, "\n")
-			if lastWrittenLine == line {
-				// Last written line matches first new line - skip it
-				if i+1 >= len(newLines) {
-					return nil
-				}
-				return pm.appendToPartitionFile(filePath, newLines[(i+1):], opts)
+		for _, writtenLine := range lastLines {
+			newLine := newLines[writtenLinesCounter]
+			if newLine == writtenLine {
+				writtenLinesCounter++
+			} else {
+				writtenLinesCounter = 0
 			}
 		}
 	}
 
-	return pm.appendToPartitionFile(filePath, newLines, opts)
+	return pm.appendToPartitionFile(filePath, newLines[writtenLinesCounter:], opts)
 }
-
-// RecoverIncompleteWrites checks all partition files in the directory for incomplete writes and fixes them
-func (pm *PartitionManager) RecoverIncompleteWrites() (int, error) {
+// DeleteIncompleteLines deletes incomplete lines from all partition files
+func (pm *PartitionManager) DeleteIncompleteLines() (int, error) {
 	fixedCount := 0
 
 	// Read all files in partitions directory
