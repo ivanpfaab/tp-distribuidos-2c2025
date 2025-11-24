@@ -99,13 +99,15 @@ func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition in
 	lines := make([]string, 0, len(records))
 	for _, record := range records {
 		recordRow := record.ToCSVRow()
+		// Append chunk ID as last field
+		recordRow = append(recordRow, chunkID)
 		csvLine := strings.Join(recordRow, ",") + "\n"
 		lines = append(lines, csvLine)
 	}
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"user_id", "store_id"},
+		Header:     []string{"user_id", "store_id", "chunk_id"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
@@ -159,13 +161,15 @@ func (fm *FileManager) AppendQuery2RecordsToPartitionCSV(clientID string, partit
 	lines := make([]string, 0, len(records))
 	for _, record := range records {
 		recordRow := record.ToCSVRow()
+		// Append chunk ID as last field
+		recordRow = append(recordRow, chunkID)
 		csvLine := strings.Join(recordRow, ",") + "\n"
 		lines = append(lines, csvLine)
 	}
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"year", "month", "item_id", "quantity", "subtotal"},
+		Header:     []string{"year", "month", "item_id", "quantity", "subtotal", "chunk_id"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
@@ -185,13 +189,15 @@ func (fm *FileManager) AppendQuery3RecordsToPartitionCSV(clientID string, partit
 	lines := make([]string, 0, len(records))
 	for _, record := range records {
 		recordRow := record.ToCSVRow()
+		// Append chunk ID as last field
+		recordRow = append(recordRow, chunkID)
 		csvLine := strings.Join(recordRow, ",") + "\n"
 		lines = append(lines, csvLine)
 	}
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"year", "semester", "store_id", "final_amount"},
+		Header:     []string{"year", "semester", "store_id", "final_amount", "chunk_id"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
