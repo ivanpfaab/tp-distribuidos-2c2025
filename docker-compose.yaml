@@ -141,6 +141,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "1"
+    volumes:
+      - itemid-join-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # StoreID Join Worker 1 (scalable with dictionary broadcasting)
@@ -1801,6 +1803,9 @@ volumes:
     driver: local
   # Join data handler volume
   join-data-handler-1-data:
+    driver: local
+  # ItemID join worker volume
+  itemid-join-worker-1-data:
     driver: local
   # Query 2 worker volumes
   query2-groupby-worker-1-data:
