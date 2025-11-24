@@ -254,6 +254,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_WRITERS: 5
+    volumes:
+      - user-partition-splitter-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Partition Writer 1
@@ -1791,6 +1793,9 @@ volumes:
   user-writer-4-data:
     driver: local
   user-writer-5-data:
+    driver: local
+  # User partition splitter volume
+  user-partition-splitter-data:
     driver: local
   # Query 2 worker volumes
   query2-groupby-worker-1-data:

@@ -3,11 +3,14 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 )
@@ -27,6 +30,7 @@ type UserPartitionSplitter struct {
 	config         *middleware.ConnectionConfig
 	splitterConfig *Config
 	buffers        [][]UserRecord // One buffer per writer
+	messageManager *messagemanager.MessageManager
 }
 
 // NewUserPartitionSplitter creates a new splitter instance
@@ -90,12 +94,35 @@ func NewUserPartitionSplitter(connConfig *middleware.ConnectionConfig, splitterC
 		buffers[i] = make([]UserRecord, 0, MaxBufferSize)
 	}
 
+	// Initialize MessageManager for fault tolerance
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		// Clean up
+		for _, producer := range writerQueues {
+			if producer != nil {
+				producer.Close()
+			}
+		}
+		consumer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("User Partition Splitter: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("User Partition Splitter: Loaded %d processed chunks\n", count)
+	}
+
 	return &UserPartitionSplitter{
 		consumer:       consumer,
 		writerQueues:   writerQueues,
 		config:         connConfig,
 		splitterConfig: splitterConfig,
 		buffers:        buffers,
+		messageManager: messageManager,
 	}, nil
 }
 
@@ -107,6 +134,9 @@ func (ups *UserPartitionSplitter) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (ups *UserPartitionSplitter) Close() {
+	if ups.messageManager != nil {
+		ups.messageManager.Close()
+	}
 	if ups.consumer != nil {
 		ups.consumer.Close()
 	}
@@ -141,6 +171,12 @@ func (ups *UserPartitionSplitter) processMessage(delivery amqp.Delivery) middlew
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	// Check if chunk was already processed
+	if ups.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("User Partition Splitter: Chunk %s already processed, skipping\n", chunkMsg.ID)
+		return 0
+	}
+
 	// Only process user files (US prefix)
 	if !strings.HasPrefix(chunkMsg.FileID, "US") {
 		fmt.Printf("User Partition Splitter: Ignoring non-user file: %s\n", chunkMsg.FileID)
@@ -153,6 +189,12 @@ func (ups *UserPartitionSplitter) processMessage(delivery amqp.Delivery) middlew
 	// Parse users and distribute to buffers
 	if err := ups.distributeUsers(chunkMsg); err != nil {
 		fmt.Printf("User Partition Splitter: Failed to distribute users: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Mark chunk as processed after successful distribution
+	if err := ups.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		fmt.Printf("User Partition Splitter: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
