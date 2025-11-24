@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -28,6 +30,7 @@ type StoreIdJoinWorker struct {
 	orchestratorProducer *workerqueue.QueueMiddleware
 	config               *StoreIdConfig
 	workerID             string
+	messageManager       *messagemanager.MessageManager
 
 	// Shared components
 	dictManager          *dictionary.Manager[*Store]
@@ -155,6 +158,27 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 
 	workerID := fmt.Sprintf("storeid-worker-%s", instanceID)
 
+	// Initialize MessageManager for fault tolerance
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		completionProducer.Close()
+		orchestratorProducer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("StoreID Join Worker: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("StoreID Join Worker: Loaded %d processed chunks\n", count)
+	}
+
 	// Initialize shared components
 	dictManager := dictionary.NewManager[*Store]()
 	parseFunc := func(csvData string, clientID string) (map[string]*Store, error) {
@@ -175,6 +199,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		orchestratorProducer: orchestratorProducer,
 		config:               config,
 		workerID:             workerID,
+		messageManager:       messageManager,
 		dictManager:          dictManager,
 		dictHandler:          dictHandler,
 		completionHandler:    completionHandler,
@@ -211,6 +236,9 @@ func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (w *StoreIdJoinWorker) Close() {
+	if w.messageManager != nil {
+		w.messageManager.Close()
+	}
 	if w.dictionaryConsumer != nil {
 		w.dictionaryConsumer.Close()
 	}
@@ -235,10 +263,28 @@ func (w *StoreIdJoinWorker) Close() {
 func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.dictHandler.ProcessMessage(delivery)
-			if err != 0 {
+			// Check if chunk was already processed
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to deserialize dictionary chunk: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+
+			if w.messageManager.IsProcessed(chunkMsg.ID) {
+				fmt.Printf("StoreID Join Worker: Dictionary chunk %s already processed, skipping\n", chunkMsg.ID)
+				delivery.Ack(false)
+				continue
+			}
+
+			if err := w.dictHandler.ProcessMessage(delivery); err != 0 {
 				done <- fmt.Errorf("failed to process dictionary message: %v", err)
 				return
+			}
+
+			// Mark chunk as processed after successful processing
+			if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to mark dictionary chunk as processed: %v\n", err)
 			}
 		}
 	}
@@ -268,6 +314,13 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 		return middleware.MessageMiddlewareMessageError
 	}
 
+	// Check if chunk was already processed
+	if w.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("StoreID Join Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
+		delivery.Ack(false)
+		return 0
+	}
+
 	// Check if dictionary is ready
 	if !w.dictManager.IsReady(chunkMsg.ClientID) {
 		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
@@ -279,6 +332,12 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 	if err := w.processChunk(chunkMsg); err != 0 {
 		fmt.Printf("StoreID Join Worker: Failed to process chunk: %v\n", err)
 		delivery.Nack(false, false)
+		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Mark chunk as processed after successful processing
+	if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		fmt.Printf("StoreID Join Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
