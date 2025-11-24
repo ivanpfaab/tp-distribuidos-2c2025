@@ -510,6 +510,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - query-gateway-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Query 2 Partitioner 1
@@ -1727,6 +1729,9 @@ volumes:
     driver: local
   # Amount filter worker volumes
   amount-filter-worker-1-data:
+    driver: local
+  # Query gateway volumes
+  query-gateway-1-data:
     driver: local
   # User partition writer volumes
   user-partition-writer-1-data:
