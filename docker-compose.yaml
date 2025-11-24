@@ -237,6 +237,8 @@ services:
       RABBITMQ_PASS: password
       ITEMID_WORKER_COUNT: "1"
       STOREID_WORKER_COUNT: "1"
+    volumes:
+      - join-data-handler-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Partition Splitter (distributes users to writers)
@@ -1796,6 +1798,9 @@ volumes:
     driver: local
   # User partition splitter volume
   user-partition-splitter-data:
+    driver: local
+  # Join data handler volume
+  join-data-handler-1-data:
     driver: local
   # Query 2 worker volumes
   query2-groupby-worker-1-data:
