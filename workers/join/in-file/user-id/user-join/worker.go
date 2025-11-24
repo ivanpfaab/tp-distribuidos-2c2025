@@ -104,6 +104,12 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 func (jw *JoinByUserIdWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Join by User ID Worker: Starting...")
 
+	// Set queue names for persistent queues
+	topUsersQueueName := fmt.Sprintf("userid-join-reader-%d-queue", jw.readerConfig.ReaderID)
+	jw.topUsersConsumer.SetQueueName(topUsersQueueName)
+	completionQueueName := fmt.Sprintf("userid-join-completion-reader-%d-queue", jw.readerConfig.ReaderID)
+	jw.completionConsumer.SetQueueName(completionQueueName)
+
 	// Start completion signal consumer
 	go jw.startCompletionSignalConsumer()
 

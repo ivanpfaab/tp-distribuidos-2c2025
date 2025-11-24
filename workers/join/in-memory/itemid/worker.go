@@ -190,6 +190,12 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 func (w *ItemIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("ItemID Join Worker: Starting to listen for messages...")
 
+	// Set queue names for persistent queues
+	dictionaryQueueName := fmt.Sprintf("itemid-dictionary-%s-queue", w.workerID)
+	w.dictionaryConsumer.SetQueueName(dictionaryQueueName)
+	completionQueueName := fmt.Sprintf("itemid-completion-%s-queue", w.workerID)
+	w.completionConsumer.SetQueueName(completionQueueName)
+
 	// Start consuming from dictionary queue
 	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
 		fmt.Printf("Failed to start dictionary consumer: %v\n", err)

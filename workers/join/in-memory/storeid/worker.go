@@ -193,6 +193,12 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("StoreID Join Worker: Starting to listen for messages...")
 
+	// Set queue names for persistent queues
+	dictionaryQueueName := fmt.Sprintf("storeid-dictionary-%s-queue", w.workerID)
+	w.dictionaryConsumer.SetQueueName(dictionaryQueueName)
+	completionQueueName := fmt.Sprintf("storeid-completion-%s-queue", w.workerID)
+	w.completionConsumer.SetQueueName(completionQueueName)
+
 	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
 		fmt.Printf("Failed to start dictionary consumer: %v\n", err)
 	}

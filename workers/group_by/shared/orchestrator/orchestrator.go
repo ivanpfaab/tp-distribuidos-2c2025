@@ -218,6 +218,8 @@ func (gbo *GroupByOrchestrator) Start() {
 	}
 
 	exchangeName := queues.GetOrchestratorChunksExchangeName(gbo.config.QueryType)
+	queueName := fmt.Sprintf("query%d-orchestrator-worker-%d-queue", gbo.config.QueryType, gbo.config.WorkerID)
+	gbo.chunkConsumer.SetQueueName(queueName)
 	if err := gbo.chunkConsumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming chunk notifications: %v", err)
 	}
