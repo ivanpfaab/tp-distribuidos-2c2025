@@ -412,7 +412,7 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 	// Create new chunk with joined data
 	joinedChunk := chunk.NewChunk(
 		chunkMsg.ClientID,
-		chunkMsg.FileID,
+		"0001", // Default file ID for StoreID join
 		chunkMsg.QueryType,
 		chunkMsg.ChunkNumber,
 		chunkMsg.IsLastChunk,

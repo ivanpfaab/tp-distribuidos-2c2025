@@ -105,7 +105,9 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 		isLastChunk := (i == len(fileResults)-1)
 		// Use partition number as chunk number (unique across all orchestrators)
 		chunkNumber := result.PartitionNumber
-		if err := gbo.sendDataChunk(clientID, chunkNumber, result.CSVData, isLastChunk); err != nil {
+		// For Query2/Query3 (no top worker), set IsLastFromTable=true on last chunk
+		isLastFromTable := isLastChunk && (gbo.config.QueryType == 2 || gbo.config.QueryType == 3)
+		if err := gbo.sendDataChunk(clientID, chunkNumber, result.CSVData, isLastChunk, isLastFromTable); err != nil {
 			log.Printf("Failed to send data chunk for client %s, partition %d: %v", clientID, chunkNumber, err)
 			// Continue with other chunks
 			continue
@@ -119,8 +121,9 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 
 // sendAggregatedChunk sends the aggregated CSV data as a chunk to the next processing step
 func (gbo *GroupByOrchestrator) sendAggregatedChunk(clientID string, chunkNumber int, csvData string) error {
-	// Send chunk to next step (IsLastChunk=true, IsLastFromTable=true as per requirements)
-	return gbo.sendDataChunk(clientID, chunkNumber, csvData, true)
+	// Send chunk to next step (IsLastChunk=true, IsLastFromTable=true for Query2/Query3)
+	isLastFromTable := (gbo.config.QueryType == 2 || gbo.config.QueryType == 3)
+	return gbo.sendDataChunk(clientID, chunkNumber, csvData, true, isLastFromTable)
 }
 
 // cleanupClientFiles deletes all files and clears client state from the completion tracker
@@ -140,18 +143,18 @@ func (gbo *GroupByOrchestrator) cleanupClientFiles(clientID string) {
 }
 
 // sendDataChunk sends a data chunk with CSV data to the next processing step
-func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, csvData string, isLastChunk bool) error {
+func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, csvData string, isLastChunk bool, isLastFromTable bool) error {
 	// Create chunk with grouped CSV data
 	// All queries: Chunk number = partition number (unique across orchestrators)
 	// IsLastChunk: true only for the last chunk from this orchestrator
-	// IsLastFromTable: true only when this is the last chunk from all orchestrators
+	// IsLastFromTable: true for Query2/Query3 (no top worker), or set by top-users worker for Query4
 	dataChunk := chunk.NewChunk(
 		clientID,                   // ClientID
 		"01",                       // FileID - use "01" so completion tracker can parse it
 		byte(gbo.config.QueryType), // QueryType
 		chunkNumber,                // ChunkNumber (partition number)
 		isLastChunk,                // IsLastChunk - true for last chunk from this orchestrator
-		false,                      // IsLastFromTable - set by top-users worker when all chunks received
+		isLastFromTable,            // IsLastFromTable - true for Query2/Query3, or set by top-users worker for Query4
 		len(csvData),               // ChunkSize
 		0,                          // TableID
 		csvData,                    // ChunkData - CSV formatted data

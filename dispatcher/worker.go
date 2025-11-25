@@ -2,12 +2,16 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	statefulworker "github.com/tp-distribuidos-2c2025/shared/stateful_worker"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
@@ -26,11 +30,17 @@ type ResultsDispatcherWorker struct {
 	clientResultsProducer *workerqueue.QueueMiddleware
 	config                *middleware.ConnectionConfig
 
-	// Query completion tracking
+	// Query completion tracking (all queries use CompletionTracker)
 	query1Tracker         *shared.CompletionTracker
+	query2Tracker         *shared.CompletionTracker
+	query3Tracker         *shared.CompletionTracker
 	query4Tracker         *shared.CompletionTracker
 	clientQueryCompletion map[string]*ClientQueryStatus
 	completionMutex       sync.RWMutex
+
+	// Fault tolerance
+	messageManager        *messagemanager.MessageManager
+	statefulWorkerManager *statefulworker.StatefulWorkerManager
 }
 
 // ClientQueryStatus tracks completion status for all queries per client
@@ -134,9 +144,23 @@ func NewResultsDispatcherWorker(config *middleware.ConnectionConfig) (*ResultsDi
 		clientQueryCompletion: make(map[string]*ClientQueryStatus),
 	}
 
-	// Initialize completion trackers for Query1 and Query4 (both receive multiple chunks)
+	// Initialize completion trackers for all queries
 	rd.query1Tracker = shared.NewCompletionTracker("Query1", rd.onQuery1Completed)
+	rd.query2Tracker = shared.NewCompletionTracker("Query2", rd.onQuery2Completed)
+	rd.query3Tracker = shared.NewCompletionTracker("Query3", rd.onQuery3Completed)
 	rd.query4Tracker = shared.NewCompletionTracker("Query4", rd.onQuery4Completed)
+
+	// Initialize fault tolerance components
+	if err := rd.initializeFaultTolerance(); err != nil {
+		// Close all consumers on error
+		for _, consumer := range queryConsumers {
+			if consumer != nil {
+				consumer.Close()
+			}
+		}
+		clientResultsProducer.Close()
+		return nil, fmt.Errorf("failed to initialize fault tolerance: %w", err)
+	}
 
 	return rd, nil
 }
@@ -169,11 +193,26 @@ func (rd *ResultsDispatcherWorker) Close() {
 	if rd.clientResultsProducer != nil {
 		rd.clientResultsProducer.Close()
 	}
+
+	// Close fault tolerance components
+	if rd.messageManager != nil {
+		rd.messageManager.Close()
+	}
 }
 
 // onQuery1Completed is called when Query1 completes for a client
 func (rd *ResultsDispatcherWorker) onQuery1Completed(clientID string, clientStatus *shared.ClientStatus) {
 	rd.updateQueryCompletion(clientID, QueryType1)
+}
+
+// onQuery2Completed is called when Query2 completes for a client
+func (rd *ResultsDispatcherWorker) onQuery2Completed(clientID string, clientStatus *shared.ClientStatus) {
+	rd.updateQueryCompletion(clientID, QueryType2)
+}
+
+// onQuery3Completed is called when Query3 completes for a client
+func (rd *ResultsDispatcherWorker) onQuery3Completed(clientID string, clientStatus *shared.ClientStatus) {
+	rd.updateQueryCompletion(clientID, QueryType3)
 }
 
 // onQuery4Completed is called when Query4 completes for a client
@@ -198,27 +237,40 @@ func (rd *ResultsDispatcherWorker) updateQueryCompletion(clientID string, queryT
 		}
 	}
 
-	clientQueryStatus := rd.clientQueryCompletion[clientID]
+	status := rd.clientQueryCompletion[clientID]
 
 	// Mark the specific query as completed
 	switch queryType {
 	case QueryType1:
-		clientQueryStatus.Query1Completed = true
-		testing_utils.LogInfo("Results Dispatcher", "✅ Query1 completed for client %s", clientID)
+		status.Query1Completed = true
+	case QueryType2:
+		status.Query2Completed = true
+	case QueryType3:
+		status.Query3Completed = true
 	case QueryType4:
-		clientQueryStatus.Query4Completed = true
-		testing_utils.LogInfo("Results Dispatcher", "✅ Query4 completed for client %s", clientID)
+		status.Query4Completed = true
 	}
+	testing_utils.LogInfo("Results Dispatcher", "✅ Query%d completed for client %s", queryType, clientID)
 
 	// Check if all queries are completed
-	if clientQueryStatus.Query1Completed && clientQueryStatus.Query2Completed &&
-		clientQueryStatus.Query3Completed && clientQueryStatus.Query4Completed {
-
-		if !clientQueryStatus.AllQueriesCompleted {
-			clientQueryStatus.AllQueriesCompleted = true
+	if status.Query1Completed && status.Query2Completed && status.Query3Completed && status.Query4Completed {
+		if !status.AllQueriesCompleted {
+			status.AllQueriesCompleted = true
 			rd.sendSystemCompleteMessage(clientID)
+			rd.cleanupClientState(clientID)
 		}
 	}
+}
+
+// cleanupClientState cleans up state when all queries are completed
+func (rd *ResultsDispatcherWorker) cleanupClientState(clientID string) {
+	if err := rd.statefulWorkerManager.MarkClientReady(clientID); err != nil {
+		testing_utils.LogError("Results Dispatcher", "Failed to mark client ready: %v", err)
+	}
+	rd.query1Tracker.ClearClientState(clientID)
+	rd.query2Tracker.ClearClientState(clientID)
+	rd.query3Tracker.ClearClientState(clientID)
+	rd.query4Tracker.ClearClientState(clientID)
 }
 
 // sendSystemCompleteMessage sends a system complete signal to the client
@@ -239,6 +291,92 @@ func (rd *ResultsDispatcherWorker) sendSystemCompleteMessage(clientID string) {
 	// Send to client results queue
 	if err := rd.clientResultsProducer.Send(serializedSignal); err != 0 {
 		testing_utils.LogError("Results Dispatcher", "Failed to send completion signal for client %s: %v", clientID, err)
+	}
+}
+
+// initializeFaultTolerance initializes MessageManager and StatefulWorkerManager
+func (rd *ResultsDispatcherWorker) initializeFaultTolerance() error {
+	// Ensure worker data directory exists
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	// Initialize MessageManager for duplicate detection
+	processedChunksPath := filepath.Join(stateDir, "processed-chunks.txt")
+	rd.messageManager = messagemanager.NewMessageManager(processedChunksPath)
+	if err := rd.messageManager.LoadProcessedIDs(); err != nil {
+		testing_utils.LogInfo("Results Dispatcher", "Warning - failed to load processed chunks: %v (starting with empty state)", err)
+	} else {
+		count := rd.messageManager.GetProcessedCount()
+		testing_utils.LogInfo("Results Dispatcher", "Loaded %d processed chunks", count)
+	}
+
+	// Initialize StatefulWorkerManager
+	metadataDir := filepath.Join(stateDir, "metadata")
+	csvColumns := []string{"msg_id", "client_id", "query_type", "file_id", "table_id", "chunk_number", "is_last_chunk", "is_last_from_table"}
+	rd.statefulWorkerManager = statefulworker.NewStatefulWorkerManager(
+		metadataDir,
+		buildDispatcherStatus(rd), // Pass worker reference so UpdateState can access CompletionTrackers
+		extractDispatcherMetadataRow,
+		csvColumns,
+	)
+
+	// Rebuild state from persisted metadata
+	// This will call UpdateState for each CSV row, which replays to CompletionTrackers
+	testing_utils.LogInfo("Results Dispatcher", "Rebuilding state from metadata...")
+	if err := rd.statefulWorkerManager.RebuildState(); err != nil {
+		testing_utils.LogInfo("Results Dispatcher", "Warning - failed to rebuild state: %v", err)
+	} else {
+		testing_utils.LogInfo("Results Dispatcher", "State rebuilt successfully")
+	}
+
+	// Sync clientQueryCompletion with CompletionTracker state after rebuild
+	rd.syncClientQueryCompletionFromTrackers()
+
+	return nil
+}
+
+// syncClientQueryCompletionFromTrackers syncs clientQueryCompletion map with CompletionTracker state
+func (rd *ResultsDispatcherWorker) syncClientQueryCompletionFromTrackers() {
+	rd.completionMutex.Lock()
+	defer rd.completionMutex.Unlock()
+
+	// Get all client IDs from all trackers
+	allClientIDs := make(map[string]bool)
+	for _, clientID := range rd.query1Tracker.GetAllClientIDs() {
+		allClientIDs[clientID] = true
+	}
+	for _, clientID := range rd.query2Tracker.GetAllClientIDs() {
+		allClientIDs[clientID] = true
+	}
+	for _, clientID := range rd.query3Tracker.GetAllClientIDs() {
+		allClientIDs[clientID] = true
+	}
+	for _, clientID := range rd.query4Tracker.GetAllClientIDs() {
+		allClientIDs[clientID] = true
+	}
+
+	// Initialize or update ClientQueryStatus for each client based on CompletionTracker state
+	for clientID := range allClientIDs {
+		if rd.clientQueryCompletion[clientID] == nil {
+			rd.clientQueryCompletion[clientID] = &ClientQueryStatus{
+				ClientID:            clientID,
+				Query1Completed:     false,
+				Query2Completed:     false,
+				Query3Completed:     false,
+				Query4Completed:     false,
+				AllQueriesCompleted: false,
+			}
+		}
+
+		status := rd.clientQueryCompletion[clientID]
+		status.Query1Completed = rd.query1Tracker.IsClientCompleted(clientID)
+		status.Query2Completed = rd.query2Tracker.IsClientCompleted(clientID)
+		status.Query3Completed = rd.query3Tracker.IsClientCompleted(clientID)
+		status.Query4Completed = rd.query4Tracker.IsClientCompleted(clientID)
+		status.AllQueriesCompleted = status.Query1Completed && status.Query2Completed &&
+			status.Query3Completed && status.Query4Completed
 	}
 }
 

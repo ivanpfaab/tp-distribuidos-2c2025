@@ -9,6 +9,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/testing"
+	"github.com/tp-distribuidos-2c2025/workers/shared"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -28,98 +29,71 @@ func (rd *ResultsDispatcherWorker) processMessage(delivery amqp.Delivery, queryT
 		testing.LogError("Results Dispatcher", "Failed to cast message to chunk")
 		return middleware.MessageMiddlewareMessageError
 	}
+
+	// Check if chunk was already processed (duplicate detection)
+	if rd.messageManager.IsProcessed(chunkData.ID) {
+		testing.LogInfo("Results Dispatcher", "Chunk %s already processed, skipping", chunkData.ID)
+		return 0 // Return 0 to ACK (handled by createCallback)
+	}
+
+	// Send formatted data to client
 	rd.sendFormattedDataToClient(chunkData)
 
-	// Handle completion tracking based on query type
-	if queryType == QueryType1 || queryType == QueryType4 {
-		// Query1 and Query4: Use completion tracker (may receive multiple chunks)
-		chunkNotification := signals.NewChunkNotification(
-			chunkData.ClientID,
-			chunkData.FileID,
-			"query-results",
-			chunkData.TableID,
-			chunkData.ChunkNumber,
-			chunkData.IsLastChunk,
-			chunkData.IsLastFromTable,
-		)
-
-		if err := rd.processChunkNotification(chunkNotification, queryType); err != 0 {
-			testing.LogError("Results Dispatcher", "Failed to process Query%d chunk notification: %v", queryType, err)
-			return err
-		}
-	} else {
-		// Queries 2, 3: Simple counter (only one chunk expected)
-		rd.handleSingleChunkCompletion(chunkData.ClientID, queryType)
+	// Persist metadata through StatefulWorkerManager
+	if err := rd.statefulWorkerManager.ProcessMessage(chunkData); err != nil {
+		testing.LogError("Results Dispatcher", "Failed to process message through StatefulWorkerManager: %v", err)
+		return middleware.MessageMiddlewareMessageError
 	}
+
+	chunkNotification := signals.NewChunkNotification(
+		chunkData.ClientID,
+		chunkData.FileID,
+		"query-results",
+		chunkData.TableID,
+		chunkData.ChunkNumber,
+		chunkData.IsLastChunk,
+		chunkData.IsLastFromTable,
+	)
+
+	if err := rd.processChunkNotification(chunkNotification, queryType); err != 0 {
+		testing.LogError("Results Dispatcher", "Failed to process Query%d chunk notification: %v", queryType, err)
+		return err
+	}
+
+	// Mark chunk as processed after successful processing
+	if err := rd.messageManager.MarkProcessed(chunkData.ID); err != nil {
+		testing.LogError("Results Dispatcher", "Failed to mark chunk as processed: %v", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
 	return middleware.MessageMiddlewareError(0)
 }
 
-// handleSingleChunkCompletion handles completion for queries that only receive one chunk
-func (rd *ResultsDispatcherWorker) handleSingleChunkCompletion(clientID string, queryType int) {
-	rd.completionMutex.Lock()
-	defer rd.completionMutex.Unlock()
-
-	// Initialize client query status if not exists
-	if rd.clientQueryCompletion[clientID] == nil {
-		rd.clientQueryCompletion[clientID] = &ClientQueryStatus{
-			ClientID:            clientID,
-			Query1Completed:     false,
-			Query2Completed:     false,
-			Query3Completed:     false,
-			Query4Completed:     false,
-			AllQueriesCompleted: false,
-		}
-	}
-
-	clientQueryStatus := rd.clientQueryCompletion[clientID]
-
-	// Mark the specific query as completed
-	switch queryType {
-	case QueryType2:
-		clientQueryStatus.Query2Completed = true
-		testing.LogInfo("Results Dispatcher", "✅ Query2 completed for client %s (single chunk)", clientID)
-	case QueryType3:
-		clientQueryStatus.Query3Completed = true
-		testing.LogInfo("Results Dispatcher", "✅ Query3 completed for client %s (single chunk)", clientID)
-	case QueryType4:
-		clientQueryStatus.Query4Completed = true
-		testing.LogInfo("Results Dispatcher", "✅ Query4 completed for client %s (single chunk)", clientID)
-	}
-
-	// Check if all queries are completed
-	if clientQueryStatus.Query1Completed && clientQueryStatus.Query2Completed &&
-		clientQueryStatus.Query3Completed && clientQueryStatus.Query4Completed {
-
-		if !clientQueryStatus.AllQueriesCompleted {
-			clientQueryStatus.AllQueriesCompleted = true
-			rd.sendSystemCompleteMessage(clientID)
-		}
-	}
-}
-
-// processChunkNotification processes chunk notifications for completion tracking (Query1 and Query4)
+// processChunkNotification processes chunk notifications for completion tracking (all queries)
 func (rd *ResultsDispatcherWorker) processChunkNotification(notification *signals.ChunkNotification, queryType int) middleware.MessageMiddlewareError {
-	// Handle Query1 with completion tracker
-	if queryType == QueryType1 {
-		if err := rd.query1Tracker.ProcessChunkNotification(notification); err != nil {
-			testing.LogError("Results Dispatcher", "Failed to process Query1 chunk notification: %v", err)
-			return middleware.MessageMiddlewareMessageError
-		}
-		return middleware.MessageMiddlewareError(0)
+	// Get the appropriate CompletionTracker
+	var tracker *shared.CompletionTracker
+	switch queryType {
+	case QueryType1:
+		tracker = rd.query1Tracker
+	case QueryType2:
+		tracker = rd.query2Tracker
+	case QueryType3:
+		tracker = rd.query3Tracker
+	case QueryType4:
+		tracker = rd.query4Tracker
+	default:
+		testing.LogError("Results Dispatcher", "processChunkNotification called for unsupported query type: %d", queryType)
+		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Handle Query4 with completion tracker
-	if queryType == QueryType4 {
-		if err := rd.query4Tracker.ProcessChunkNotification(notification); err != nil {
-			testing.LogError("Results Dispatcher", "Failed to process Query4 chunk notification: %v", err)
-			return middleware.MessageMiddlewareMessageError
-		}
-		return middleware.MessageMiddlewareError(0)
+	// Process notification through CompletionTracker
+	if err := tracker.ProcessChunkNotification(notification); err != nil {
+		testing.LogError("Results Dispatcher", "Failed to process Query%d chunk notification: %v", queryType, err)
+		return middleware.MessageMiddlewareMessageError
 	}
 
-	// This should not happen since we only call this for Query1 or Query4
-	testing.LogError("Results Dispatcher", "processChunkNotification called for unsupported query type: %d", queryType)
-	return middleware.MessageMiddlewareMessageError
+	return middleware.MessageMiddlewareError(0)
 }
 
 // sendFormattedDataToClient formats the chunk data and sends it to client request handler

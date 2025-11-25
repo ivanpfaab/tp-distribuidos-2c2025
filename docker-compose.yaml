@@ -192,6 +192,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - results-dispatcher-data:/app/worker-data
     profiles: ["orchestration"]
 
   # In-Memory Join Orchestrator
@@ -1860,4 +1862,7 @@ volumes:
   query4-groupby-worker-4-data:
     driver: local
   query4-groupby-worker-5-data:
+    driver: local
+  # Results dispatcher volume
+  results-dispatcher-data:
     driver: local
