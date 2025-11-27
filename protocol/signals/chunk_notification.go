@@ -3,6 +3,7 @@ package signals
 import (
 	"encoding/binary"
 	"fmt"
+	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
@@ -11,6 +12,7 @@ import (
 // about chunk processing completion
 type ChunkNotification struct {
 	Header          common.Header
+	ID              string
 	ClientID        string
 	FileID          string
 	TableID         int
@@ -22,12 +24,14 @@ type ChunkNotification struct {
 
 // NewChunkNotification creates a new ChunkNotification
 func NewChunkNotification(clientID, fileID, mapWorkerID string, tableID, chunkNumber int, isLastChunk, isLastFromTable bool) *ChunkNotification {
+	id := clientID + fileID + strconv.Itoa(chunkNumber)
 	return &ChunkNotification{
 		Header: common.Header{
 			HeaderLength: 0,
 			TotalLength:  0,
 			MsgTypeID:    common.ChunkNotificationType,
 		},
+		ID:              id,
 		ClientID:        clientID,
 		FileID:          fileID,
 		TableID:         tableID,
@@ -40,7 +44,7 @@ func NewChunkNotification(clientID, fileID, mapWorkerID string, tableID, chunkNu
 
 // SerializeChunkNotification serializes a ChunkNotification to bytes
 func SerializeChunkNotification(notification *ChunkNotification) ([]byte, error) {
-	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize +
+	headerLength := common.HeaderLengthSize + common.TotalLengthSize + common.MsgTypeIDSize + IDSize +
 		ClientIDSize + FileIDSize + TableIDSize + ChunkNumberSize + 1 + 1 + MapWorkerIDSize // +1 for IsLastChunk, +1 for IsLastFromTable
 	totalLength := headerLength
 
@@ -56,6 +60,13 @@ func SerializeChunkNotification(notification *ChunkNotification) ([]byte, error)
 
 	buf[offset] = byte(notification.Header.MsgTypeID)
 	offset += common.MsgTypeIDSize
+
+	// ID
+	if len(notification.ID) > IDSize {
+		return nil, fmt.Errorf("id too long: %d bytes, max %d", len(notification.ID), IDSize)
+	}
+	copy(buf[offset:], []byte(notification.ID))
+	offset += IDSize
 
 	// ClientID
 	if len(notification.ClientID) > ClientIDSize {
@@ -106,7 +117,7 @@ func SerializeChunkNotification(notification *ChunkNotification) ([]byte, error)
 
 // DeserializeChunkNotification deserializes bytes to a ChunkNotification
 func DeserializeChunkNotification(data []byte) (*ChunkNotification, error) {
-	if len(data) < common.HeaderLengthSize+common.TotalLengthSize+common.MsgTypeIDSize+ClientIDSize+FileIDSize+TableIDSize+ChunkNumberSize+1+1+MapWorkerIDSize {
+	if len(data) < common.HeaderLengthSize+common.TotalLengthSize+common.MsgTypeIDSize+IDSize+ClientIDSize+FileIDSize+TableIDSize+ChunkNumberSize+1+1+MapWorkerIDSize {
 		return nil, fmt.Errorf("data too short for ChunkNotification")
 	}
 
@@ -125,6 +136,10 @@ func DeserializeChunkNotification(data []byte) (*ChunkNotification, error) {
 	if msgTypeID != common.ChunkNotificationType {
 		return nil, fmt.Errorf("invalid message type for ChunkNotification: %d", msgTypeID)
 	}
+
+	// ID
+	id := string(data[offset : offset+IDSize])
+	offset += IDSize
 
 	// ClientID
 	clientID := string(data[offset : offset+ClientIDSize])
@@ -159,6 +174,7 @@ func DeserializeChunkNotification(data []byte) (*ChunkNotification, error) {
 			TotalLength:  int32(totalLength),
 			MsgTypeID:    msgTypeID,
 		},
+		ID:              id,
 		ClientID:        clientID,
 		FileID:          fileID,
 		TableID:         tableID,
