@@ -146,6 +146,86 @@ services:
       retries: 5
       start_period: 30s
 
+  # Fault Tolerance - Supervisors
+  supervisor-1:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "1"
+      SUPERVISOR_PEERS: "supervisor-2:9000,supervisor-3:9000"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  supervisor-2:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "2"
+      SUPERVISOR_PEERS: "supervisor-1:9000,supervisor-3:9000"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  supervisor-3:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "3"
+      SUPERVISOR_PEERS: "supervisor-1:9000,supervisor-2:9000"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  # Chaos Monkey (optional - use with 'chaos' profile)
+  chaos-monkey:
+    build:
+      context: .
+      dockerfile: ./chaos-monkey/Dockerfile
+    container_name: chaos-monkey
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      KILL_INTERVAL: "30s"
+      KILL_PROBABILITY: "0.3"
+    profiles: ["chaos"]
+
 EOF_HEADER
 
 # Function to generate year-filter workers
@@ -167,6 +247,7 @@ generate_year_filter_workers() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -192,6 +273,7 @@ generate_time_filter_workers() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -217,6 +299,7 @@ generate_amount_filter_workers() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -259,6 +342,7 @@ generate_itemid_join_workers() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "${i}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -313,6 +397,7 @@ $(echo -e "${orchestrator_deps}")
       WORKER_INSTANCE_ID: "${i}"
       STOREID_BATCH_SIZE: 5
       NUM_PARTITIONS: "${num_partitions}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -339,6 +424,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
   # In-Memory Join Orchestrator
@@ -355,6 +441,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
   in-file-join-orchestrator:
@@ -370,6 +457,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF_REMAINING
@@ -408,6 +496,7 @@ generate_partitioner() {
       QUERY_TYPE: "${query_type}"
       NUM_PARTITIONS: "${num_partitions}"
       NUM_WORKERS: "${num_workers}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -439,6 +528,7 @@ generate_orchestrators() {
       RABBITMQ_PASS: password
       QUERY_TYPE: "${query_type}"
       WORKER_ID: "${i}"
+      HEALTH_PORT: "8888"
     volumes:
       - query${query_type}-groupby-worker-${i}-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -489,6 +579,7 @@ $(echo -e "${partitioner_deps}")
       WORKER_ID: "${i}"
       NUM_WORKERS: "${count}"
       NUM_PARTITIONS: "${num_partitions}"
+      HEALTH_PORT: "8888"
     volumes:
       - query${query_type}-groupby-worker-${i}-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -532,6 +623,7 @@ $(echo -e "${deps}")
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_PARTITIONS: "${num_partitions}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -556,6 +648,7 @@ generate_user_partition_splitter() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_WRITERS: ${num_writers}
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -584,6 +677,7 @@ generate_user_partition_writers() {
       RABBITMQ_PASS: password
       WRITER_ID: ${i}
       NUM_WRITERS: ${count}
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-${i}-data:/shared-data
     profiles: ["orchestration"]
@@ -620,6 +714,7 @@ generate_user_join_readers() {
       RABBITMQ_PASS: password
       READER_ID: ${i}
       NUM_WRITERS: ${count}
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-${i}-data:/shared-data
     profiles: ["orchestration"]
@@ -659,6 +754,7 @@ generate_join_data_handler() {
       RABBITMQ_PASS: password
       ITEMID_WORKER_COUNT: "${itemid_worker_count}"
       STOREID_WORKER_COUNT: "${storeid_worker_count}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -692,6 +788,7 @@ generate_query_gateway() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -892,6 +989,7 @@ generate_server_dependencies() {
     echo "      - RABBITMQ_PORT=5672"
     echo "      - RABBITMQ_USER=admin"
     echo "      - RABBITMQ_PASS=password"
+    echo "      - HEALTH_PORT=8888"
     echo "    profiles: [\"data-flow\"]"
     echo ""
 }
@@ -934,6 +1032,115 @@ EOF
 # Generate clients
 echo -e "${BLUE}Generating clients...${NC}"
 generate_clients $CLIENT_COUNT
+
+# Generate the MONITORED_WORKERS list for supervisors
+echo -e "${BLUE}Generating MONITORED_WORKERS list for supervisors...${NC}"
+
+MONITORED_WORKERS=""
+
+# Add all year-filter workers
+for i in $(seq 1 $YEAR_FILTER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}year-filter-worker-${i}:8888,"
+done
+
+# Add all time-filter workers
+for i in $(seq 1 $TIME_FILTER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}time-filter-worker-${i}:8888,"
+done
+
+# Add all amount-filter workers
+for i in $(seq 1 $AMOUNT_FILTER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}amount-filter-worker-${i}:8888,"
+done
+
+# Add all query-gateway workers
+for i in $(seq 1 $QUERY_GATEWAY_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query-gateway-${i}:8888,"
+done
+
+# Add all join-data-handler workers
+for i in $(seq 1 $JOIN_DATA_HANDLER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}join-data-handler-${i}:8888,"
+done
+
+# Add all itemid-join workers
+for i in $(seq 1 $ITEMID_JOIN_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}itemid-join-worker-${i}:8888,"
+done
+
+# Add all storeid-join workers
+for i in $(seq 1 $STOREID_JOIN_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}storeid-join-worker-${i}:8888,"
+done
+
+# Add user partition components
+MONITORED_WORKERS="${MONITORED_WORKERS}user-partition-splitter:8888,"
+
+for i in $(seq 1 $USER_PARTITION_WRITERS); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}user-partition-writer-${i}:8888,"
+done
+
+for i in $(seq 1 $USER_JOIN_READERS); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}user-join-reader-${i}:8888,"
+done
+
+# Add Query 2 components
+for i in $(seq 1 $Q2_PARTITIONER_COUNT); do
+    if [ $Q2_PARTITIONER_COUNT -eq 1 ]; then
+        MONITORED_WORKERS="${MONITORED_WORKERS}query2-partitioner:8888,"
+    else
+        MONITORED_WORKERS="${MONITORED_WORKERS}query2-partitioner-${i}:8888,"
+    fi
+done
+
+for i in $(seq 1 $Q2_GROUPBY_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query2-orchestrator-${i}:8888,"
+    MONITORED_WORKERS="${MONITORED_WORKERS}query2-groupby-worker-${i}:8888,"
+done
+
+MONITORED_WORKERS="${MONITORED_WORKERS}query2-top-items-worker:8888,"
+
+# Add Query 3 components
+for i in $(seq 1 $Q3_PARTITIONER_COUNT); do
+    if [ $Q3_PARTITIONER_COUNT -eq 1 ]; then
+        MONITORED_WORKERS="${MONITORED_WORKERS}query3-partitioner:8888,"
+    else
+        MONITORED_WORKERS="${MONITORED_WORKERS}query3-partitioner-${i}:8888,"
+    fi
+done
+
+for i in $(seq 1 $Q3_GROUPBY_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query3-orchestrator-${i}:8888,"
+    MONITORED_WORKERS="${MONITORED_WORKERS}query3-groupby-worker-${i}:8888,"
+done
+
+# Add Query 4 components
+for i in $(seq 1 $Q4_PARTITIONER_COUNT); do
+    if [ $Q4_PARTITIONER_COUNT -eq 1 ]; then
+        MONITORED_WORKERS="${MONITORED_WORKERS}query4-partitioner:8888,"
+    else
+        MONITORED_WORKERS="${MONITORED_WORKERS}query4-partitioner-${i}:8888,"
+    fi
+done
+
+for i in $(seq 1 $Q4_GROUPBY_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query4-orchestrator-${i}:8888,"
+    MONITORED_WORKERS="${MONITORED_WORKERS}query4-groupby-worker-${i}:8888,"
+done
+
+MONITORED_WORKERS="${MONITORED_WORKERS}query4-top-users-worker:8888,"
+
+# Add orchestrators and dispatcher
+MONITORED_WORKERS="${MONITORED_WORKERS}in-memory-join-orchestrator:8888,"
+MONITORED_WORKERS="${MONITORED_WORKERS}in-file-join-orchestrator:8888,"
+MONITORED_WORKERS="${MONITORED_WORKERS}results-dispatcher:8888,"
+MONITORED_WORKERS="${MONITORED_WORKERS}proxy:8888"
+
+# Now update the supervisor services with the MONITORED_WORKERS variable
+# Use sed to replace the MONITORED_WORKERS placeholder
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-2:9000,supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-2:9000,supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-2:9000\"|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-2:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
 
 # Add test runner and volumes
 cat >> docker-compose.yaml << 'EOF_FOOTER'
