@@ -16,6 +16,7 @@ const (
 	JoinCompletionSignalType    = 5
 	JoinCleanupSignalType       = 6
 	ClientCompletionSignalType  = 7
+	ElectionMessageType         = 8
 )
 
 // Common header sizes
