@@ -2,11 +2,14 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"os"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -22,6 +25,10 @@ type InMemoryJoinOrchestrator struct {
 	completionTracker *shared.CompletionTracker
 	config            *middleware.ConnectionConfig
 	workerID          string
+
+	// Fault tolerance components
+	messageManager *messagemanager.MessageManager
+	stateManager   *StateManager
 }
 
 // NewInMemoryJoinOrchestrator creates a new InMemoryJoinOrchestrator instance
@@ -89,22 +96,64 @@ func NewInMemoryJoinOrchestrator(config *middleware.ConnectionConfig) (*InMemory
 		return nil, fmt.Errorf("failed to declare StoreID completion exchange: %v", err)
 	}
 
-	// Create completion tracker
+	// Initialize fault tolerance components
+	metadataDir := "/app/orchestrator-data/metadata"
+	processedNotificationsPath := "/app/orchestrator-data/processed-notifications.txt"
+
+	// Ensure metadata directory exists
+	if err := os.MkdirAll(metadataDir, 0755); err != nil {
+		consumer.Close()
+		itemIdProducer.Close()
+		storeIdProducer.Close()
+		return nil, fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
+	// Initialize MessageManager for duplicate detection
+	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		log.Printf("Warning: failed to load processed notifications: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		log.Printf("Loaded %d processed notification IDs", count)
+	}
+
+	// Create state manager first (completion tracker will be set after creation)
+	stateManager := NewStateManager(metadataDir, nil)
+
+	// Create completion tracker with callback that uses state manager
 	completionTracker := shared.NewCompletionTracker("in-memory-join-orchestrator", func(clientID string, clientStatus *shared.ClientStatus) {
-		fmt.Printf("In-Memory Join Orchestrator: Client %s completed\n", clientID)
+		log.Printf("In-Memory Join Orchestrator: Client %s completed", clientID)
+		// Delete CSV metadata file for completed client
+		if err := stateManager.DeleteClientMetadata(clientID); err != nil {
+			log.Printf("Warning: failed to delete metadata file for client %s: %v", clientID, err)
+		} else {
+			log.Printf("Deleted metadata file for completed client %s", clientID)
+		}
 	})
+
+	// Set completion tracker in state manager
+	stateManager.completionTracker = completionTracker
 
 	// Generate worker ID
 	workerID := "in-memory-join-orchestrator"
 
-	return &InMemoryJoinOrchestrator{
+	orchestrator := &InMemoryJoinOrchestrator{
 		consumer:          consumer,
 		itemIdProducer:    itemIdProducer,
 		storeIdProducer:   storeIdProducer,
 		completionTracker: completionTracker,
 		config:            config,
 		workerID:          workerID,
-	}, nil
+		messageManager:    messageManager,
+		stateManager:      stateManager,
+	}
+
+	// Rebuild state from CSV metadata on startup
+	if err := orchestrator.stateManager.RebuildState(); err != nil {
+		log.Printf("Warning: failed to rebuild state from CSV: %v", err)
+	}
+
+	return orchestrator, nil
 }
 
 // Start starts the in-memory join orchestrator
@@ -128,6 +177,10 @@ func (imo *InMemoryJoinOrchestrator) Close() {
 	}
 	if imo.storeIdProducer != nil {
 		imo.storeIdProducer.Close()
+	}
+
+	if imo.messageManager != nil {
+		imo.messageManager.Close()
 	}
 
 	fmt.Println("In-Memory Join Orchestrator: Shutdown complete")
@@ -162,12 +215,29 @@ func (imo *InMemoryJoinOrchestrator) processChunkNotification(delivery amqp.Deli
 		fmt.Printf("In-Memory Join Orchestrator: Received chunk notification - ClientID: %s, FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
 			msg.ClientID, msg.FileID, msg.ChunkNumber, msg.IsLastChunk)
 
+		// Check for duplicate notification
+		if imo.messageManager.IsProcessed(msg.ID) {
+			log.Printf("Notification %s already processed, skipping", msg.ID)
+			delivery.Ack(false)
+			return 0
+		}
+
 		// Process chunk notification using completion tracker
 		err = imo.completionTracker.ProcessChunkNotification(msg)
 		if err != nil {
 			fmt.Printf("In-Memory Join Orchestrator: Failed to process chunk notification: %v\n", err)
 			delivery.Ack(false)
 			return middleware.MessageMiddlewareMessageError
+		}
+
+		// Append notification to CSV for state rebuild
+		if err := imo.stateManager.AppendNotification(msg); err != nil {
+			log.Printf("Warning: failed to append notification to CSV: %v", err)
+		}
+
+		// Mark as processed in MessageManager
+		if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
+			log.Printf("Warning: failed to mark notification as processed: %v", err)
 		}
 
 		// Check if client is completed
@@ -193,12 +263,29 @@ func (imo *InMemoryJoinOrchestrator) processChunkNotification(delivery amqp.Deli
 			MapWorkerID:     imo.workerID,
 		}
 
+		// Check for duplicate notification (using chunk ID)
+		if imo.messageManager.IsProcessed(msg.ID) {
+			log.Printf("Chunk %s already processed, skipping", msg.ID)
+			delivery.Ack(false)
+			return 0
+		}
+
 		// Process chunk notification using completion tracker
 		err = imo.completionTracker.ProcessChunkNotification(notification)
 		if err != nil {
 			fmt.Printf("In-Memory Join Orchestrator: Failed to process chunk notification: %v\n", err)
 			delivery.Ack(false)
 			return middleware.MessageMiddlewareMessageError
+		}
+
+		// Append notification to CSV for state rebuild
+		if err := imo.stateManager.AppendNotification(notification); err != nil {
+			log.Printf("Warning: failed to append notification to CSV: %v", err)
+		}
+
+		// Mark as processed in MessageManager
+		if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
+			log.Printf("Warning: failed to mark chunk as processed: %v", err)
 		}
 
 		// Check if client is completed
