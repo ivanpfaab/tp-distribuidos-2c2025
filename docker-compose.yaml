@@ -210,6 +210,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - in-memory-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
 
   in-file-join-orchestrator:
@@ -225,6 +227,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+    volumes:
+      - in-file-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
 
   # Join Data Handler 1
@@ -877,6 +881,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_PARTITIONS: "100"
+    volumes:
+      - query2-top-items-worker-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Query 3 Partitioner 1
@@ -1540,6 +1546,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_PARTITIONS: "100"
+    volumes:
+      - query4-top-users-worker-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Core application (data flow services)
@@ -1865,4 +1873,14 @@ volumes:
     driver: local
   # Results dispatcher volume
   results-dispatcher-data:
+    driver: local
+  # Join orchestrator volumes
+  in-memory-join-orchestrator-data:
+    driver: local
+  in-file-join-orchestrator-data:
+    driver: local
+  # Top workers volumes
+  query2-top-items-worker-data:
+    driver: local
+  query4-top-users-worker-data:
     driver: local
