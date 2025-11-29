@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -257,14 +256,7 @@ func (tw *TopUsersWorker) getOrCreateClientState(clientID string) *ClientState {
 }
 
 // processMessage processes a single message from reduce worker
-func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		log.Printf("Top Users Worker: Failed to deserialize chunk: %v", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
+func (tw *TopUsersWorker) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	clientID := chunkMsg.ClientID
 	chunkNumber := int(chunkMsg.ChunkNumber)
 	msgID := chunkMsg.ID
@@ -272,8 +264,7 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	// Check for duplicate chunk
 	if tw.messageManager.IsProcessed(msgID) {
 		log.Printf("Top Users Worker: Chunk %s already processed, skipping", msgID)
-		delivery.Ack(false)
-		return 0
+		return 0 // Success - callback will ack
 	}
 
 	// Get or create client state
@@ -285,8 +276,7 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	// Process chunk through state manager (persists CSV data and updates state)
 	if err := tw.stateManager.ProcessChunk(chunkMsg, clientState); err != nil {
 		log.Printf("Top Users Worker: Failed to process chunk: %v", err)
-		delivery.Nack(false, true)
-		return middleware.MessageMiddlewareMessageError
+		return middleware.MessageMiddlewareMessageError // Error - callback will nack
 	}
 
 	// Mark chunk as processed in MessageManager
@@ -441,8 +431,15 @@ func (tw *TopUsersWorker) Start() {
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := tw.processMessage(delivery)
-			if err != 0 {
+
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				log.Printf("Top Users Worker: Failed to deserialize chunk: %v", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			if err := tw.processMessage(chunkMsg); err != 0 {
 				log.Printf("Failed to process message: %v", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

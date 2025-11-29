@@ -5,30 +5,14 @@ import (
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
-	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/shared"
-
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // processMessage processes incoming messages and sends formatted data to client
-func (rd *ResultsDispatcherWorker) processMessage(delivery amqp.Delivery, queryType int) middleware.MessageMiddlewareError {
-	// Deserialize the message
-	message, err := deserializer.Deserialize(delivery.Body)
-	if err != nil {
-		testing.LogError("Results Dispatcher", "Failed to deserialize message: %v", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Check if it's a Chunk message for data processing
-	chunkData, ok := message.(*chunk.Chunk)
-	if !ok {
-		testing.LogError("Results Dispatcher", "Failed to cast message to chunk")
-		return middleware.MessageMiddlewareMessageError
-	}
+func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk, queryType int) middleware.MessageMiddlewareError {
 
 	// Check if chunk was already processed (duplicate detection)
 	if rd.messageManager.IsProcessed(chunkData.ID) {

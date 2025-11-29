@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
@@ -110,13 +109,7 @@ func YearFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 }
 
 // processMessage processes a single message
-func (yfw *YearFilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("Year Filter Worker: Failed to deserialize chunk message: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
+func (yfw *YearFilterWorker) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 
 	// Check if already processed
 	if yfw.messageManager.IsProcessed(chunkMsg.ID) {

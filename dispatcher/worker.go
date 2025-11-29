@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -385,7 +387,18 @@ func (rd *ResultsDispatcherWorker) createQueryCallback(queryType int) middleware
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		testing_utils.LogInfo("Results Dispatcher", "Starting to listen for Query%d results...", queryType)
 		for delivery := range *consumeChannel {
-			if err := rd.processMessage(delivery, queryType); err != 0 {
+
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				testing_utils.LogError("Results Dispatcher", "Failed to deserialize message: %v", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			chunkData, _ := message.(*chunk.Chunk)
+
+			// Process with deserialized chunk
+			if err := rd.processMessage(chunkData, queryType); err != 0 {
 				testing_utils.LogError("Results Dispatcher", "Failed to process Query%d message: %v", queryType, err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -11,9 +12,9 @@ import (
 
 // AmountFilterWorker encapsulates the amount filter worker state and dependencies
 type AmountFilterWorker struct {
-	consumer      *workerqueue.QueueConsumer
-	replyProducer *workerqueue.QueueMiddleware
-	config        *middleware.ConnectionConfig
+	consumer       *workerqueue.QueueConsumer
+	replyProducer  *workerqueue.QueueMiddleware
+	config         *middleware.ConnectionConfig
 	messageManager *messagemanager.MessageManager
 }
 
@@ -112,7 +113,15 @@ func (afw *AmountFilterWorker) createCallback() func(middleware.ConsumeChannel, 
 		for delivery := range *consumeChannel {
 			messageCount++
 			fmt.Printf("Amount Filter Worker: Received message #%d\n", messageCount)
-			if err := afw.processMessage(delivery); err != 0 {
+
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("Amount Filter Worker: Failed to deserialize chunk message: %v\n", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			if err := afw.processMessage(chunkMsg); err != 0 {
 				fmt.Printf("Amount Filter Worker: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

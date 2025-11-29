@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
@@ -187,47 +186,43 @@ func (upw *UserPartitionWriter) Close() {
 func (upw *UserPartitionWriter) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			if err := upw.processQueueMessage(delivery); err != 0 {
-				fmt.Printf("User Partition Writer %d: Failed to process message: %v\n",
-					upw.writerConfig.WriterID, err)
-				delivery.Nack(false, true) // Reject and requeue
+			// Get message type in the callback (middleware layer)
+			msgType, err := deserializer.GetMessageType(delivery.Body)
+			if err != nil {
+				fmt.Printf("User Partition Writer %d: Failed to get message type: %v\n", upw.writerConfig.WriterID, err)
+				delivery.Ack(false)
 				continue
 			}
-			delivery.Ack(false)
+
+			// Route based on message type
+			switch msgType {
+			case common.ChunkMessageType: // Type 2
+				// Deserialize the chunk message
+				chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+				if err != nil {
+					fmt.Printf("User Partition Writer %d: Failed to deserialize chunk: %v\n",
+						upw.writerConfig.WriterID, err)
+					delivery.Ack(false)
+					continue
+				}
+
+				if err := upw.processMessage(chunkMsg); err != 0 {
+					fmt.Printf("User Partition Writer %d: Failed to process message: %v\n",
+						upw.writerConfig.WriterID, err)
+					delivery.Nack(false, true) // Reject and requeue
+					continue
+				}
+				delivery.Ack(false)
+			default:
+				fmt.Printf("User Partition Writer %d: Unknown message type: %d\n", upw.writerConfig.WriterID, msgType)
+				delivery.Ack(false)
+			}
 		}
 		done <- nil
 	}
 }
 
-// processQueueMessage processes messages from queue with type detection
-func (upw *UserPartitionWriter) processQueueMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Get message type
-	msgType, err := deserializer.GetMessageType(delivery.Body)
-	if err != nil {
-		fmt.Printf("User Partition Writer %d: Failed to get message type: %v\n", upw.writerConfig.WriterID, err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Route based on message type
-	switch msgType {
-	case common.ChunkMessageType: // Type 2
-		return upw.processMessage(delivery)
-	default:
-		fmt.Printf("User Partition Writer %d: Unknown message type: %d\n", upw.writerConfig.WriterID, msgType)
-		return middleware.MessageMiddlewareMessageError
-	}
-}
-
-// processMessage processes a single user chunk
-func (upw *UserPartitionWriter) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("User Partition Writer %d: Failed to deserialize chunk: %v\n",
-			upw.writerConfig.WriterID, err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
+func (upw *UserPartitionWriter) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
 	if upw.messageManager.IsProcessed(chunkMsg.ID) {
 		fmt.Printf("User Partition Writer %d: Chunk %s already processed, skipping\n",

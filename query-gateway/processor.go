@@ -4,20 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
 // processMessage processes incoming messages and routes them to join workers
-func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("Query Gateway: Failed to deserialize chunk message: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
+func (qg *QueryGateway) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 
 	// Check if already processed
 	if qg.messageManager.IsProcessed(chunkMsg.ID) {

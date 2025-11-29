@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -136,7 +137,15 @@ func (tfw *TimeFilterWorker) createCallback() func(middleware.ConsumeChannel, ch
 		for delivery := range *consumeChannel {
 			messageCount++
 			fmt.Printf("Time Filter Worker: Received message #%d\n", messageCount)
-			if err := tfw.processMessage(delivery); err != 0 {
+			
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("Time Filter Worker: Failed to deserialize chunk message: %v\n", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			if err := tfw.processMessage(chunkMsg); err != 0 {
 				fmt.Printf("Time Filter Worker: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

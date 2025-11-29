@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -251,7 +251,6 @@ func (w *StoreIdJoinWorker) Close() {
 func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			// Check if chunk was already processed
 			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 			if err != nil {
 				fmt.Printf("StoreID Join Worker: Failed to deserialize dictionary chunk: %v\n", err)
@@ -259,13 +258,15 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 				continue
 			}
 
+			// Check if chunk was already processed
 			if w.messageManager.IsProcessed(chunkMsg.ID) {
 				fmt.Printf("StoreID Join Worker: Dictionary chunk %s already processed, skipping\n", chunkMsg.ID)
 				delivery.Ack(false)
 				continue
 			}
 
-			if err := w.dictHandler.ProcessMessage(delivery); err != 0 {
+			if err := w.dictHandler.ProcessMessage(chunkMsg); err != 0 {
+				delivery.Nack(false, false)
 				done <- fmt.Errorf("failed to process dictionary message: %v", err)
 				return
 			}
@@ -274,7 +275,10 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 			if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
 				fmt.Printf("StoreID Join Worker: Failed to mark dictionary chunk as processed: %v\n", err)
 			}
+
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }
 
@@ -282,45 +286,46 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 func (w *StoreIdJoinWorker) createChunkCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.processChunkMessage(delivery)
-			if err != 0 {
+
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to deserialize chunk: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+
+			if !w.dictManager.IsReady(chunkMsg.ClientID) {
+				fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
+				delivery.Nack(false, true) // Requeue
+				continue
+			}
+
+			if err := w.processChunkMessage(chunkMsg); err != 0 {
+				fmt.Printf("StoreID Join Worker: Failed to process chunk message: %v\n", err)
+				delivery.Nack(false, false) // Don't requeue on processing errors
 				done <- fmt.Errorf("failed to process chunk message: %v", err)
 				return
 			}
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }
 
 // processChunkMessage processes chunk messages for joining
-func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+func (w *StoreIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	fmt.Printf("StoreID Join Worker: Received chunk message\n")
-
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to deserialize chunk: %v\n", err)
-		delivery.Nack(false, false)
-		return middleware.MessageMiddlewareMessageError
-	}
 
 	// Check if chunk was already processed
 	if w.messageManager.IsProcessed(chunkMsg.ID) {
 		fmt.Printf("StoreID Join Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
-		delivery.Ack(false)
-		return 0
-	}
-
-	// Check if dictionary is ready
-	if !w.dictManager.IsReady(chunkMsg.ClientID) {
-		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
-		delivery.Nack(false, true)
-		return 0
+		return 0 // Success - callback will ack
 	}
 
 	// Process the chunk
 	if err := w.processChunk(chunkMsg); err != 0 {
 		fmt.Printf("StoreID Join Worker: Failed to process chunk: %v\n", err)
-		delivery.Nack(false, false)
-		return middleware.MessageMiddlewareMessageError
+		return middleware.MessageMiddlewareMessageError // Error - callback will nack
 	}
 
 	// Mark chunk as processed after successful processing
@@ -329,8 +334,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middlewa
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	delivery.Ack(false)
-	return 0
+	return 0 // Success - callback will ack
 }
 
 // processChunk processes a single chunk for joining
@@ -413,11 +417,21 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 func (w *StoreIdJoinWorker) createCompletionCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.completionHandler.ProcessMessage(delivery)
-			if err != 0 {
-				done <- fmt.Errorf("failed to process completion signal: %v", err)
-				return
+			
+			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
+			if err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to deserialize completion signal: %v\n", err)
+				delivery.Ack(false) 
+				continue
 			}
+
+			if err := w.completionHandler.ProcessMessage(completionSignal); err != 0 {
+				fmt.Printf("StoreID Join Worker: Error processing completion signal: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }

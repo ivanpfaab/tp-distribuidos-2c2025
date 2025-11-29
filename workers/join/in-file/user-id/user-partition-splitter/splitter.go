@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -151,7 +150,15 @@ func (ups *UserPartitionSplitter) Close() {
 func (ups *UserPartitionSplitter) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			if err := ups.processMessage(delivery); err != 0 {
+			
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("User Partition Splitter: Failed to deserialize chunk: %v\n", err)
+				delivery.Ack(false)
+				continue
+			}
+
+			if err := ups.processMessage(chunkMsg); err != 0 {
 				fmt.Printf("User Partition Splitter: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -163,14 +170,7 @@ func (ups *UserPartitionSplitter) createCallback() func(middleware.ConsumeChanne
 }
 
 // processMessage processes a single user chunk
-func (ups *UserPartitionSplitter) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("User Partition Splitter: Failed to deserialize chunk: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
+func (ups *UserPartitionSplitter) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
 	if ups.messageManager.IsProcessed(chunkMsg.ID) {
 		fmt.Printf("User Partition Splitter: Chunk %s already processed, skipping\n", chunkMsg.ID)

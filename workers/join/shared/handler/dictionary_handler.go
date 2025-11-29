@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/dictionary"
@@ -34,16 +33,8 @@ func NewDictionaryHandler[T any](
 }
 
 // ProcessMessage processes a dictionary message
-func (dh *DictionaryHandler[T]) ProcessMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+func (dh *DictionaryHandler[T]) ProcessMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	fmt.Printf("%s: Received dictionary message\n", dh.workerName)
-
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("%s: Failed to deserialize dictionary chunk: %v\n", dh.workerName, err)
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
-	}
 
 	fmt.Printf("%s: Received dictionary message for FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
 		dh.workerName, chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
@@ -51,7 +42,6 @@ func (dh *DictionaryHandler[T]) ProcessMessage(delivery amqp.Delivery) middlewar
 	// Load dictionary from CSV
 	if err := dh.manager.LoadFromCSV(chunkMsg.ClientID, chunkMsg.ChunkData, dh.parseFunc); err != nil {
 		fmt.Printf("%s: Failed to load dictionary from CSV: %v\n", dh.workerName, err)
-		delivery.Nack(false, false) // Reject the message
 		return middleware.MessageMiddlewareMessageError
 	}
 
@@ -69,6 +59,5 @@ func (dh *DictionaryHandler[T]) ProcessMessage(delivery amqp.Delivery) middlewar
 			dh.workerName, chunkMsg.FileID, chunkMsg.ClientID)
 	}
 
-	delivery.Ack(false) // Acknowledge the dictionary message
 	return 0
 }

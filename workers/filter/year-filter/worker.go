@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -136,7 +137,15 @@ func (yfw *YearFilterWorker) createCallback() func(middleware.ConsumeChannel, ch
 		for delivery := range *consumeChannel {
 			messageCount++
 			fmt.Printf("Year Filter Worker: Received message #%d\n", messageCount)
-			if err := yfw.processMessage(delivery); err != 0 {
+			
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("Year Filter Worker: Failed to deserialize chunk message: %v\n", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			if err := yfw.processMessage(chunkMsg); err != 0 {
 				fmt.Printf("Year Filter Worker: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

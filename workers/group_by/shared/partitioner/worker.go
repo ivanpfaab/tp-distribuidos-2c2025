@@ -82,8 +82,18 @@ func (w *PartitionerWorker) createCallback() func(middleware.ConsumeChannel, cha
 			messageCount++
 			testing_utils.LogInfo("Partitioner Worker", "Received message #%d", messageCount)
 
-			// Process the message
-			if err := w.processMessage(delivery.Body); err != nil {
+			// Deserialize the message in the callback (middleware layer)
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				testing_utils.LogWarn("Partitioner Worker", "Failed to deserialize message: %v", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			chunkMessage, _ := message.(*chunk.Chunk)
+
+			// Process with deserialized chunk
+			if err := w.processMessage(chunkMessage); err != nil {
 				testing_utils.LogError("Partitioner Worker", "Failed to process message: %v", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -96,20 +106,7 @@ func (w *PartitionerWorker) createCallback() func(middleware.ConsumeChannel, cha
 }
 
 // processMessage processes a single message
-func (w *PartitionerWorker) processMessage(messageBody []byte) error {
-	// Deserialize the message
-	message, err := deserializer.Deserialize(messageBody)
-	if err != nil {
-		testing_utils.LogWarn("Partitioner Worker", "Failed to deserialize message: %v", err)
-		return err
-	}
-
-	// Check if it's a chunk message
-	chunkMessage, ok := message.(*chunk.Chunk)
-	if !ok {
-		testing_utils.LogWarn("Partitioner Worker", "Received non-chunk message, skipping")
-		return nil
-	}
+func (w *PartitionerWorker) processMessage(chunkMessage *chunk.Chunk) error {
 
 	// Check if already processed
 	if w.messageManager.IsProcessed(chunkMessage.ID) {

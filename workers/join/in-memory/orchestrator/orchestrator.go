@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
@@ -188,38 +187,46 @@ func (imo *InMemoryJoinOrchestrator) Close() {
 func (imo *InMemoryJoinOrchestrator) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			if err := imo.processChunkNotification(delivery); err != 0 {
-				testing.LogError("In-Memory Join Orchestrator", "Error processing chunk notification: %v", err)
+			// Deserialize the message using the deserializer
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				testing.LogError("In-Memory Join Orchestrator", "Failed to deserialize message: %v", err)
+				delivery.Ack(false)
+				continue
 			}
+
+			// Handle chunk notification from join workers
+			msg, ok := message.(*signals.ChunkNotification)
+			if !ok {
+				testing.LogWarn("In-Memory Join Orchestrator", "Received unknown message type: %T", message)
+				delivery.Ack(false)
+				continue
+			}
+
+			// Process with deserialized notification
+			if err := imo.processChunkNotification(msg); err != 0 {
+				testing.LogError("In-Memory Join Orchestrator", "Error processing chunk notification: %v", err)
+				// Determine if we should nack or ack based on error type
+				if err == middleware.MessageMiddlewareMessageError {
+					delivery.Nack(false, true)
+				} else {
+					delivery.Ack(false)
+				}
+				continue
+			}
+			delivery.Ack(false)
 		}
 		done <- nil
 	}
 }
 
 // processChunkNotification processes a chunk completion notification
-func (imo *InMemoryJoinOrchestrator) processChunkNotification(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the message using the deserializer
-	message, err := deserializer.Deserialize(delivery.Body)
-	if err != nil {
-		testing.LogError("In-Memory Join Orchestrator", "Failed to deserialize message: %v", err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Handle chunk notification from join workers
-	msg, ok := message.(*signals.ChunkNotification)
-	if !ok {
-		testing.LogWarn("In-Memory Join Orchestrator", "Received unknown message type: %T", message)
-		delivery.Ack(false)
-		return 0
-	}
-
+func (imo *InMemoryJoinOrchestrator) processChunkNotification(msg *signals.ChunkNotification) middleware.MessageMiddlewareError {
 	testing.LogInfo("In-Memory Join Orchestrator", "Received chunk notification - ClientID: %s, FileID: %s, MapWorkerID: %s",
 		msg.ClientID, msg.FileID, msg.MapWorkerID)
 
 	// Check for duplicate notification
 	if imo.messageManager.IsProcessed(msg.ID) {
-		delivery.Ack(false)
 		return 0
 	}
 
@@ -227,19 +234,16 @@ func (imo *InMemoryJoinOrchestrator) processChunkNotification(delivery amqp.Deli
 	if strings.Contains(msg.MapWorkerID, "itemid-join-worker") {
 		if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
 			testing.LogError("In-Memory Join Orchestrator", "Failed to mark notification as processed: %v", err)
-			delivery.Nack(false, true)
 			return middleware.MessageMiddlewareMessageError
 		}
 
 		imo.sendCompletionSignal(msg.ClientID, 2, imo.itemIdProducer)
-		delivery.Ack(false)
 		return 0
 	}
 
 	// Handle StoreID worker notifications with CompletionTracker and CSV persistence
 	if err := imo.completionTracker.ProcessChunkNotification(msg); err != nil {
 		testing.LogError("In-Memory Join Orchestrator", "Failed to process chunk notification: %v", err)
-		delivery.Ack(false)
 		return middleware.MessageMiddlewareMessageError
 	}
 
@@ -251,7 +255,6 @@ func (imo *InMemoryJoinOrchestrator) processChunkNotification(delivery amqp.Deli
 		testing.LogWarn("In-Memory Join Orchestrator", "Failed to mark notification as processed: %v", err)
 	}
 
-	delivery.Ack(false)
 	return 0
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -180,7 +181,16 @@ func (qg *QueryGateway) createCallback() func(middleware.ConsumeChannel, chan er
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		fmt.Println("Query Gateway: Starting to listen for messages...")
 		for delivery := range *consumeChannel {
-			if err := qg.processMessage(delivery); err != 0 {
+			// Deserialize the chunk message in the callback (middleware layer)
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("Query Gateway: Failed to deserialize chunk message: %v\n", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			// Process with deserialized chunk
+			if err := qg.processMessage(chunkMsg); err != 0 {
 				fmt.Printf("Query Gateway: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

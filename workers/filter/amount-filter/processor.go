@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
@@ -62,13 +61,7 @@ func AmountFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMi
 }
 
 // processMessage processes a single message
-func (afw *AmountFilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("Amount Filter Worker: Failed to deserialize chunk message: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
-	}
+func (afw *AmountFilterWorker) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 
 	// Check if already processed
 	if afw.messageManager.IsProcessed(chunkMsg.ID) {

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/dictionary"
@@ -32,14 +31,7 @@ func NewCompletionHandler[T any](
 }
 
 // ProcessMessage processes a completion signal
-func (ch *CompletionHandler[T]) ProcessMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the completion signal
-	completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
-	if err != nil {
-		fmt.Printf("%s: Failed to deserialize completion signal: %v\n", ch.workerName, err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
+func (ch *CompletionHandler[T]) ProcessMessage(completionSignal *signals.JoinCompletionSignal) middleware.MessageMiddlewareError {
 
 	fmt.Printf("%s: Received completion signal for client %s\n", ch.workerName, completionSignal.ClientID)
 
@@ -59,7 +51,5 @@ func (ch *CompletionHandler[T]) ProcessMessage(delivery amqp.Delivery) middlewar
 		fmt.Printf("%s: Deleted dictionary file for client %s\n", ch.workerName, completionSignal.ClientID)
 	}
 
-	delivery.Ack(false) // Acknowledge the message
 	return 0
 }
-
