@@ -2,12 +2,16 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
+	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
@@ -21,6 +25,9 @@ type GroupByWorker struct {
 	workerIDStr          string
 	fileManager          *FileManager
 	processor            *ChunkProcessor
+	messageManager       *messagemanager.MessageManager
+	partitionManager     *partitionmanager.PartitionManager
+	firstChunkProcessed  bool
 }
 
 // NewGroupByWorker creates a new group by worker instance
@@ -65,6 +72,52 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 	fileManager := NewFileManager(config.QueryType, config.WorkerID)
 	processor := NewChunkProcessor(config.QueryType)
 
+	// Get base directory for this worker
+	baseDir := common.GetBaseDir(config.QueryType, config.WorkerID)
+
+	// Ensure state directory exists
+	stateDir := filepath.Join(baseDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		consumer.Close()
+		orchestratorProducer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	// Initialize MessageManager for chunk deduplication
+	stateFilePath := filepath.Join(stateDir, "processed-chunks.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		testing_utils.LogWarn("GroupBy Worker", "Failed to load processed chunks: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		testing_utils.LogInfo("GroupBy Worker", "Loaded %d processed chunks", count)
+	}
+
+	// Initialize PartitionManager for fault-tolerant partition writing
+	partitionManager, err := partitionmanager.NewPartitionManager(baseDir, config.NumPartitions)
+	if err != nil {
+		consumer.Close()
+		orchestratorProducer.Close()
+		messageManager.Close()
+		return nil, fmt.Errorf("failed to create partition manager: %w", err)
+	}
+	testing_utils.LogInfo("GroupBy Worker", "PartitionManager initialized with %d partitions", config.NumPartitions)
+
+	// Recover incomplete writes on startup
+	fixedCount, err := partitionManager.DeleteIncompleteLines()
+	if err != nil {
+		consumer.Close()
+		orchestratorProducer.Close()
+		messageManager.Close()
+		return nil, fmt.Errorf("failed to recover incomplete writes: %w", err)
+	}
+	if fixedCount > 0 {
+		testing_utils.LogInfo("GroupBy Worker", "Fixed %d incomplete last lines on startup", fixedCount)
+	}
+
+	// Pass partitionManager to fileManager
+	fileManager.SetPartitionManager(partitionManager)
+
 	return &GroupByWorker{
 		config:               config,
 		consumer:             consumer,
@@ -72,6 +125,9 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 		workerIDStr:          workerIDStr,
 		fileManager:          fileManager,
 		processor:            processor,
+		messageManager:       messageManager,
+		partitionManager:     partitionManager,
+		firstChunkProcessed:  false,
 	}, nil
 }
 
@@ -79,6 +135,10 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 func (w *GroupByWorker) Start() middleware.MessageMiddlewareError {
 	testing_utils.LogInfo("GroupBy Worker", "Starting worker for query %d, listening to routing keys: %v",
 		w.config.QueryType, w.config.RoutingKeys)
+
+	// Set queue name for persistent queue
+	queueName := fmt.Sprintf("query%d-groupby-worker-%d-queue", w.config.QueryType, w.config.WorkerID)
+	w.consumer.SetQueueName(queueName)
 
 	// Start consuming messages
 	return w.consumer.StartConsuming(w.createCallback())
@@ -93,8 +153,17 @@ func (w *GroupByWorker) createCallback() func(middleware.ConsumeChannel, chan er
 			messageCount++
 			// testing_utils.LogInfo("GroupBy Worker", "Received message #%d", messageCount)
 
-			// Process the message
-			if err := w.processMessage(delivery.Body); err != nil {
+			// Deserialize the message in the callback (middleware layer)
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				testing_utils.LogWarn("GroupBy Worker", "Failed to deserialize message: %v", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			chunkMessage, _ := message.(*chunk.Chunk)
+
+			if err := w.processMessage(chunkMessage); err != nil {
 				testing_utils.LogError("GroupBy Worker", "Failed to process message: %v", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -107,28 +176,31 @@ func (w *GroupByWorker) createCallback() func(middleware.ConsumeChannel, chan er
 }
 
 // processMessage processes a single message
-func (w *GroupByWorker) processMessage(messageBody []byte) error {
-	// Deserialize the message
-	message, err := deserializer.Deserialize(messageBody)
-	if err != nil {
-		testing_utils.LogWarn("GroupBy Worker", "Failed to deserialize message: %v", err)
-		return err
-	}
+func (w *GroupByWorker) processMessage(chunkMessage *chunk.Chunk) error {
 
-	// Check if it's a chunk message
-	chunkMessage, ok := message.(*chunk.Chunk)
-	if !ok {
-		testing_utils.LogWarn("GroupBy Worker", "Received non-chunk message, skipping")
+	// Check if chunk was already processed
+	if w.messageManager.IsProcessed(chunkMessage.ID) {
+		testing_utils.LogInfo("GroupBy Worker", "Chunk %s already processed, skipping", chunkMessage.ID)
 		return nil
 	}
 
-	// Process the chunk (dummy group by for now)
-	return w.processChunk(chunkMessage)
+	// Process the chunk
+	if err := w.processChunk(chunkMessage); err != nil {
+		return err
+	}
+
+	// Mark chunk as processed after successful write
+	if err := w.messageManager.MarkProcessed(chunkMessage.ID); err != nil {
+		testing_utils.LogError("GroupBy Worker", "Failed to mark chunk as processed: %v", err)
+		return fmt.Errorf("failed to mark chunk as processed: %w", err)
+	}
+
+	return nil
 }
 
 // RecordAppender defines how to append records to CSV for a specific query type
 type RecordAppender interface {
-	AppendRecords(clientID string, partition int, records interface{}) error
+	AppendRecords(clientID string, partition int, records interface{}, chunkID string, isFirstChunk bool) error
 }
 
 // Query2RecordAppender appends Query2Record to CSV
@@ -136,8 +208,8 @@ type Query2RecordAppender struct {
 	fileManager *FileManager
 }
 
-func (a *Query2RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
-	return a.fileManager.AppendQuery2RecordsToPartitionCSV(clientID, partition, records.([]shared.Query2Record))
+func (a *Query2RecordAppender) AppendRecords(clientID string, partition int, records interface{}, chunkID string, isFirstChunk bool) error {
+	return a.fileManager.AppendQuery2RecordsToPartitionCSV(clientID, partition, records.([]shared.Query2Record), chunkID, isFirstChunk)
 }
 
 // Query3RecordAppender appends Query3Record to CSV
@@ -145,8 +217,8 @@ type Query3RecordAppender struct {
 	fileManager *FileManager
 }
 
-func (a *Query3RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
-	return a.fileManager.AppendQuery3RecordsToPartitionCSV(clientID, partition, records.([]shared.Query3Record))
+func (a *Query3RecordAppender) AppendRecords(clientID string, partition int, records interface{}, chunkID string, isFirstChunk bool) error {
+	return a.fileManager.AppendQuery3RecordsToPartitionCSV(clientID, partition, records.([]shared.Query3Record), chunkID, isFirstChunk)
 }
 
 // Query4RecordAppender appends Query4Record to CSV
@@ -154,8 +226,8 @@ type Query4RecordAppender struct {
 	fileManager *FileManager
 }
 
-func (a *Query4RecordAppender) AppendRecords(clientID string, partition int, records interface{}) error {
-	return a.fileManager.AppendRecordsToPartitionCSV(clientID, partition, records.([]shared.Query4Record))
+func (a *Query4RecordAppender) AppendRecords(clientID string, partition int, records interface{}, chunkID string, isFirstChunk bool) error {
+	return a.fileManager.AppendRecordsToPartitionCSV(clientID, partition, records.([]shared.Query4Record), chunkID, isFirstChunk)
 }
 
 // processChunk processes a single chunk with file-based group by aggregation
@@ -211,7 +283,7 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 
 	// Append records to CSV files for each partition (batch write per partition)
 	for partition, records := range recordsMap {
-		if err := appender.AppendRecords(chunkMessage.ClientID, partition, records); err != nil {
+		if err := appender.AppendRecords(chunkMessage.ClientID, partition, records, chunkMessage.ID, !w.firstChunkProcessed); err != nil {
 			return fmt.Errorf("failed to append to partition %d CSV: %v", partition, err)
 		}
 
@@ -228,6 +300,12 @@ func (w *GroupByWorker) processChunk(chunkMessage *chunk.Chunk) error {
 
 		testing_utils.LogInfo("GroupBy Worker", "Appended %d records to partition %d CSV for chunk %d",
 			partitionRecordCount, partition, chunkMessage.ChunkNumber)
+	}
+
+	// After processing the first chunk, mark it as processed
+	if !w.firstChunkProcessed {
+		w.firstChunkProcessed = true
+		testing_utils.LogInfo("GroupBy Worker", "First chunk processed, switching to normal write mode")
 	}
 
 	// Send chunk notification to orchestrator AFTER successful CSV writes
@@ -278,6 +356,9 @@ func (w *GroupByWorker) sendChunkNotification(chunkMessage *chunk.Chunk) error {
 
 // Close closes the worker
 func (w *GroupByWorker) Close() {
+	if w.messageManager != nil {
+		w.messageManager.Close()
+	}
 	if w.consumer != nil {
 		w.consumer.Close()
 	}

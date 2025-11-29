@@ -94,7 +94,7 @@ func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []strin
 			return fmt.Errorf("failed to write record: %w", err)
 		}
 
-		testing_utils.LogInfo("Partition Manager", "Writing record: %v", record)
+		//testing_utils.LogInfo("Partition Manager", "Writing record: %v", record)
 	}
 
 	// Sync to ensure data is written to disk
@@ -290,15 +290,7 @@ func (pm *PartitionManager) GetLastLines(filePath string, n int) ([]string, erro
 		return nil, fmt.Errorf("failed to read CSV: %w", err)
 	}
 
-	// Filter out header if present
 	records := allRecords
-	if len(records) > 0 && len(records[0]) > 0 {
-		// Check if first record is header (common headers: user_id, id, etc.)
-		firstField := strings.ToLower(records[0][0])
-		if firstField == "user_id" || firstField == "id" {
-			records = records[1:]
-		}
-	}
 
 	// Convert last N records to the same format as partition.Lines
 	// Format: "field1,field2\n" (matching partitionData function)
@@ -323,11 +315,13 @@ func (pm *PartitionManager) WriteOnlyMissingLines(filePath string, lastLines []s
 	if len(lastLines) == 0 {
 		return pm.appendToPartitionFile(filePath, newLines, opts)
 	}
-	
+
 	writtenLinesCounter := 0
 	if len(newLines) > 0 {
 		for _, writtenLine := range lastLines {
 			newLine := newLines[writtenLinesCounter]
+			testing_utils.LogInfo("Partition Manager", "Written line: %s", writtenLine)
+			testing_utils.LogInfo("Partition Manager", "New line: %s", newLine)
 			if newLine == writtenLine {
 				writtenLinesCounter++
 			} else {
@@ -338,6 +332,7 @@ func (pm *PartitionManager) WriteOnlyMissingLines(filePath string, lastLines []s
 
 	return pm.appendToPartitionFile(filePath, newLines[writtenLinesCounter:], opts)
 }
+
 // DeleteIncompleteLines deletes incomplete lines from all partition files
 func (pm *PartitionManager) DeleteIncompleteLines() (int, error) {
 	fixedCount := 0

@@ -1,7 +1,11 @@
 package dictionary
 
 import (
+	"encoding/csv"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -132,4 +136,133 @@ func (m *Manager[T]) LoadFromCSV(clientID string, csvData string, parseFunc Pars
 	}
 
 	return nil
+}
+
+// SaveDictionaryChunkToFile appends dictionary chunk CSV data directly to file
+func (m *Manager[T]) SaveDictionaryChunkToFile(clientID string, filePath string, csvData string) error {
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Check if file exists
+	fileExists := false
+	if _, err := os.Stat(filePath); err == nil {
+		fileExists = true
+	}
+
+	// Open file in append mode
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	// If file is new, write the CSV data as-is (includes header)
+	// If file exists, skip header and write only data rows
+	if fileExists {
+		// Parse CSV to skip header
+		reader := csv.NewReader(strings.NewReader(csvData))
+		records, err := reader.ReadAll()
+		if err != nil {
+			return fmt.Errorf("failed to parse CSV: %w", err)
+		}
+
+		// Skip header row (first row)
+		if len(records) > 1 {
+			writer := csv.NewWriter(file)
+			for _, record := range records[1:] {
+				if err := writer.Write(record); err != nil {
+					return fmt.Errorf("failed to write row: %w", err)
+				}
+			}
+			writer.Flush()
+		}
+	} else {
+		// New file - write CSV data as-is (includes header)
+		if _, err := file.WriteString(csvData); err != nil {
+			return fmt.Errorf("failed to write CSV data: %w", err)
+		}
+	}
+
+	// Sync to ensure data is written
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
+	}
+
+	return nil
+}
+
+// RebuildDictionaryFromFile rebuilds dictionary from a CSV file
+func (m *Manager[T]) RebuildDictionaryFromFile(filePath string, parseFunc ParseCallback[T]) (string, error) {
+	// Extract clientID from filename (format: {clientID}.csv)
+	filename := filepath.Base(filePath)
+	clientID := strings.TrimSuffix(filename, ".csv")
+
+	// Read file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	// Read all content
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return "", fmt.Errorf("failed to read CSV: %w", err)
+	}
+
+	// Convert records back to CSV string
+	var content strings.Builder
+	for i, record := range records {
+		if i > 0 {
+			content.WriteString("\n")
+		}
+		content.WriteString(strings.Join(record, ","))
+	}
+
+	// Load into dictionary
+	if err := m.LoadFromCSV(clientID, content.String(), parseFunc); err != nil {
+		return "", fmt.Errorf("failed to load dictionary: %w", err)
+	}
+
+	return clientID, nil
+}
+
+// RebuildAllDictionaries scans directory and rebuilds all dictionaries
+func (m *Manager[T]) RebuildAllDictionaries(dictDir string, parseFunc ParseCallback[T]) (int, error) {
+	// Ensure directory exists
+	if err := os.MkdirAll(dictDir, 0755); err != nil {
+		return 0, fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Read directory
+	entries, err := os.ReadDir(dictDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // Directory doesn't exist, nothing to rebuild
+		}
+		return 0, fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	rebuiltCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".csv") {
+			continue
+		}
+
+		filePath := filepath.Join(dictDir, entry.Name())
+		clientID, err := m.RebuildDictionaryFromFile(filePath, parseFunc)
+		if err != nil {
+			// Log error but continue with other files
+			continue
+		}
+
+		// Mark as ready (file exists = dictionary ready)
+		m.SetReady(clientID)
+		rebuiltCount++
+	}
+
+	return rebuiltCount, nil
 }

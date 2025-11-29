@@ -5,6 +5,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
@@ -12,9 +13,10 @@ import (
 
 // PartitionerWorker handles partitioning of chunks based on query type
 type PartitionerWorker struct {
-	config    *PartitionerConfig
-	consumer  *workerqueue.QueueConsumer
-	processor *PartitionerProcessor
+	config         *PartitionerConfig
+	consumer       *workerqueue.QueueConsumer
+	processor      *PartitionerProcessor
+	messageManager *messagemanager.MessageManager
 }
 
 // NewPartitionerWorker creates a new partitioner worker instance
@@ -45,10 +47,20 @@ func NewPartitionerWorker(config *PartitionerConfig) (*PartitionerWorker, error)
 		return nil, fmt.Errorf("failed to create processor: %v", err)
 	}
 
+	// Initialize MessageManager for fault tolerance
+	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		testing_utils.LogWarn("Partitioner Worker", "Failed to load processed IDs: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		testing_utils.LogInfo("Partitioner Worker", "Loaded %d processed IDs", count)
+	}
+
 	return &PartitionerWorker{
-		config:    config,
-		consumer:  consumer,
-		processor: processor,
+		config:         config,
+		consumer:       consumer,
+		processor:      processor,
+		messageManager: messageManager,
 	}, nil
 }
 
@@ -70,8 +82,18 @@ func (w *PartitionerWorker) createCallback() func(middleware.ConsumeChannel, cha
 			messageCount++
 			testing_utils.LogInfo("Partitioner Worker", "Received message #%d", messageCount)
 
-			// Process the message
-			if err := w.processMessage(delivery.Body); err != nil {
+			// Deserialize the message in the callback (middleware layer)
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				testing_utils.LogWarn("Partitioner Worker", "Failed to deserialize message: %v", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			chunkMessage, _ := message.(*chunk.Chunk)
+
+			// Process with deserialized chunk
+			if err := w.processMessage(chunkMessage); err != nil {
 				testing_utils.LogError("Partitioner Worker", "Failed to process message: %v", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -84,27 +106,33 @@ func (w *PartitionerWorker) createCallback() func(middleware.ConsumeChannel, cha
 }
 
 // processMessage processes a single message
-func (w *PartitionerWorker) processMessage(messageBody []byte) error {
-	// Deserialize the message
-	message, err := deserializer.Deserialize(messageBody)
-	if err != nil {
-		testing_utils.LogWarn("Partitioner Worker", "Failed to deserialize message: %v", err)
-		return err
-	}
+func (w *PartitionerWorker) processMessage(chunkMessage *chunk.Chunk) error {
 
-	// Check if it's a chunk message
-	chunkMessage, ok := message.(*chunk.Chunk)
-	if !ok {
-		testing_utils.LogWarn("Partitioner Worker", "Received non-chunk message, skipping")
+	// Check if already processed
+	if w.messageManager.IsProcessed(chunkMessage.ID) {
+		testing_utils.LogInfo("Partitioner Worker", "Chunk ID %s already processed, skipping", chunkMessage.ID)
 		return nil
 	}
 
 	// Process the chunk with partitioning
-	return w.processor.ProcessChunk(chunkMessage)
+	if err := w.processor.ProcessChunk(chunkMessage); err != nil {
+		return err
+	}
+
+	// Mark as processed (must be after successful processing)
+	if err := w.messageManager.MarkProcessed(chunkMessage.ID); err != nil {
+		testing_utils.LogError("Partitioner Worker", "Failed to mark chunk as processed: %v", err)
+		return fmt.Errorf("failed to mark chunk as processed: %v", err)
+	}
+
+	return nil
 }
 
 // Close closes the partitioner worker
 func (w *PartitionerWorker) Close() {
+	if w.messageManager != nil {
+		w.messageManager.Close()
+	}
 	if w.consumer != nil {
 		w.consumer.Close()
 	}

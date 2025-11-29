@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
@@ -110,17 +109,17 @@ func YearFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 }
 
 // processMessage processes a single message
-func (yfw *YearFilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("Year Filter Worker: Failed to deserialize chunk message: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
+func (yfw *YearFilterWorker) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+
+	// Check if already processed
+	if yfw.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("Year Filter Worker: Chunk ID %s already processed, skipping\n", chunkMsg.ID)
+		return 0 // Return 0 to ACK (handled by createCallback)
 	}
 
 	// Process the chunk (year filter logic)
-	fmt.Printf("Year Filter Worker: Processing chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d, FileID: %s\n",
-		chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID)
+	fmt.Printf("Year Filter Worker: Processing chunk - QueryType: %d, ClientID: %s, ChunkNumber: %d, FileID: %s, ID: %s\n",
+		chunkMsg.QueryType, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.FileID, chunkMsg.ID)
 
 	responseChunk, msgErr := YearFilterLogic(chunkMsg)
 	if msgErr != 0 {
@@ -128,12 +127,12 @@ func (yfw *YearFilterWorker) processMessage(delivery amqp.Delivery) middleware.M
 		return msgErr
 	}
 
-	// Route the message based on query type
-	return yfw.routeMessage(&responseChunk)
+	// Route the message based on query type (pass chunk ID for marking as processed)
+	return yfw.routeMessage(&responseChunk, chunkMsg.ID)
 }
 
 // routeMessage routes the processed chunk to the appropriate next stage
-func (yfw *YearFilterWorker) routeMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+func (yfw *YearFilterWorker) routeMessage(chunkMsg *chunk.Chunk, chunkID string) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 
@@ -145,26 +144,35 @@ func (yfw *YearFilterWorker) routeMessage(chunkMsg *chunk.Chunk) middleware.Mess
 	}
 
 	// Route based on query type
+	var sendErr middleware.MessageMiddlewareError
 	switch chunkMsg.QueryType {
 	case chunk.QueryType1, chunk.QueryType3:
 		// Send to time filter for further processing
-		if err := yfw.timeFilterProducer.Send(replyData); err != 0 {
-			fmt.Printf("Year Filter Worker: Failed to send to time filter: %v\n", err)
-			return err
+		sendErr = yfw.timeFilterProducer.Send(replyData)
+		if sendErr != 0 {
+			fmt.Printf("Year Filter Worker: Failed to send to time filter: %v\n", sendErr)
+			return sendErr
 		}
 		fmt.Printf("Year Filter Worker: Sent to time filter for ClientID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.ChunkNumber)
 	case chunk.QueryType2, chunk.QueryType4:
 		// Send directly to reply bus
-		if err := yfw.replyProducer.Send(replyData); err != 0 {
-			fmt.Printf("Year Filter Worker: Failed to send to reply bus: %v\n", err)
-			return err
+		sendErr = yfw.replyProducer.Send(replyData)
+		if sendErr != 0 {
+			fmt.Printf("Year Filter Worker: Failed to send to reply bus: %v\n", sendErr)
+			return sendErr
 		}
 		fmt.Printf("Year Filter Worker: Sent to reply bus for ClientID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Year Filter Worker: Unknown QueryType: %d\n", chunkMsg.QueryType)
 		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Mark as processed (must be after successful send)
+	if err := yfw.messageManager.MarkProcessed(chunkID); err != nil {
+		fmt.Printf("Year Filter Worker: Failed to mark chunk as processed: %v\n", err)
+		return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 	}
 
 	return 0

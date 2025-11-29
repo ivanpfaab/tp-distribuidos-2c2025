@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -24,17 +26,16 @@ type ItemIdJoinWorker struct {
 	chunkConsumer        *workerqueue.QueueConsumer
 	completionConsumer   *exchange.ExchangeConsumer
 	outputProducer       *workerqueue.QueueMiddleware
-	completionProducer   *workerqueue.QueueMiddleware
 	orchestratorProducer *workerqueue.QueueMiddleware
 	config               *middleware.ConnectionConfig
 	workerID             string
+	messageManager       *messagemanager.MessageManager
 
 	// Shared components
 	dictManager          *dictionary.Manager[*MenuItem]
 	dictHandler          *handler.DictionaryHandler[*MenuItem]
 	completionHandler    *handler.CompletionHandler[*MenuItem]
 	chunkSender          *joinchunk.Sender
-	completionNotifier   *notifier.CompletionNotifier
 	orchestratorNotifier *notifier.OrchestratorNotifier
 }
 
@@ -89,18 +90,6 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		return nil, fmt.Errorf("failed to create completion consumer")
 	}
 
-	completionProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.InMemoryJoinCompletionQueue,
-		config,
-	)
-	if completionProducer == nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		return nil, fmt.Errorf("failed to create completion producer")
-	}
-
 	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(
 		queues.InMemoryJoinCompletionQueue,
 		config,
@@ -110,7 +99,6 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create orchestrator producer")
 	}
 
@@ -121,7 +109,6 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create input queue declarer")
 	}
 	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
@@ -129,7 +116,6 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
 	}
@@ -140,32 +126,61 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to declare output queue: %v", err)
-	}
-
-	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		completionProducer.Close()
-		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
 	}
 
 	workerID := fmt.Sprintf("itemid-worker-%s", instanceID)
 
+	// Initialize MessageManager for fault tolerance
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		orchestratorProducer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("ItemID Join Worker: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("ItemID Join Worker: Loaded %d processed chunks\n", count)
+	}
+
 	// Initialize shared components
 	dictManager := dictionary.NewManager[*MenuItem]()
+
+	// Create dictionary directory
+	dictDir := filepath.Join(stateDir, "dictionaries")
+	if err := os.MkdirAll(dictDir, 0755); err != nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		orchestratorProducer.Close()
+		messageManager.Close()
+		return nil, fmt.Errorf("failed to create dictionary directory: %w", err)
+	}
 
 	parseFunc := func(csvData string, clientID string) (map[string]*MenuItem, error) {
 		return parser.ParseMenuItems(csvData, clientID)
 	}
 
-	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, "ItemID Join Worker")
-	completionHandler := handler.NewCompletionHandler(dictManager, "ItemID Join Worker")
+	// Rebuild dictionaries on startup
+	rebuiltCount, err := dictManager.RebuildAllDictionaries(dictDir, parseFunc)
+	if err != nil {
+		fmt.Printf("ItemID Join Worker: Warning - failed to rebuild dictionaries: %v\n", err)
+	} else {
+		fmt.Printf("ItemID Join Worker: Rebuilt %d dictionaries on startup\n", rebuiltCount)
+	}
+
+	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, dictDir, "ItemID Join Worker")
+	completionHandler := handler.NewCompletionHandler(dictManager, dictDir, "ItemID Join Worker")
 	chunkSender := joinchunk.NewSender(outputProducer)
-	completionNotifier := notifier.NewCompletionNotifier(completionProducer, workerID, "items")
 	orchestratorNotifier := notifier.NewOrchestratorNotifier(orchestratorProducer, "itemid-join-worker")
 
 	return &ItemIdJoinWorker{
@@ -173,15 +188,14 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		chunkConsumer:        chunkConsumer,
 		completionConsumer:   completionConsumer,
 		outputProducer:       outputProducer,
-		completionProducer:   completionProducer,
 		orchestratorProducer: orchestratorProducer,
 		config:               config,
 		workerID:             workerID,
+		messageManager:       messageManager,
 		dictManager:          dictManager,
 		dictHandler:          dictHandler,
 		completionHandler:    completionHandler,
 		chunkSender:          chunkSender,
-		completionNotifier:   completionNotifier,
 		orchestratorNotifier: orchestratorNotifier,
 	}, nil
 }
@@ -189,6 +203,12 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 // Start starts the ItemID join worker
 func (w *ItemIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("ItemID Join Worker: Starting to listen for messages...")
+
+	// Set queue names for persistent queues
+	dictionaryQueueName := fmt.Sprintf("itemid-dictionary-%s-queue", w.workerID)
+	w.dictionaryConsumer.SetQueueName(dictionaryQueueName)
+	completionQueueName := fmt.Sprintf("itemid-completion-%s-queue", w.workerID)
+	w.completionConsumer.SetQueueName(completionQueueName)
 
 	// Start consuming from dictionary queue
 	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
@@ -210,6 +230,9 @@ func (w *ItemIdJoinWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (w *ItemIdJoinWorker) Close() {
+	if w.messageManager != nil {
+		w.messageManager.Close()
+	}
 	if w.dictionaryConsumer != nil {
 		w.dictionaryConsumer.Close()
 	}
@@ -222,9 +245,6 @@ func (w *ItemIdJoinWorker) Close() {
 	if w.outputProducer != nil {
 		w.outputProducer.Close()
 	}
-	if w.completionProducer != nil {
-		w.completionProducer.Close()
-	}
 	if w.orchestratorProducer != nil {
 		w.orchestratorProducer.Close()
 	}
@@ -234,12 +254,34 @@ func (w *ItemIdJoinWorker) Close() {
 func (w *ItemIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.dictHandler.ProcessMessage(delivery)
-			if err != 0 {
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("ItemID Join Worker: Failed to deserialize dictionary chunk: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+
+			// Check if chunk was already processed
+			if w.messageManager.IsProcessed(chunkMsg.ID) {
+				fmt.Printf("ItemID Join Worker: Dictionary chunk %s already processed, skipping\n", chunkMsg.ID)
+				delivery.Ack(false)
+				continue
+			}
+
+			if err := w.dictHandler.ProcessMessage(chunkMsg); err != 0 {
+				delivery.Nack(false, false)
 				done <- fmt.Errorf("failed to process dictionary message: %v", err)
 				return
 			}
+
+			// Mark chunk as processed after successful processing
+			if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+				fmt.Printf("ItemID Join Worker: Failed to mark dictionary chunk as processed: %v\n", err)
+			}
+
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }
 
@@ -247,42 +289,55 @@ func (w *ItemIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCha
 func (w *ItemIdJoinWorker) createChunkCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.processChunkMessage(delivery)
-			if err != 0 {
+
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("ItemID Join Worker: Failed to deserialize chunk: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+
+			if !w.dictManager.IsReady(chunkMsg.ClientID) {
+				fmt.Printf("ItemID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
+				delivery.Nack(false, true) // Requeue
+				continue
+			}
+
+			if err := w.processChunkMessage(chunkMsg); err != 0 {
+				fmt.Printf("ItemID Join Worker: Failed to process chunk message: %v\n", err)
+				delivery.Nack(false, false) // Don't requeue on processing errors
 				done <- fmt.Errorf("failed to process chunk message: %v", err)
 				return
 			}
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }
 
 // processChunkMessage processes chunk messages for joining
-func (w *ItemIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+func (w *ItemIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	fmt.Printf("ItemID Join Worker: Received chunk message\n")
 
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("ItemID Join Worker: Failed to deserialize chunk: %v\n", err)
-		delivery.Nack(false, false)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Check if dictionary is ready
-	if !w.dictManager.IsReady(chunkMsg.ClientID) {
-		fmt.Printf("ItemID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
-		delivery.Nack(false, true)
-		return 0
+	// Check if chunk was already processed
+	if w.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("ItemID Join Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
+		return 0 // Success - callback will ack
 	}
 
 	// Process the chunk
 	if err := w.processChunk(chunkMsg); err != 0 {
 		fmt.Printf("ItemID Join Worker: Failed to process chunk: %v\n", err)
-		delivery.Nack(false, false)
+		return middleware.MessageMiddlewareMessageError // Error - callback will nack
+	}
+
+	// Mark chunk as processed after successful processing
+	if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		fmt.Printf("ItemID Join Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	delivery.Ack(false)
-	return 0
+	return 0 // Success - callback will ack
 }
 
 // processChunk processes a single chunk for joining
@@ -303,11 +358,7 @@ func (w *ItemIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messag
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send completion notifications
-	if err := w.completionNotifier.SendCompletionNotification(chunkMsg.ClientID); err != nil {
-		fmt.Printf("ItemID Join Worker: Failed to send completion notification: %v\n", err)
-	}
-
+	// Send orchestrator notification
 	if err := w.orchestratorNotifier.SendChunkNotification(chunkMsg); err != nil {
 		fmt.Printf("ItemID Join Worker: Failed to send orchestrator notification: %v\n", err)
 	}
@@ -369,9 +420,20 @@ func (w *ItemIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, err
 func (w *ItemIdJoinWorker) createCompletionCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			if err := w.completionHandler.ProcessMessage(delivery); err != 0 {
-				fmt.Printf("ItemID Join Worker: Error processing completion signal: %v\n", err)
+			
+			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
+			if err != nil {
+				fmt.Printf("ItemID Join Worker: Failed to deserialize completion signal: %v\n", err)
+				delivery.Ack(false)
+				continue
 			}
+
+			if err := w.completionHandler.ProcessMessage(completionSignal); err != 0 {
+				fmt.Printf("ItemID Join Worker: Error processing completion signal: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+			delivery.Ack(false)
 		}
 		done <- nil
 	}

@@ -9,4 +9,5 @@ const (
 	TableIDSize      = 1
 	ChunkNumberSize  = 4
 	ResourceTypeSize = 32
+	IDSize           = 12 // ClientIDSize (4) + FileIDSize (4) + ChunkNumberSize (4)
 )

@@ -4,61 +4,74 @@ import (
 	"fmt"
 	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
 // processMessage processes incoming messages and routes them to join workers
-func (qg *QueryGateway) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+func (qg *QueryGateway) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("Query Gateway: Failed to deserialize chunk message: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
+	// Check if already processed
+	if qg.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("Query Gateway: Chunk ID %s already processed, skipping\n", chunkMsg.ID)
+		return 0 // Return 0 to ACK (handled by createCallback)
 	}
 
 	// Route chunk to appropriate destination based on query type
+	var routeErr middleware.MessageMiddlewareError
 	switch chunkMsg.QueryType {
 	case 1:
 		// Query 1: Send to Query1 results queue for results dispatcher
-		if err := qg.sendToQuery1Results(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query1 results queue: %v\n", err)
-			return err
+		routeErr = qg.sendToQuery1Results(chunkMsg)
+		if routeErr != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query1 results queue: %v\n", routeErr)
+			return routeErr
 		}
 		fmt.Printf("Query Gateway: Routed Query 1 chunk to results queue - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 2:
 		// Query 2: Send to Query 2 GroupBy (MapReduce)
-		if err := qg.sendToQuery2GroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query 2 GroupBy: %v\n", err)
-			return err
+		routeErr = qg.sendToQuery2GroupBy(chunkMsg)
+		if routeErr != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 2 GroupBy: %v\n", routeErr)
+			return routeErr
 		}
 		fmt.Printf("Query Gateway: Routed Query 2 chunk to Query 2 GroupBy - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 3:
 		// Query 3: Send to Query 3 GroupBy (MapReduce)
-		if err := qg.sendToQuery3GroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query 3 GroupBy: %v\n", err)
-			return err
+		routeErr = qg.sendToQuery3GroupBy(chunkMsg)
+		if routeErr != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 3 GroupBy: %v\n", routeErr)
+			return routeErr
 		}
 		fmt.Printf("Query Gateway: Routed Query 3 chunk to Query 3 GroupBy - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	case 4:
 		// Query 4: Send to Query 4 GroupBy (MapReduce)
-		if err := qg.sendToQuery4GroupBy(chunkMsg); err != 0 {
-			fmt.Printf("Query Gateway: Failed to send chunk to Query 4 GroupBy: %v\n", err)
-			return err
+		routeErr = qg.sendToQuery4GroupBy(chunkMsg)
+		if routeErr != 0 {
+			fmt.Printf("Query Gateway: Failed to send chunk to Query 4 GroupBy: %v\n", routeErr)
+			return routeErr
 		}
 		fmt.Printf("Query Gateway: Routed Query 4 chunk to Query 4 GroupBy - ClientID: %s, FileID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.FileID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Query Gateway: Unknown query type %d, printing result\n", chunkMsg.QueryType)
 		qg.printResult(chunkMsg)
+		// For unknown query types, we still mark as processed to avoid infinite loops
+		routeErr = 0
 	}
 
-	return 0
+	// Mark as processed (must be after successful routing)
+	if routeErr == 0 {
+		if err := qg.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+			fmt.Printf("Query Gateway: Failed to mark chunk as processed: %v\n", err)
+			return middleware.MessageMiddlewareMessageError // Will NACK and requeue
+		}
+	}
+
+	return routeErr
 }
 
 // printResult prints the chunk data in a formatted way with ClientID (same format as results dispatcher)

@@ -3,10 +3,13 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -21,6 +24,10 @@ type GroupByOrchestrator struct {
 	chunkConsumer      *exchange.ExchangeConsumer
 	completionProducer *workerqueue.QueueMiddleware // For sending completion chunks to next step
 	fileAggregator     *FileAggregator              // For aggregating partition files
+
+	// Fault tolerance components
+	messageManager *messagemanager.MessageManager
+	stateManager   *StateManager
 }
 
 // NewGroupByOrchestrator creates a new group by orchestrator
@@ -42,7 +49,41 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 	trackerName := fmt.Sprintf("Query%d-Orchestrator-Worker%d", queryType, config.WorkerID)
 	orchestrator.completionTracker = shared.NewCompletionTracker(trackerName, orchestrator.onClientCompleted)
 
+	// Initialize fault tolerance components
+	// Use existing /app/groupby-data volume, create orchestrator-state subdirectory
+	stateDir := "/app/groupby-data/orchestrator-state"
+	metadataDir := filepath.Join(stateDir, "metadata")
+	processedNotificationsPath := filepath.Join(stateDir, "processed-notifications.txt")
+
+	// Ensure state directory exists
+	if err := os.MkdirAll(metadataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	// Initialize MessageManager for duplicate detection
+	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		log.Printf("Group By Orchestrator: Warning - failed to load processed notifications: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		log.Printf("Group By Orchestrator: Loaded %d processed notification IDs", count)
+	}
+
+	// Initialize StateManager
+	stateManager := NewStateManager(metadataDir, orchestrator.completionTracker)
+	orchestrator.messageManager = messageManager
+	orchestrator.stateManager = stateManager
+
 	orchestrator.initializeQueues()
+
+	// Rebuild state from CSV metadata on startup
+	log.Println("Group By Orchestrator: Rebuilding state from metadata...")
+	if err := orchestrator.stateManager.RebuildState(); err != nil {
+		log.Printf("Group By Orchestrator: Warning - failed to rebuild state: %v", err)
+	} else {
+		log.Println("Group By Orchestrator: State rebuilt successfully")
+	}
+
 	return orchestrator, nil
 }
 
@@ -105,7 +146,9 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 		isLastChunk := (i == len(fileResults)-1)
 		// Use partition number as chunk number (unique across all orchestrators)
 		chunkNumber := result.PartitionNumber
-		if err := gbo.sendDataChunk(clientID, chunkNumber, result.CSVData, isLastChunk); err != nil {
+		// For Query2/Query3 (no top worker), set IsLastFromTable=true on last chunk
+		isLastFromTable := isLastChunk && (gbo.config.QueryType == 2 || gbo.config.QueryType == 3)
+		if err := gbo.sendDataChunk(clientID, chunkNumber, result.CSVData, isLastChunk, isLastFromTable); err != nil {
 			log.Printf("Failed to send data chunk for client %s, partition %d: %v", clientID, chunkNumber, err)
 			// Continue with other chunks
 			continue
@@ -115,12 +158,11 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 
 	// Clean up files and clear state
 	gbo.cleanupClientFiles(clientID)
-}
 
-// sendAggregatedChunk sends the aggregated CSV data as a chunk to the next processing step
-func (gbo *GroupByOrchestrator) sendAggregatedChunk(clientID string, chunkNumber int, csvData string) error {
-	// Send chunk to next step (IsLastChunk=true, IsLastFromTable=true as per requirements)
-	return gbo.sendDataChunk(clientID, chunkNumber, csvData, true)
+	// Delete CSV metadata file for completed client
+	if err := gbo.stateManager.DeleteClientMetadata(clientID); err != nil {
+		log.Printf("Group By Orchestrator: Warning - failed to delete metadata file for client %s: %v", clientID, err)
+	}
 }
 
 // cleanupClientFiles deletes all files and clears client state from the completion tracker
@@ -140,18 +182,18 @@ func (gbo *GroupByOrchestrator) cleanupClientFiles(clientID string) {
 }
 
 // sendDataChunk sends a data chunk with CSV data to the next processing step
-func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, csvData string, isLastChunk bool) error {
+func (gbo *GroupByOrchestrator) sendDataChunk(clientID string, chunkNumber int, csvData string, isLastChunk bool, isLastFromTable bool) error {
 	// Create chunk with grouped CSV data
 	// All queries: Chunk number = partition number (unique across orchestrators)
 	// IsLastChunk: true only for the last chunk from this orchestrator
-	// IsLastFromTable: true only when this is the last chunk from all orchestrators
+	// IsLastFromTable: true for Query2/Query3 (no top worker), or set by top-users worker for Query4
 	dataChunk := chunk.NewChunk(
 		clientID,                   // ClientID
 		"01",                       // FileID - use "01" so completion tracker can parse it
 		byte(gbo.config.QueryType), // QueryType
 		chunkNumber,                // ChunkNumber (partition number)
 		isLastChunk,                // IsLastChunk - true for last chunk from this orchestrator
-		false,                      // IsLastFromTable - set by top-users worker when all chunks received
+		isLastFromTable,            // IsLastFromTable - true for Query2/Query3, or set by top-users worker for Query4
 		len(csvData),               // ChunkSize
 		0,                          // TableID
 		csvData,                    // ChunkData - CSV formatted data
@@ -203,12 +245,27 @@ func (gbo *GroupByOrchestrator) Start() {
 				continue
 			}
 
+			// Check for duplicate notification
+			if gbo.messageManager.IsProcessed(notification.ID) {
+				delivery.Ack(false)
+				continue
+			}
+
 			// Process the notification using the completion tracker
-			// All orchestrators receive all notifications via fanout, so they all track the same state
 			if err := gbo.completionTracker.ProcessChunkNotification(notification); err != nil {
 				log.Printf("Failed to process chunk notification: %v", err)
 				delivery.Ack(false)
 				continue
+			}
+
+			// Append notification to CSV for state rebuild
+			if err := gbo.stateManager.AppendNotification(notification); err != nil {
+				log.Printf("Warning - failed to append notification to CSV: %v", err)
+			}
+
+			// Mark as processed in MessageManager
+			if err := gbo.messageManager.MarkProcessed(notification.ID); err != nil {
+				log.Printf("Warning - failed to mark notification as processed: %v", err)
 			}
 
 			// Acknowledge the message
@@ -218,6 +275,8 @@ func (gbo *GroupByOrchestrator) Start() {
 	}
 
 	exchangeName := queues.GetOrchestratorChunksExchangeName(gbo.config.QueryType)
+	queueName := fmt.Sprintf("query%d-orchestrator-worker-%d-queue", gbo.config.QueryType, gbo.config.WorkerID)
+	gbo.chunkConsumer.SetQueueName(queueName)
 	if err := gbo.chunkConsumer.StartConsuming(onMessageCallback); err != 0 {
 		log.Fatalf("Failed to start consuming chunk notifications: %v", err)
 	}
@@ -232,6 +291,9 @@ func (gbo *GroupByOrchestrator) Close() {
 	}
 	if gbo.completionProducer != nil {
 		gbo.completionProducer.Close()
+	}
+	if gbo.messageManager != nil {
+		gbo.messageManager.Close()
 	}
 }
 
