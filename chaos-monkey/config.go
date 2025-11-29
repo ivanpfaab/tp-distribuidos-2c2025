@@ -28,7 +28,7 @@ func LoadChaosConfig() (*ChaosConfig, error) {
 
 	killIntervalStr := os.Getenv("KILL_INTERVAL")
 	if killIntervalStr == "" {
-		killIntervalStr = "30s"
+		killIntervalStr = "5s"
 	}
 	killInterval, err := time.ParseDuration(killIntervalStr)
 	if err != nil {
@@ -46,7 +46,7 @@ func LoadChaosConfig() (*ChaosConfig, error) {
 
 	pauseDurStr := os.Getenv("PAUSE_DURATION")
 	if pauseDurStr == "" {
-		pauseDurStr = "10s"
+		pauseDurStr = "3s"
 	}
 	pauseDur, err := time.ParseDuration(pauseDurStr)
 	if err != nil {
@@ -60,4 +60,3 @@ func LoadChaosConfig() (*ChaosConfig, error) {
 		PauseDuration:    pauseDur,
 	}, nil
 }
-

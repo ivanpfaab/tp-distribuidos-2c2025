@@ -46,7 +46,7 @@ func NewBullyElection(
 		onLeaderChange:         onLeaderChange,
 		stopChan:               make(chan bool),
 		electionInProgress:     false,
-		leaderHeartbeatTimeout: 25 * time.Second,
+		leaderHeartbeatTimeout: 15 * time.Second,
 	}, nil
 }
 
@@ -389,7 +389,7 @@ func (be *BullyElection) getHigherNodes() []int {
 func (be *BullyElection) periodicLeaderCheck() {
 	defer be.wg.Done()
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {

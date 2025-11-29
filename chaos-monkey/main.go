@@ -58,17 +58,8 @@ func (cm *ChaosMonkey) maybeInjectFault() {
 
 	target := cm.config.TargetContainers[rand.Intn(len(cm.config.TargetContainers))]
 
-	actions := []string{"kill", "pause", "stop"}
-	action := actions[rand.Intn(len(actions))]
+	cm.killContainer(target)
 
-	switch action {
-	case "kill":
-		cm.killContainer(target)
-	case "pause":
-		cm.pauseContainer(target)
-	case "stop":
-		cm.stopContainer(target)
-	}
 }
 
 func (cm *ChaosMonkey) killContainer(containerName string) {
@@ -87,50 +78,6 @@ func (cm *ChaosMonkey) killContainer(containerName string) {
 	}
 }
 
-func (cm *ChaosMonkey) pauseContainer(containerName string) {
-	log.Printf("CHAOS: Pausing container %s for %v", containerName, cm.config.PauseDuration)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "docker", "pause", containerName)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("Failed to pause: %v\nOutput: %s", err, string(output))
-		return
-	}
-
-	log.Printf("Container %s paused", containerName)
-
-	time.Sleep(cm.config.PauseDuration)
-
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel2()
-
-	cmd2 := exec.CommandContext(ctx2, "docker", "unpause", containerName)
-	if output, err := cmd2.CombinedOutput(); err != nil {
-		log.Printf("Failed to unpause: %v\nOutput: %s", err, string(output))
-		return
-	}
-
-	log.Printf("Container %s unpaused", containerName)
-}
-
-func (cm *ChaosMonkey) stopContainer(containerName string) {
-	log.Printf("CHAOS: Stopping container %s", containerName)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "docker", "stop", containerName)
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		log.Printf("Failed to stop container: %v\nOutput: %s", err, string(output))
-	} else {
-		log.Printf("Successfully stopped container %s", containerName)
-	}
-}
-
 func main() {
 	log.Println("=== Chaos Monkey Starting ===")
 
@@ -144,4 +91,3 @@ func main() {
 
 	log.Println("=== Chaos Monkey Stopped ===")
 }
-
