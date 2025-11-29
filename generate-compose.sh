@@ -1109,7 +1109,7 @@ sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:superv
 sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
 
 # Update chaos-monkey with TARGET_CONTAINERS
-sed -i "s|KILL_PROBABILITY: \"0.3\"|KILL_PROBABILITY: \"0.3\"\n      TARGET_CONTAINERS: \"${TARGET_CONTAINERS}\"|" docker-compose.yaml
+sed -i "s|KILL_PROBABILITY: \"0.5\"|KILL_PROBABILITY: \"0.5\"\n      TARGET_CONTAINERS: \"${TARGET_CONTAINERS}\"|" docker-compose.yaml
 
 # Add test runner and volumes
 cat >> docker-compose.yaml << 'EOF_FOOTER'
