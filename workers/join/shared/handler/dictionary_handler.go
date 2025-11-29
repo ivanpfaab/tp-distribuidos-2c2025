@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"path/filepath"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -13,6 +14,7 @@ import (
 type DictionaryHandler[T any] struct {
 	manager    *dictionary.Manager[T]
 	parseFunc  dictionary.ParseCallback[T]
+	dictDir    string
 	workerName string // For logging (e.g., "ItemID Join Worker")
 }
 
@@ -20,11 +22,13 @@ type DictionaryHandler[T any] struct {
 func NewDictionaryHandler[T any](
 	manager *dictionary.Manager[T],
 	parseFunc dictionary.ParseCallback[T],
+	dictDir string,
 	workerName string,
 ) *DictionaryHandler[T] {
 	return &DictionaryHandler[T]{
 		manager:    manager,
-		parseFunc:  parseFunc,
+		parseFunc: parseFunc,
+		dictDir:    dictDir,
 		workerName: workerName,
 	}
 }
@@ -49,6 +53,13 @@ func (dh *DictionaryHandler[T]) ProcessMessage(delivery amqp.Delivery) middlewar
 		fmt.Printf("%s: Failed to load dictionary from CSV: %v\n", dh.workerName, err)
 		delivery.Nack(false, false) // Reject the message
 		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Save dictionary chunk to file
+	filePath := filepath.Join(dh.dictDir, chunkMsg.ClientID+".csv")
+	if err := dh.manager.SaveDictionaryChunkToFile(chunkMsg.ClientID, filePath, chunkMsg.ChunkData); err != nil {
+		fmt.Printf("%s: Warning - failed to save dictionary to file: %v\n", dh.workerName, err)
+		// Continue processing even if save fails
 	}
 
 	// Check if this is the last chunk for the dictionary

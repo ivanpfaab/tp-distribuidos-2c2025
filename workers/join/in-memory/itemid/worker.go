@@ -154,12 +154,32 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 	// Initialize shared components
 	dictManager := dictionary.NewManager[*MenuItem]()
 
+	// Create dictionary directory
+	dictDir := filepath.Join(stateDir, "dictionaries")
+	if err := os.MkdirAll(dictDir, 0755); err != nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		orchestratorProducer.Close()
+		messageManager.Close()
+		return nil, fmt.Errorf("failed to create dictionary directory: %w", err)
+	}
+
 	parseFunc := func(csvData string, clientID string) (map[string]*MenuItem, error) {
 		return parser.ParseMenuItems(csvData, clientID)
 	}
 
-	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, "ItemID Join Worker")
-	completionHandler := handler.NewCompletionHandler(dictManager, "ItemID Join Worker")
+	// Rebuild dictionaries on startup
+	rebuiltCount, err := dictManager.RebuildAllDictionaries(dictDir, parseFunc)
+	if err != nil {
+		fmt.Printf("ItemID Join Worker: Warning - failed to rebuild dictionaries: %v\n", err)
+	} else {
+		fmt.Printf("ItemID Join Worker: Rebuilt %d dictionaries on startup\n", rebuiltCount)
+	}
+
+	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, dictDir, "ItemID Join Worker")
+	completionHandler := handler.NewCompletionHandler(dictManager, dictDir, "ItemID Join Worker")
 	chunkSender := joinchunk.NewSender(outputProducer)
 	orchestratorNotifier := notifier.NewOrchestratorNotifier(orchestratorProducer, "itemid-join-worker")
 

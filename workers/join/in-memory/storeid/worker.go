@@ -153,11 +153,33 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 
 	// Initialize shared components
 	dictManager := dictionary.NewManager[*Store]()
+
+	// Create dictionary directory
+	dictDir := filepath.Join(stateDir, "dictionaries")
+	if err := os.MkdirAll(dictDir, 0755); err != nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		orchestratorProducer.Close()
+		messageManager.Close()
+		return nil, fmt.Errorf("failed to create dictionary directory: %w", err)
+	}
+
 	parseFunc := func(csvData string, clientID string) (map[string]*Store, error) {
 		return parser.ParseStores(csvData, clientID)
 	}
-	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, "StoreID Join Worker")
-	completionHandler := handler.NewCompletionHandler(dictManager, "StoreID Join Worker")
+
+	// Rebuild dictionaries on startup
+	rebuiltCount, err := dictManager.RebuildAllDictionaries(dictDir, parseFunc)
+	if err != nil {
+		fmt.Printf("StoreID Join Worker: Warning - failed to rebuild dictionaries: %v\n", err)
+	} else {
+		fmt.Printf("StoreID Join Worker: Rebuilt %d dictionaries on startup\n", rebuiltCount)
+	}
+
+	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, dictDir, "StoreID Join Worker")
+	completionHandler := handler.NewCompletionHandler(dictManager, dictDir, "StoreID Join Worker")
 	chunkSender := joinchunk.NewSender(outputProducer)
 	orchestratorNotifier := notifier.NewOrchestratorNotifier(orchestratorProducer, "storeid-join-worker")
 

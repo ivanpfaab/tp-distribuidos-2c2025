@@ -99,6 +99,41 @@ func ParseStores(csvData string, clientID string) (map[string]*Store, error) {
 	return stores, nil
 }
 
+// SerializeMenuItem returns header and serialization function for MenuItem
+func SerializeMenuItem() ([]string, func(*MenuItem) []string) {
+	header := []string{"item_id", "item_name", "coffee_category", "price", "is_seasonal", "available_from", "available_to"}
+	rowFunc := func(item *MenuItem) []string {
+		return []string{
+			item.ItemID,
+			item.ItemName,
+			item.CoffeeCategory,
+			item.Price,
+			item.IsSeasonal,
+			item.AvailableFrom,
+			item.AvailableTo,
+		}
+	}
+	return header, rowFunc
+}
+
+// SerializeStore returns header and serialization function for Store
+func SerializeStore() ([]string, func(*Store) []string) {
+	header := []string{"store_id", "store_name", "street", "postal_code", "city", "state", "latitude", "longitude"}
+	rowFunc := func(store *Store) []string {
+		return []string{
+			store.StoreID,
+			store.StoreName,
+			store.Street,
+			store.PostalCode,
+			store.City,
+			store.State,
+			store.Latitude,
+			store.Longitude,
+		}
+	}
+	return header, rowFunc
+}
+
 // ParseTransactionItems parses transaction items CSV data
 func ParseTransactionItems(csvData string) ([]map[string]string, error) {
 	bp := &BaseParser{}
