@@ -2,11 +2,21 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/tp-distribuidos-2c2025/proxy/config"
+	"github.com/tp-distribuidos-2c2025/shared/health_server"
 )
 
 func main() {
+	healthPort := os.Getenv("HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "8888"
+	}
+	healthSrv := health_server.NewHealthServer(healthPort)
+	go healthSrv.Start()
+	defer healthSrv.Stop()
+
 	// Get TCP server configuration
 	serverConfig := config.NewServerConfig()
 

@@ -5,9 +5,19 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/tp-distribuidos-2c2025/shared/health_server"
 )
 
 func main() {
+	healthPort := os.Getenv("HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "8888"
+	}
+	healthSrv := health_server.NewHealthServer(healthPort)
+	go healthSrv.Start()
+	defer healthSrv.Stop()
+
 	fmt.Println("Starting User Join Reader (Query 4)...")
 
 	// Load configuration
