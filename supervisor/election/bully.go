@@ -12,18 +12,20 @@ import (
 )
 
 type BullyElection struct {
-	myID               int
-	peers              map[int]string
-	isLeader           bool
-	leaderID           int
-	electionPort       string
-	listener           net.Listener
-	onBecomeLeader     func()
-	onLeaderChange     func(int)
-	stopChan           chan bool
-	mutex              sync.RWMutex
-	wg                 sync.WaitGroup
-	electionInProgress bool
+	myID                   int
+	peers                  map[int]string
+	isLeader               bool
+	leaderID               int
+	lastLeaderHeartbeat    time.Time
+	electionPort           string
+	listener               net.Listener
+	onBecomeLeader         func()
+	onLeaderChange         func(int)
+	stopChan               chan bool
+	mutex                  sync.RWMutex
+	wg                     sync.WaitGroup
+	electionInProgress     bool
+	leaderHeartbeatTimeout time.Duration
 }
 
 func NewBullyElection(
@@ -34,15 +36,17 @@ func NewBullyElection(
 	onLeaderChange func(int),
 ) (*BullyElection, error) {
 	return &BullyElection{
-		myID:               myID,
-		peers:              peers,
-		isLeader:           false,
-		leaderID:           -1,
-		electionPort:       electionPort,
-		onBecomeLeader:     onBecomeLeader,
-		onLeaderChange:     onLeaderChange,
-		stopChan:           make(chan bool),
-		electionInProgress: false,
+		myID:                   myID,
+		peers:                  peers,
+		isLeader:               false,
+		leaderID:               -1,
+		lastLeaderHeartbeat:    time.Time{},
+		electionPort:           electionPort,
+		onBecomeLeader:         onBecomeLeader,
+		onLeaderChange:         onLeaderChange,
+		stopChan:               make(chan bool),
+		electionInProgress:     false,
+		leaderHeartbeatTimeout: 25 * time.Second,
 	}, nil
 }
 
@@ -132,8 +136,20 @@ func (be *BullyElection) handleElectionStart(msg *election.ElectionMessage) {
 	log.Printf("[BullyElection] Node %d: Received ELECTION from %d", be.myID, msg.SupervisorID)
 
 	if msg.SupervisorID < be.myID {
+		log.Printf("[BullyElection] Node %d: Responding to lower-ID node %d with OK and starting own election", be.myID, msg.SupervisorID)
 		be.sendOkMessage(msg.SupervisorID)
-		go be.StartElection()
+
+		be.mutex.RLock()
+		alreadyElecting := be.electionInProgress
+		be.mutex.RUnlock()
+
+		if !alreadyElecting {
+			go be.StartElection()
+		} else {
+			log.Printf("[BullyElection] Node %d: Already in election, not starting another", be.myID)
+		}
+	} else {
+		log.Printf("[BullyElection] Node %d: Ignoring ELECTION from higher-ID node %d", be.myID, msg.SupervisorID)
 	}
 }
 
@@ -146,20 +162,40 @@ func (be *BullyElection) handleElectionLeader(msg *election.ElectionMessage) {
 
 	be.mutex.Lock()
 	wasLeader := be.isLeader
+	oldLeaderID := be.leaderID
 	be.isLeader = false
 	be.leaderID = msg.SupervisorID
+	be.lastLeaderHeartbeat = time.Now()
 	be.electionInProgress = false
 	be.mutex.Unlock()
 
-	if wasLeader && be.onLeaderChange != nil {
+	if wasLeader && oldLeaderID != msg.SupervisorID && be.onLeaderChange != nil {
+		log.Printf("[BullyElection] Node %d: Leadership transition from %d (self) to %d", be.myID, be.myID, msg.SupervisorID)
 		be.onLeaderChange(msg.SupervisorID)
 	}
+}
+
+func (be *BullyElection) StartElectionWithDelay() {
+	staggerDelay := time.Duration(be.myID) * 500 * time.Millisecond
+	log.Printf("[BullyElection] Node %d: Will start election in %v (stagger to avoid simultaneous elections)", be.myID, staggerDelay)
+
+	time.Sleep(staggerDelay)
+	go be.StartElection()
+}
+
+func (be *BullyElection) StartElectionOnLeaderTimeout(maxID int) {
+	inverseStagger := time.Duration(maxID-be.myID) * 500 * time.Millisecond
+	log.Printf("[BullyElection] Node %d: Leader timeout detected, will start election in %v (inverse stagger: higher IDs first)", be.myID, inverseStagger)
+
+	time.Sleep(inverseStagger)
+	go be.StartElection()
 }
 
 func (be *BullyElection) StartElection() {
 	be.mutex.Lock()
 	if be.electionInProgress {
 		be.mutex.Unlock()
+		log.Printf("[BullyElection] Node %d: Election already in progress, skipping", be.myID)
 		return
 	}
 	be.electionInProgress = true
@@ -223,17 +259,21 @@ func (be *BullyElection) StartElection() {
 func (be *BullyElection) becomeLeader() {
 	be.mutex.Lock()
 	wasLeader := be.isLeader
+	oldLeaderID := be.leaderID
 	be.isLeader = true
 	be.leaderID = be.myID
 	be.electionInProgress = false
 	be.mutex.Unlock()
 
-	log.Printf("[BullyElection] Node %d: I am now the LEADER", be.myID)
+	log.Printf("[BullyElection] Node %d: I am now the LEADER (was leader: %v, previous leader: %d)", be.myID, wasLeader, oldLeaderID)
 
 	be.broadcastLeader()
 
 	if !wasLeader && be.onBecomeLeader != nil {
+		log.Printf("[BullyElection] Node %d: Calling onBecomeLeader callback", be.myID)
 		be.onBecomeLeader()
+	} else if wasLeader {
+		log.Printf("[BullyElection] Node %d: Already was leader, no state change needed", be.myID)
 	}
 }
 
@@ -358,19 +398,46 @@ func (be *BullyElection) periodicLeaderCheck() {
 			be.mutex.RLock()
 			isLeader := be.isLeader
 			leaderID := be.leaderID
+			lastHeartbeat := be.lastLeaderHeartbeat
 			be.mutex.RUnlock()
 
 			if isLeader {
 				be.broadcastLeader()
 			} else if leaderID == -1 {
-				log.Printf("[BullyElection] Node %d: No leader detected, starting election", be.myID)
-				go be.StartElection()
+				log.Printf("[BullyElection] Node %d: No leader detected, starting election with stagger", be.myID)
+				go be.StartElectionWithDelay()
+			} else {
+				timeSinceLastHeartbeat := time.Since(lastHeartbeat)
+				if timeSinceLastHeartbeat > be.leaderHeartbeatTimeout {
+					log.Printf("[BullyElection] Node %d: Leader %d heartbeat timeout (%.1fs since last heartbeat, threshold: %.1fs) - starting election",
+						be.myID, leaderID, timeSinceLastHeartbeat.Seconds(), be.leaderHeartbeatTimeout.Seconds())
+
+					be.mutex.Lock()
+					be.leaderID = -1
+					be.mutex.Unlock()
+
+					maxID := be.getMaxPeerID()
+					go be.StartElectionOnLeaderTimeout(maxID)
+				}
 			}
 
 		case <-be.stopChan:
 			return
 		}
 	}
+}
+
+func (be *BullyElection) getMaxPeerID() int {
+	be.mutex.RLock()
+	defer be.mutex.RUnlock()
+
+	maxID := be.myID
+	for id := range be.peers {
+		if id > maxID {
+			maxID = id
+		}
+	}
+	return maxID
 }
 
 func (be *BullyElection) IsLeader() bool {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sync"
 
 	"github.com/tp-distribuidos-2c2025/shared/health_server"
 	"github.com/tp-distribuidos-2c2025/supervisor/docker_manager"
@@ -15,6 +16,7 @@ type Supervisor struct {
 	election      *supervisor_election.BullyElection
 	healthMonitor *monitor.HealthMonitor
 	dockerManager *docker_manager.DockerManager
+	mu            sync.Mutex
 }
 
 func NewSupervisor(config *SupervisorConfig) (*Supervisor, error) {
@@ -60,17 +62,22 @@ func (s *Supervisor) Start() error {
 	}
 	log.Printf("[Supervisor] Bully election started")
 
-	go s.election.StartElection()
-	log.Printf("[Supervisor] Initial election triggered")
+	s.election.StartElectionWithDelay()
+	log.Printf("[Supervisor] Initial election will start after stagger delay")
 
 	return nil
 }
 
 func (s *Supervisor) onBecomeLeader() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	log.Printf("[Supervisor] Node %d: Became LEADER - starting health monitoring", s.config.SupervisorID)
 
 	if s.healthMonitor != nil {
+		log.Printf("[Supervisor] Node %d: Stopping existing health monitor before starting new one", s.config.SupervisorID)
 		s.healthMonitor.Stop()
+		s.healthMonitor = nil
 	}
 
 	s.healthMonitor = monitor.NewHealthMonitor(
@@ -81,14 +88,19 @@ func (s *Supervisor) onBecomeLeader() {
 	)
 
 	s.healthMonitor.Start()
+	log.Printf("[Supervisor] Node %d: Health monitoring started", s.config.SupervisorID)
 }
 
 func (s *Supervisor) onLeaderChange(newLeaderID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	log.Printf("[Supervisor] Node %d: New leader is %d - stopping health monitoring", s.config.SupervisorID, newLeaderID)
 
 	if s.healthMonitor != nil {
 		s.healthMonitor.Stop()
 		s.healthMonitor = nil
+		log.Printf("[Supervisor] Node %d: Health monitoring stopped", s.config.SupervisorID)
 	}
 }
 
