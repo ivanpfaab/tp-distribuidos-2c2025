@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"strconv"
 
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
@@ -62,31 +63,6 @@ type CSVRecord interface {
 	ToCSVRow() []string
 }
 
-// appendRecordsToPartitionCSV is a generic method to append records to a partition CSV file
-// header: CSV header row (e.g., []string{"month", "item_id", "quantity", "subtotal"})
-// records: Slice of records implementing CSVRecord interface
-func (fm *FileManager) appendRecordsToPartitionCSV(clientID string, partition int, header []string, records []CSVRecord) error {
-	if len(records) == 0 {
-		return nil
-	}
-
-	filePath := fm.GetFilePath(clientID, partition)
-
-	// Ensure base directory exists
-	if err := fm.storageManager.EnsureBaseDir(); err != nil {
-		return err
-	}
-
-	// Convert records to [][]string
-	recordRows := make([][]string, len(records))
-	for i, rec := range records {
-		recordRows[i] = rec.ToCSVRow()
-	}
-
-	// Append records using CSV writer
-	return fm.csvWriter.AppendRecords(filePath, header, recordRows)
-}
-
 // AppendRecordsToPartitionCSV appends multiple user_id,store_id records to a Query 4 partition CSV file
 // More efficient than calling AppendToPartitionCSV multiple times
 func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition int, records []shared.Query4Record, chunkID string, isFirstChunk bool) error {
@@ -97,26 +73,27 @@ func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition in
 
 	// Convert records to CSV lines format
 	lines := make([]string, 0, len(records))
-	for _, record := range records {
+	for i, record := range records {
 		recordRow := record.ToCSVRow()
 		// Append chunk ID as last field
 		recordRow = append(recordRow, chunkID)
+		recordRow = append(recordRow, strconv.Itoa(i+1))
 		csvLine := strings.Join(recordRow, ",") + "\n"
 		lines = append(lines, csvLine)
 	}
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"user_id", "store_id", "chunk_id"},
+		Header:     []string{"user_id", "store_id", "chunk_id","row_number"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
 
-	return fm.writePartitionWithFaultTolerance(partition, lines, opts, chunkID, isFirstChunk)
+	return fm.writePartitionWithFaultTolerance(partition, lines, opts, isFirstChunk)
 }
 
 // writePartitionWithFaultTolerance writes partition data with fault tolerance support
-func (fm *FileManager) writePartitionWithFaultTolerance(partition int, lines []string, opts partitionmanager.WriteOptions, chunkID string, isFirstChunk bool) error {
+func (fm *FileManager) writePartitionWithFaultTolerance(partition int, lines []string, opts partitionmanager.WriteOptions,isFirstChunk bool) error {
 	if fm.partitionManager == nil {
 		return fmt.Errorf("partition manager not initialized")
 	}
@@ -159,22 +136,23 @@ func (fm *FileManager) AppendQuery2RecordsToPartitionCSV(clientID string, partit
 
 	// Convert records to CSV lines format
 	lines := make([]string, 0, len(records))
-	for _, record := range records {
+	for i, record := range records {
 		recordRow := record.ToCSVRow()
 		// Append chunk ID as last field
 		recordRow = append(recordRow, chunkID)
+		recordRow = append(recordRow, strconv.Itoa(i+1))
 		csvLine := strings.Join(recordRow, ",") + "\n"
 		lines = append(lines, csvLine)
 	}
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"year", "month", "item_id", "quantity", "subtotal", "chunk_id"},
+		Header:     []string{"year", "month", "item_id", "quantity", "subtotal", "chunk_id","row_number"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
 
-	return fm.writePartitionWithFaultTolerance(partition, lines, opts, chunkID, isFirstChunk)
+		return fm.writePartitionWithFaultTolerance(partition, lines, opts, isFirstChunk)
 }
 
 // AppendQuery3RecordsToPartitionCSV appends multiple store_id,final_amount records to a Query 3 partition CSV file
@@ -187,20 +165,21 @@ func (fm *FileManager) AppendQuery3RecordsToPartitionCSV(clientID string, partit
 
 	// Convert records to CSV lines format
 	lines := make([]string, 0, len(records))
-	for _, record := range records {
+	for i, record := range records {
 		recordRow := record.ToCSVRow()
 		// Append chunk ID as last field
 		recordRow = append(recordRow, chunkID)
+		recordRow = append(recordRow, strconv.Itoa(i+1))
 		csvLine := strings.Join(recordRow, ",") + "\n"
 		lines = append(lines, csvLine)
 	}
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"year", "semester", "store_id", "final_amount", "chunk_id"},
+		Header:     []string{"year", "semester", "store_id", "final_amount", "chunk_id","row_number"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
 
-	return fm.writePartitionWithFaultTolerance(partition, lines, opts, chunkID, isFirstChunk)
+	return fm.writePartitionWithFaultTolerance(partition, lines, opts, isFirstChunk)
 }
