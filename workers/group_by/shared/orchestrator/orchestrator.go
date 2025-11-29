@@ -3,10 +3,13 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -21,6 +24,10 @@ type GroupByOrchestrator struct {
 	chunkConsumer      *exchange.ExchangeConsumer
 	completionProducer *workerqueue.QueueMiddleware // For sending completion chunks to next step
 	fileAggregator     *FileAggregator              // For aggregating partition files
+
+	// Fault tolerance components
+	messageManager *messagemanager.MessageManager
+	stateManager   *StateManager
 }
 
 // NewGroupByOrchestrator creates a new group by orchestrator
@@ -42,7 +49,41 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 	trackerName := fmt.Sprintf("Query%d-Orchestrator-Worker%d", queryType, config.WorkerID)
 	orchestrator.completionTracker = shared.NewCompletionTracker(trackerName, orchestrator.onClientCompleted)
 
+	// Initialize fault tolerance components
+	// Use existing /app/groupby-data volume, create orchestrator-state subdirectory
+	stateDir := "/app/groupby-data/orchestrator-state"
+	metadataDir := filepath.Join(stateDir, "metadata")
+	processedNotificationsPath := filepath.Join(stateDir, "processed-notifications.txt")
+
+	// Ensure state directory exists
+	if err := os.MkdirAll(metadataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	// Initialize MessageManager for duplicate detection
+	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		log.Printf("Group By Orchestrator: Warning - failed to load processed notifications: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		log.Printf("Group By Orchestrator: Loaded %d processed notification IDs", count)
+	}
+
+	// Initialize StateManager
+	stateManager := NewStateManager(metadataDir, orchestrator.completionTracker)
+	orchestrator.messageManager = messageManager
+	orchestrator.stateManager = stateManager
+
 	orchestrator.initializeQueues()
+
+	// Rebuild state from CSV metadata on startup
+	log.Println("Group By Orchestrator: Rebuilding state from metadata...")
+	if err := orchestrator.stateManager.RebuildState(); err != nil {
+		log.Printf("Group By Orchestrator: Warning - failed to rebuild state: %v", err)
+	} else {
+		log.Println("Group By Orchestrator: State rebuilt successfully")
+	}
+
 	return orchestrator, nil
 }
 
@@ -117,13 +158,11 @@ func (gbo *GroupByOrchestrator) onClientCompleted(clientID string, clientStatus 
 
 	// Clean up files and clear state
 	gbo.cleanupClientFiles(clientID)
-}
 
-// sendAggregatedChunk sends the aggregated CSV data as a chunk to the next processing step
-func (gbo *GroupByOrchestrator) sendAggregatedChunk(clientID string, chunkNumber int, csvData string) error {
-	// Send chunk to next step (IsLastChunk=true, IsLastFromTable=true for Query2/Query3)
-	isLastFromTable := (gbo.config.QueryType == 2 || gbo.config.QueryType == 3)
-	return gbo.sendDataChunk(clientID, chunkNumber, csvData, true, isLastFromTable)
+	// Delete CSV metadata file for completed client
+	if err := gbo.stateManager.DeleteClientMetadata(clientID); err != nil {
+		log.Printf("Group By Orchestrator: Warning - failed to delete metadata file for client %s: %v", clientID, err)
+	}
 }
 
 // cleanupClientFiles deletes all files and clears client state from the completion tracker
@@ -206,12 +245,27 @@ func (gbo *GroupByOrchestrator) Start() {
 				continue
 			}
 
+			// Check for duplicate notification
+			if gbo.messageManager.IsProcessed(notification.ID) {
+				delivery.Ack(false)
+				continue
+			}
+
 			// Process the notification using the completion tracker
-			// All orchestrators receive all notifications via fanout, so they all track the same state
 			if err := gbo.completionTracker.ProcessChunkNotification(notification); err != nil {
 				log.Printf("Failed to process chunk notification: %v", err)
 				delivery.Ack(false)
 				continue
+			}
+
+			// Append notification to CSV for state rebuild
+			if err := gbo.stateManager.AppendNotification(notification); err != nil {
+				log.Printf("Warning - failed to append notification to CSV: %v", err)
+			}
+
+			// Mark as processed in MessageManager
+			if err := gbo.messageManager.MarkProcessed(notification.ID); err != nil {
+				log.Printf("Warning - failed to mark notification as processed: %v", err)
 			}
 
 			// Acknowledge the message
@@ -237,6 +291,9 @@ func (gbo *GroupByOrchestrator) Close() {
 	}
 	if gbo.completionProducer != nil {
 		gbo.completionProducer.Close()
+	}
+	if gbo.messageManager != nil {
+		gbo.messageManager.Close()
 	}
 }
 
