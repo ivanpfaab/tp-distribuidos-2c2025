@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/election"
 )
 
@@ -103,9 +104,15 @@ func (be *BullyElection) handleConnection(conn net.Conn) {
 		return
 	}
 
-	msg, err := election.DeserializeElectionMessage(buf[:n]) // TODO: we should use the deserializer to deserialize the message
+	rawMsg, err := deserializer.Deserialize(buf[:n])
 	if err != nil {
-		log.Printf("[BullyElection] Node %d: Failed to deserialize election message: %v", be.myID, err)
+		log.Printf("[BullyElection] Node %d: Failed to deserialize message: %v", be.myID, err)
+		return
+	}
+
+	msg, ok := rawMsg.(*election.ElectionMessage)
+	if !ok {
+		log.Printf("[BullyElection] Node %d: Received non-election message type: %T", be.myID, rawMsg)
 		return
 	}
 
@@ -270,9 +277,11 @@ func (be *BullyElection) sendElectionMessage(targetID int) bool {
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err == nil && n > 0 {
-		respMsg, err := election.DeserializeElectionMessage(buf[:n])
-		if err == nil && respMsg.IsOk() {
-			return true
+		rawMsg, err := deserializer.Deserialize(buf[:n])
+		if err == nil {
+			if respMsg, ok := rawMsg.(*election.ElectionMessage); ok && respMsg.IsOk() {
+				return true
+			}
 		}
 	}
 
