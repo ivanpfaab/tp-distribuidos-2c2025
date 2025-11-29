@@ -33,7 +33,7 @@ docker-compose-up: ## Start all services in proper order
 	@echo "2. Starting all orchestration services (workers, gateways, etc.)..."
 	docker compose --profile orchestration up -d
 	@echo "3. Starting Proxy..."
-	docker compose --profile orchestration --profile data-flow up -d proxy
+	docker compose --profile orchestration --profile data-flow up -d proxy-1
 	@echo "4. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d
 	@echo "All services started successfully!"
@@ -47,7 +47,7 @@ docker-compose-up-build: ## Start all services in proper order with build
 	@echo "2. Starting all orchestration services (workers, gateways, etc.)..."
 	docker compose --profile orchestration up -d --build
 	@echo "3. Starting Proxy..."
-	docker compose --profile orchestration --profile data-flow up -d --build proxy
+	docker compose --profile orchestration --profile data-flow up -d --build proxy-1
 	@echo "4. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d --build
 	@echo "All services started successfully!"
@@ -72,7 +72,7 @@ docker-compose-up-chaos: ## Start all services WITH Chaos Monkey for fault injec
 	@echo "3. Starting all orchestration services..."
 	docker compose --profile orchestration up -d
 	@echo "4. Starting Proxy..."
-	docker compose --profile orchestration --profile data-flow up -d proxy
+	docker compose --profile orchestration --profile data-flow up -d proxy-1
 	@echo "5. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d
 	@echo "6. Starting Chaos Monkey..."
@@ -149,7 +149,7 @@ docker-compose-rebuild: ## Rebuild everything from scratch (no cache)
 	@echo "   Starting Workers..."
 	docker compose --profile orchestration up -d year-filter-worker-1 year-filter-worker-2 year-filter-worker-3 time-filter-worker-1 time-filter-worker-2 amount-filter-worker-1 join-data-handler-1 itemid-join-worker-1 storeid-join-worker-1 user-partition-splitter user-partition-writer-1 user-partition-writer-2 user-partition-writer-3 user-partition-writer-4 user-partition-writer-5 user-join-reader-1 user-join-reader-2 query2-orchestrator-1 query2-orchestrator-2 query2-orchestrator-3 query2-partitioner query2-groupby-worker-1 query2-groupby-worker-2 query2-groupby-worker-3 query2-top-items-worker query3-orchestrator-1 query3-orchestrator-2 query3-orchestrator-3 query3-partitioner query3-groupby-worker-1 query3-groupby-worker-2 query3-groupby-worker-3 query4-orchestrator-1 query4-orchestrator-2 query4-orchestrator-3 query4-partitioner-1 query4-partitioner-2 query4-partitioner-3 query4-groupby-worker-1 query4-groupby-worker-2 query4-groupby-worker-3 query4-top-users-worker results-dispatcher in-memory-join-orchestrator in-file-join-orchestrator query-gateway-1
 	@echo "   Starting Proxy..."
-	docker compose --profile orchestration --profile data-flow up -d proxy
+	docker compose --profile orchestration --profile data-flow up -d proxy-1
 	@echo "   Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d client-1 client-2
 	@echo "Rebuild complete! All services started successfully!"
