@@ -1,17 +1,19 @@
 # Simple Makefile for Docker Compose Management
 
-.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup
+.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-up-chaos docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-logs-chaos docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup
 
 # Default target
 help: ## Show this help message
 	@echo "Available commands:"
 	@echo "  docker-compose-up                - Start all services in orchestrated order"
 	@echo "  docker-compose-up-quick          - Start all services quickly (alternative)"
+	@echo "  docker-compose-up-chaos          - Start all services WITH Chaos Monkey for fault injection testing"
 	@echo "  docker-compose-down              - Stop all services"
 	@echo "  docker-compose-down-force        - Force stop all services (handles restart policies)"
 	@echo "  docker-compose-logs              - Show logs from all services"
 	@echo "  docker-compose-logs-orchestration - Show logs for orchestration services only"
 	@echo "  docker-compose-logs-data-flow    - Show logs for data-flow services only"
+	@echo "  docker-compose-logs-chaos        - Show logs for Chaos Monkey and supervisors only"
 	@echo "  docker-compose-build             - Build all Docker images"
 	@echo "  docker-compose-rebuild           - Rebuild everything from scratch (no cache)"
 	@echo "  docker-compose-cleanup           - Cleanup services, images, and volumes"
@@ -54,6 +56,32 @@ docker-compose-up-build: ## Start all services in proper order with build
 docker-compose-up-quick: ## Start all services quickly (alternative method)
 	docker compose --profile orchestration --profile data-flow up
 
+# Start with Chaos Monkey for fault injection testing
+docker-compose-up-chaos: ## Start all services WITH Chaos Monkey for fault injection testing
+	@echo "Starting services with Chaos Monkey enabled..."
+	@echo "WARNING: Chaos Monkey will randomly kill/pause/stop containers!"
+	@echo ""
+	@echo "1. Starting RabbitMQ..."
+	docker compose up -d rabbitmq
+	@echo "Waiting for RabbitMQ to be healthy..."
+	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
+	@echo "2. Starting supervisors..."
+	docker compose --profile orchestration --profile data-flow up -d supervisor-1 supervisor-2 supervisor-3
+	@echo "Waiting for supervisors to start election..."
+	sleep 5
+	@echo "3. Starting all orchestration services..."
+	docker compose --profile orchestration up -d
+	@echo "4. Starting Proxy..."
+	docker compose --profile orchestration --profile data-flow up -d proxy
+	@echo "5. Starting Clients..."
+	docker compose --profile orchestration --profile data-flow up -d
+	@echo "6. Starting Chaos Monkey..."
+	docker compose --profile orchestration --profile data-flow --profile chaos up -d chaos-monkey
+	@echo ""
+	@echo "All services started with Chaos Monkey!"
+	@echo "Monitor logs with: make docker-compose-logs-chaos"
+	@echo "Stop everything with: make docker-compose-down"
+
 # Stop all services
 docker-compose-down: ## Stop all services
 	docker compose down
@@ -95,6 +123,10 @@ docker-compose-logs-orchestration: ## Show logs for orchestration services only
 # Show logs for data-flow services only  
 docker-compose-logs-data-flow: ## Show logs for data-flow services only
 	docker compose --profile data-flow logs -f
+
+# Show logs for Chaos Monkey and supervisors only
+docker-compose-logs-chaos: ## Show logs for Chaos Monkey and supervisors only (fault injection monitoring)
+	docker compose logs -f chaos-monkey supervisor-1 supervisor-2 supervisor-3
 
 # Build all Docker images
 docker-compose-build: ## Build all Docker images

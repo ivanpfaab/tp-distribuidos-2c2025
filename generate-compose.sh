@@ -159,7 +159,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       SUPERVISOR_ID: "1"
-      SUPERVISOR_PEERS: "supervisor-2:9000,supervisor-3:9000"
+      SUPERVISOR_PEERS: "supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000"
       ELECTION_PORT: "9000"
       PROBE_TIMEOUT: "2s"
       PROBE_INTERVAL: "5s"
@@ -181,7 +181,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       SUPERVISOR_ID: "2"
-      SUPERVISOR_PEERS: "supervisor-1:9000,supervisor-3:9000"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000"
       ELECTION_PORT: "9000"
       PROBE_TIMEOUT: "2s"
       PROBE_INTERVAL: "5s"
@@ -203,7 +203,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       SUPERVISOR_ID: "3"
-      SUPERVISOR_PEERS: "supervisor-1:9000,supervisor-2:9000"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000"
       ELECTION_PORT: "9000"
       PROBE_TIMEOUT: "2s"
       PROBE_INTERVAL: "5s"
@@ -224,6 +224,7 @@ services:
     environment:
       KILL_INTERVAL: "30s"
       KILL_PROBABILITY: "0.3"
+      PAUSE_DURATION: "10s"
     profiles: ["chaos"]
 
 EOF_HEADER
@@ -1136,11 +1137,57 @@ MONITORED_WORKERS="${MONITORED_WORKERS}in-file-join-orchestrator:8888,"
 MONITORED_WORKERS="${MONITORED_WORKERS}results-dispatcher:8888,"
 MONITORED_WORKERS="${MONITORED_WORKERS}proxy:8888"
 
+# Generate TARGET_CONTAINERS for Chaos Monkey (subset of critical workers)
+echo -e "${BLUE}Generating TARGET_CONTAINERS for Chaos Monkey...${NC}"
+
+TARGET_CONTAINERS=""
+
+# Add filter workers (good candidates for chaos testing)
+for i in $(seq 1 $YEAR_FILTER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}year-filter-worker-${i},"
+done
+
+for i in $(seq 1 $TIME_FILTER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}time-filter-worker-${i},"
+done
+
+for i in $(seq 1 $AMOUNT_FILTER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}amount-filter-worker-${i},"
+done
+
+# Add groupby workers (good for testing state recovery)
+for i in $(seq 1 $Q2_GROUPBY_WORKER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}query2-groupby-worker-${i},"
+done
+
+for i in $(seq 1 $Q3_GROUPBY_WORKER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}query3-groupby-worker-${i},"
+done
+
+for i in $(seq 1 $Q4_GROUPBY_WORKER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}query4-groupby-worker-${i},"
+done
+
+# Add join workers
+for i in $(seq 1 $ITEMID_JOIN_WORKER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}itemid-join-worker-${i},"
+done
+
+for i in $(seq 1 $STOREID_JOIN_WORKER_COUNT); do
+    TARGET_CONTAINERS="${TARGET_CONTAINERS}storeid-join-worker-${i},"
+done
+
+# Remove trailing comma
+TARGET_CONTAINERS="${TARGET_CONTAINERS%,}"
+
 # Now update the supervisor services with the MONITORED_WORKERS variable
 # Use sed to replace the MONITORED_WORKERS placeholder
-sed -i "s|SUPERVISOR_PEERS: \"supervisor-2:9000,supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-2:9000,supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
-sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
-sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-2:9000\"|SUPERVISOR_PEERS: \"supervisor-1:9000,supervisor-2:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+
+# Update chaos-monkey with TARGET_CONTAINERS
+sed -i "s|KILL_PROBABILITY: \"0.3\"|KILL_PROBABILITY: \"0.3\"\n      TARGET_CONTAINERS: \"${TARGET_CONTAINERS}\"|" docker-compose.yaml
 
 # Add test runner and volumes
 cat >> docker-compose.yaml << 'EOF_FOOTER'
