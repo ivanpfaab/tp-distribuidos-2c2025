@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
@@ -68,12 +67,12 @@ func TimeFilterLogic(chunkMsg *chunk.Chunk) (chunk.Chunk, middleware.MessageMidd
 }
 
 // processMessage processes a single message
-func (tfw *TimeFilterWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("Time Filter Worker: Failed to deserialize chunk message: %v\n", err)
-		return middleware.MessageMiddlewareMessageError
+func (tfw *TimeFilterWorker) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+
+	// Check if already processed
+	if tfw.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("Time Filter Worker: Chunk ID %s already processed, skipping\n", chunkMsg.ID)
+		return 0 // Return 0 to ACK (handled by createCallback)
 	}
 
 	// Process the chunk (time filter logic)
@@ -86,12 +85,12 @@ func (tfw *TimeFilterWorker) processMessage(delivery amqp.Delivery) middleware.M
 		return msgErr
 	}
 
-	// Route the message based on query type
-	return tfw.routeMessage(&responseChunk)
+	// Route the message based on query type (pass chunk ID for marking as processed)
+	return tfw.routeMessage(&responseChunk, chunkMsg.ID)
 }
 
 // routeMessage routes the processed chunk to the appropriate next stage
-func (tfw *TimeFilterWorker) routeMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+func (tfw *TimeFilterWorker) routeMessage(chunkMsg *chunk.Chunk, chunkID string) middleware.MessageMiddlewareError {
 	// Create a chunk message for serialization
 	chunkMessage := chunk.NewChunkMessage(chunkMsg)
 
@@ -103,26 +102,35 @@ func (tfw *TimeFilterWorker) routeMessage(chunkMsg *chunk.Chunk) middleware.Mess
 	}
 
 	// Route based on query type
+	var sendErr middleware.MessageMiddlewareError
 	switch chunkMsg.QueryType {
 	case chunk.QueryType1:
 		// Send to amount filter for further processing
-		if err := tfw.amountFilterProducer.Send(replyData); err != 0 {
-			fmt.Printf("Time Filter Worker: Failed to send to amount filter: %v\n", err)
-			return err
+		sendErr = tfw.amountFilterProducer.Send(replyData)
+		if sendErr != 0 {
+			fmt.Printf("Time Filter Worker: Failed to send to amount filter: %v\n", sendErr)
+			return sendErr
 		}
 		fmt.Printf("Time Filter Worker: Sent to amount filter for ClientID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.ChunkNumber)
 	case chunk.QueryType3:
 		// Send directly to reply bus
-		if err := tfw.replyProducer.Send(replyData); err != 0 {
-			fmt.Printf("Time Filter Worker: Failed to send to reply bus: %v\n", err)
-			return err
+		sendErr = tfw.replyProducer.Send(replyData)
+		if sendErr != 0 {
+			fmt.Printf("Time Filter Worker: Failed to send to reply bus: %v\n", sendErr)
+			return sendErr
 		}
 		fmt.Printf("Time Filter Worker: Sent to reply bus for ClientID: %s, ChunkNumber: %d\n",
 			chunkMsg.ClientID, chunkMsg.ChunkNumber)
 	default:
 		fmt.Printf("Time Filter Worker: Unknown QueryType: %d\n", chunkMsg.QueryType)
 		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Mark as processed (must be after successful send)
+	if err := tfw.messageManager.MarkProcessed(chunkID); err != nil {
+		fmt.Printf("Time Filter Worker: Failed to mark chunk as processed: %v\n", err)
+		return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 	}
 
 	return 0

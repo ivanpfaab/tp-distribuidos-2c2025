@@ -436,6 +436,8 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       HEALTH_PORT: "8888"
+    volumes:
+      - in-memory-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
 
   in-file-join-orchestrator-1:
@@ -452,6 +454,8 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       HEALTH_PORT: "8888"
+    volumes:
+      - in-file-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
 
 EOF_REMAINING
@@ -618,6 +622,8 @@ $(echo -e "${deps}")
       RABBITMQ_PASS: password
       NUM_PARTITIONS: "${num_partitions}"
       HEALTH_PORT: "8888"
+    volumes:
+      - query${query_type}-top-${worker_name}-worker-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -1185,6 +1191,22 @@ for i in $(seq 1 $Q4_GROUPBY_WORKER_COUNT); do
     driver: local
 EOF
 done
+
+cat >> docker-compose.yaml << EOF
+  # Results dispatcher volume
+  results-dispatcher-data:
+    driver: local
+  # Join orchestrator volumes
+  in-memory-join-orchestrator-data:
+    driver: local
+  in-file-join-orchestrator-data:
+    driver: local
+  # Top workers volumes
+  query2-top-items-worker-data:
+    driver: local
+  query4-top-users-worker-data:
+    driver: local
+EOF
 
 echo -e "${GREEN}✓ docker-compose.yaml generated successfully!${NC}"
 echo ""

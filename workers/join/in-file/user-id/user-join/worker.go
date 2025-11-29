@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -25,6 +27,7 @@ type JoinByUserIdWorker struct {
 	config             *middleware.ConnectionConfig
 	readerConfig       *Config
 	workerID           string
+	messageManager     *messagemanager.MessageManager
 
 	// Completion tracking (no buffering needed)
 	completionSignals map[string]bool // clientID -> completion received
@@ -82,6 +85,25 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 	// Generate worker ID from reader config
 	workerID := fmt.Sprintf("userid-reader-%d", readerConfig.ReaderID)
 
+	// Initialize MessageManager for fault tolerance
+	// Directory is created in Dockerfile with correct ownership, but ensure it exists as safety measure
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		topUsersConsumer.Close()
+		completionConsumer.Close()
+		producer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("Join by User ID Worker: Loaded %d processed chunks\n", count)
+	}
+
 	// Initialize shared components
 	partitionManager := file.NewPartitionManager(SharedDataDir, NumPartitions)
 	chunkSender := joinchunk.NewSender(producer)
@@ -93,6 +115,7 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 		config:             config,
 		readerConfig:       readerConfig,
 		workerID:           workerID,
+		messageManager:     messageManager,
 		completionSignals:  make(map[string]bool),
 		partitionManager:   partitionManager,
 		chunkSender:        chunkSender,
@@ -103,6 +126,12 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 // Start starts the join by user ID worker
 func (jw *JoinByUserIdWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("Join by User ID Worker: Starting...")
+
+	// Set queue names for persistent queues
+	topUsersQueueName := fmt.Sprintf("userid-join-reader-%d-queue", jw.readerConfig.ReaderID)
+	jw.topUsersConsumer.SetQueueName(topUsersQueueName)
+	completionQueueName := fmt.Sprintf("userid-join-completion-reader-%d-queue", jw.readerConfig.ReaderID)
+	jw.completionConsumer.SetQueueName(completionQueueName)
 
 	// Start completion signal consumer
 	go jw.startCompletionSignalConsumer()
@@ -115,6 +144,10 @@ func (jw *JoinByUserIdWorker) Start() middleware.MessageMiddlewareError {
 // Close closes all connections
 func (jw *JoinByUserIdWorker) Close() {
 	fmt.Println("Join by User ID Worker: Shutting down...")
+
+	if jw.messageManager != nil {
+		jw.messageManager.Close()
+	}
 
 	if jw.stopChan != nil {
 		close(jw.stopChan)
@@ -137,9 +170,25 @@ func (jw *JoinByUserIdWorker) Close() {
 func (jw *JoinByUserIdWorker) createTopUsersCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			if err := jw.processTopUsersMessage(delivery); err != 0 {
-				fmt.Printf("Join by User ID Worker: Error processing top users message: %v\n", err)
+			
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("Join by User ID Worker: Failed to deserialize chunk message: %v\n", err)
+				delivery.Ack(false)
+				continue
 			}
+
+			if err := jw.processTopUsersMessage(chunkMsg); err != 0 {
+				fmt.Printf("Join by User ID Worker: Error processing top users message: %v\n", err)
+				// Determine if we should nack or ack based on error type
+				if err == middleware.MessageMiddlewareMessageError {
+					delivery.Nack(false, true) // Requeue on message error
+				} else {
+					delivery.Ack(false)
+				}
+				continue
+			}
+			delivery.Ack(false)
 		}
 		done <- nil
 	}
@@ -151,9 +200,20 @@ func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
 
 	err := jw.completionConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			if err := jw.processCompletionSignal(delivery); err != 0 {
-				fmt.Printf("Join by User ID Worker: Error processing completion signal: %v\n", err)
+			
+			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
+			if err != nil {
+				fmt.Printf("Join by User ID Worker: Failed to deserialize completion signal: %v\n", err)
+				delivery.Ack(false)
+				continue
 			}
+
+			if err := jw.processCompletionSignal(completionSignal); err != 0 {
+				fmt.Printf("Join by User ID Worker: Error processing completion signal: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+			delivery.Ack(false)
 		}
 		done <- nil
 	})
@@ -163,13 +223,11 @@ func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
 }
 
 // processTopUsersMessage processes a single top users chunk with NACK/requeue pattern
-func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("Join by User ID Worker: Failed to deserialize chunk message: %v\n", err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
+func (jw *JoinByUserIdWorker) processTopUsersMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+	// Check if chunk was already processed
+	if jw.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("Join by User ID Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
+		return 0
 	}
 
 	fmt.Printf("Join by User ID Worker: Received chunk - ClientID: %s, ChunkNumber: %d (reader %d), IsLastChunk: %t\n",
@@ -181,10 +239,9 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 	jw.completionMutex.RUnlock()
 
 	if !completionReceived {
-		// Completion signal not received yet, NACK and requeue
+		// Completion signal not received yet, return error to trigger NACK and requeue
 		fmt.Printf("Join by User ID Worker: Completion signal not received for client %s, NACKing and requeuing chunk %d\n",
 			chunkMsg.ClientID, chunkMsg.ChunkNumber)
-		delivery.Nack(false, true) // Requeue
 		return middleware.MessageMiddlewareMessageError
 	}
 
@@ -196,15 +253,19 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 	topUsers, parseErr := parser.ParseTopUsersData(chunkMsg.ChunkData)
 	if parseErr != nil {
 		fmt.Printf("Join by User ID Worker: Failed to parse top users data: %v\n", parseErr)
-		delivery.Ack(false)
 		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Process and send joined chunk
 	if err := jw.processAndSendChunk(chunkMsg, topUsers); err != 0 {
 		fmt.Printf("Join by User ID Worker: Failed to process chunk: %v\n", err)
-		delivery.Nack(false, true)
 		return err
+	}
+
+	// Mark chunk as processed after successful processing
+	if err := jw.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		fmt.Printf("Join by User ID Worker: Failed to mark chunk as processed: %v\n", err)
+		return middleware.MessageMiddlewareMessageError
 	}
 
 	// Perform cleanup for partition files (reader shares volume with paired writer)
@@ -215,20 +276,11 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(delivery amqp.Delivery) mid
 	delete(jw.completionSignals, chunkMsg.ClientID)
 	jw.completionMutex.Unlock()
 
-	delivery.Ack(false)
 	return 0
 }
 
 // processCompletionSignal processes a completion signal from the orchestrator
-func (jw *JoinByUserIdWorker) processCompletionSignal(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the completion signal
-	completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
-	if err != nil {
-		fmt.Printf("Join by User ID Worker: Failed to deserialize completion signal: %v\n", err)
-		delivery.Ack(false)
-		return middleware.MessageMiddlewareMessageError
-	}
-
+func (jw *JoinByUserIdWorker) processCompletionSignal(completionSignal *signals.JoinCompletionSignal) middleware.MessageMiddlewareError {
 	fmt.Printf("Join by User ID Worker: Received completion signal for client %s\n", completionSignal.ClientID)
 
 	// Mark completion signal as received
@@ -239,7 +291,6 @@ func (jw *JoinByUserIdWorker) processCompletionSignal(delivery amqp.Delivery) mi
 	// Chunks will be processed when they arrive (or re-arrive after requeue)
 	fmt.Printf("Join by User ID Worker: Client %s marked as ready, chunks can now be processed\n", completionSignal.ClientID)
 
-	delivery.Ack(false)
 	return 0
 }
 

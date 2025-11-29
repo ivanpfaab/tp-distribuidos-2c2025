@@ -2,8 +2,8 @@ package handler
 
 import (
 	"fmt"
+	"path/filepath"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/dictionary"
@@ -13,6 +13,7 @@ import (
 type DictionaryHandler[T any] struct {
 	manager    *dictionary.Manager[T]
 	parseFunc  dictionary.ParseCallback[T]
+	dictDir    string
 	workerName string // For logging (e.g., "ItemID Join Worker")
 }
 
@@ -20,26 +21,20 @@ type DictionaryHandler[T any] struct {
 func NewDictionaryHandler[T any](
 	manager *dictionary.Manager[T],
 	parseFunc dictionary.ParseCallback[T],
+	dictDir string,
 	workerName string,
 ) *DictionaryHandler[T] {
 	return &DictionaryHandler[T]{
 		manager:    manager,
-		parseFunc:  parseFunc,
+		parseFunc: parseFunc,
+		dictDir:    dictDir,
 		workerName: workerName,
 	}
 }
 
 // ProcessMessage processes a dictionary message
-func (dh *DictionaryHandler[T]) ProcessMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+func (dh *DictionaryHandler[T]) ProcessMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	fmt.Printf("%s: Received dictionary message\n", dh.workerName)
-
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("%s: Failed to deserialize dictionary chunk: %v\n", dh.workerName, err)
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
-	}
 
 	fmt.Printf("%s: Received dictionary message for FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
 		dh.workerName, chunkMsg.FileID, chunkMsg.ChunkNumber, chunkMsg.IsLastChunk)
@@ -47,8 +42,14 @@ func (dh *DictionaryHandler[T]) ProcessMessage(delivery amqp.Delivery) middlewar
 	// Load dictionary from CSV
 	if err := dh.manager.LoadFromCSV(chunkMsg.ClientID, chunkMsg.ChunkData, dh.parseFunc); err != nil {
 		fmt.Printf("%s: Failed to load dictionary from CSV: %v\n", dh.workerName, err)
-		delivery.Nack(false, false) // Reject the message
 		return middleware.MessageMiddlewareMessageError
+	}
+
+	// Save dictionary chunk to file
+	filePath := filepath.Join(dh.dictDir, chunkMsg.ClientID+".csv")
+	if err := dh.manager.SaveDictionaryChunkToFile(chunkMsg.ClientID, filePath, chunkMsg.ChunkData); err != nil {
+		fmt.Printf("%s: Warning - failed to save dictionary to file: %v\n", dh.workerName, err)
+		// Continue processing even if save fails
 	}
 
 	// Check if this is the last chunk for the dictionary
@@ -58,6 +59,5 @@ func (dh *DictionaryHandler[T]) ProcessMessage(delivery amqp.Delivery) middlewar
 			dh.workerName, chunkMsg.FileID, chunkMsg.ClientID)
 	}
 
-	delivery.Ack(false) // Acknowledge the dictionary message
 	return 0
 }

@@ -2,16 +2,16 @@ package main
 
 import (
 	"container/heap"
-	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/shared/health_server"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -137,6 +137,10 @@ type TopUsersWorker struct {
 	clientStates     map[string]*ClientState // key: ClientID
 	numPartitions    int                     // Total number of partitions
 	numReaders       int                     // Number of readers (5)
+
+	// Fault tolerance components
+	messageManager *messagemanager.MessageManager
+	stateManager   *TopUsersStateManager
 }
 
 // NewTopUsersWorker creates a new top users worker
@@ -194,14 +198,50 @@ func NewTopUsersWorker() *TopUsersWorker {
 		log.Fatalf("Failed to declare exchange '%s': %v", queues.UserIdJoinChunksExchange, err)
 	}
 
-	return &TopUsersWorker{
+	// Initialize fault tolerance components
+	stateDir := "/app/worker-data"
+	metadataDir := filepath.Join(stateDir, "metadata")
+	processedChunksPath := filepath.Join(stateDir, "processed-chunks.txt")
+
+	// Ensure state directory exists
+	if err := os.MkdirAll(metadataDir, 0755); err != nil {
+		consumer.Close()
+		exchangeProducer.Close()
+		log.Fatalf("Failed to create state directory: %v", err)
+	}
+
+	// Initialize MessageManager for duplicate detection
+	messageManager := messagemanager.NewMessageManager(processedChunksPath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		log.Printf("Top Users Worker: Warning - failed to load processed chunks: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		log.Printf("Top Users Worker: Loaded %d processed chunk IDs", count)
+	}
+
+	// Initialize StateManager
+	stateManager := NewTopUsersStateManager(metadataDir, numPartitions)
+
+	worker := &TopUsersWorker{
 		consumer:         consumer,
 		exchangeProducer: exchangeProducer,
 		config:           config,
 		clientStates:     make(map[string]*ClientState),
 		numPartitions:    numPartitions,
 		numReaders:       numReaders,
+		messageManager:   messageManager,
+		stateManager:     stateManager,
 	}
+
+	// Rebuild state from CSV metadata on startup
+	log.Println("Top Users Worker: Rebuilding state from metadata...")
+	if err := stateManager.RebuildState(worker.clientStates); err != nil {
+		log.Printf("Top Users Worker: Warning - failed to rebuild state: %v", err)
+	} else {
+		log.Println("Top Users Worker: State rebuilt successfully")
+	}
+
+	return worker
 }
 
 // getOrCreateClientState gets or creates client state
@@ -217,31 +257,32 @@ func (tw *TopUsersWorker) getOrCreateClientState(clientID string) *ClientState {
 }
 
 // processMessage processes a single message from reduce worker
-func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		log.Printf("Top Users Worker: Failed to deserialize chunk: %v", err)
-		return middleware.MessageMiddlewareMessageError
+func (tw *TopUsersWorker) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
+	clientID := chunkMsg.ClientID
+	chunkNumber := int(chunkMsg.ChunkNumber)
+	msgID := chunkMsg.ID
+
+	// Check for duplicate chunk
+	if tw.messageManager.IsProcessed(msgID) {
+		log.Printf("Top Users Worker: Chunk %s already processed, skipping", msgID)
+		return 0 // Success - callback will ack
 	}
 
-	clientID := chunkMsg.ClientID
-	chunkNumber := int(chunkMsg.ChunkNumber) // For Query 4, this is the partition number
+	// Get or create client state
 	clientState := tw.getOrCreateClientState(clientID)
 
 	log.Printf("Top Users Worker: Received chunk %d (partition %d) for client %s (expecting %d total chunks)",
 		chunkNumber, chunkNumber, clientID, clientState.numPartitions)
 
-	// Mark this chunk as received (using partition number as key)
-	clientState.receivedChunks[chunkNumber] = true
+	// Process chunk through state manager (persists CSV data and updates state)
+	if err := tw.stateManager.ProcessChunk(chunkMsg, clientState); err != nil {
+		log.Printf("Top Users Worker: Failed to process chunk: %v", err)
+		return middleware.MessageMiddlewareMessageError // Error - callback will nack
+	}
 
-	// Process the chunk data first (if it has data)
-	if chunkMsg.ChunkSize > 0 && len(chunkMsg.ChunkData) > 0 {
-		log.Printf("Top Users Worker: Processing data chunk %d (partition %d) for client %s", chunkNumber, chunkNumber, clientID)
-		if err := tw.processChunkData(chunkMsg, clientState); err != nil {
-			log.Printf("Top Users Worker: Failed to process chunk data: %v", err)
-			return middleware.MessageMiddlewareMessageError
-		}
+	// Mark chunk as processed in MessageManager
+	if err := tw.messageManager.MarkProcessed(msgID); err != nil {
+		log.Printf("Top Users Worker: Warning - failed to mark chunk as processed: %v", err)
 	}
 
 	// Check if we've received all expected chunks (all partitions 0 through numPartitions-1)
@@ -262,6 +303,11 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 			return err
 		}
 
+		// Mark client as ready (deletes CSV metadata file)
+		if err := tw.stateManager.MarkClientReady(clientID); err != nil {
+			log.Printf("Top Users Worker: Warning - failed to mark client ready: %v", err)
+		}
+
 		// Clear client state
 		delete(tw.clientStates, clientID)
 	} else {
@@ -271,41 +317,6 @@ func (tw *TopUsersWorker) processMessage(delivery amqp.Delivery) middleware.Mess
 	}
 
 	return 0
-}
-
-// processChunkData processes chunk data and updates top users per store
-func (tw *TopUsersWorker) processChunkData(chunkMsg *chunk.Chunk, clientState *ClientState) error {
-	// Parse CSV data
-	reader := csv.NewReader(strings.NewReader(chunkMsg.ChunkData))
-	records, err := reader.ReadAll()
-	if err != nil {
-		return fmt.Errorf("failed to parse CSV: %w", err)
-	}
-
-	// Skip header row
-	for i := 1; i < len(records); i++ {
-		record := records[i]
-		if len(record) < 3 {
-			continue
-		}
-
-		userID := record[0]
-		storeID := record[1]
-		purchaseCount, _ := strconv.Atoi(record[2])
-
-		// Get or create store top users
-		if clientState.topUsersByStore[storeID] == nil {
-			clientState.topUsersByStore[storeID] = NewStoreTopUsers(storeID)
-		}
-
-		// Add/update user in top-3 for this store
-		clientState.topUsersByStore[storeID].Add(userID, purchaseCount)
-	}
-
-	log.Printf("Top Users Worker: Processed chunk for client %s - Now tracking %d stores",
-		chunkMsg.ClientID, len(clientState.topUsersByStore))
-
-	return nil
 }
 
 // getUserPartition returns the partition number for a given user ID
@@ -420,8 +431,15 @@ func (tw *TopUsersWorker) Start() {
 
 	onMessageCallback := func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := tw.processMessage(delivery)
-			if err != 0 {
+
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				log.Printf("Top Users Worker: Failed to deserialize chunk: %v", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			if err := tw.processMessage(chunkMsg); err != 0 {
 				log.Printf("Failed to process message: %v", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue
@@ -446,6 +464,9 @@ func (tw *TopUsersWorker) Close() {
 	}
 	if tw.exchangeProducer != nil {
 		tw.exchangeProducer.Close()
+	}
+	if tw.messageManager != nil {
+		tw.messageManager.Close()
 	}
 }
 

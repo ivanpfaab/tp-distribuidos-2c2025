@@ -3,15 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
+	"path/filepath"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
-	"github.com/tp-distribuidos-2c2025/workers/join/shared/batch"
 	joinchunk "github.com/tp-distribuidos-2c2025/workers/join/shared/chunk"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/dictionary"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/handler"
@@ -26,18 +26,16 @@ type StoreIdJoinWorker struct {
 	chunkConsumer        *workerqueue.QueueConsumer
 	completionConsumer   *exchange.ExchangeConsumer
 	outputProducer       *workerqueue.QueueMiddleware
-	completionProducer   *workerqueue.QueueMiddleware
 	orchestratorProducer *workerqueue.QueueMiddleware
 	config               *StoreIdConfig
 	workerID             string
+	messageManager       *messagemanager.MessageManager
 
 	// Shared components
 	dictManager          *dictionary.Manager[*Store]
 	dictHandler          *handler.DictionaryHandler[*Store]
 	completionHandler    *handler.CompletionHandler[*Store]
-	batchManager         *batch.Manager
 	chunkSender          *joinchunk.Sender
-	completionNotifier   *notifier.CompletionNotifier
 	orchestratorNotifier *notifier.OrchestratorNotifier
 }
 
@@ -92,18 +90,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create completion consumer")
 	}
 
-	completionProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.InMemoryJoinCompletionQueue,
-		config.ConnectionConfig,
-	)
-	if completionProducer == nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		return nil, fmt.Errorf("failed to create completion producer")
-	}
-
 	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(
 		queues.InMemoryJoinCompletionQueue,
 		config.ConnectionConfig,
@@ -113,7 +99,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create orchestrator producer")
 	}
 
@@ -124,7 +109,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create input queue declarer")
 	}
 	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
@@ -132,7 +116,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
 	}
@@ -143,31 +126,61 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to declare output queue: %v", err)
-	}
-
-	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		completionProducer.Close()
-		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
 	}
 
 	workerID := fmt.Sprintf("storeid-worker-%s", instanceID)
 
+	// Initialize MessageManager for fault tolerance
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		orchestratorProducer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("StoreID Join Worker: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("StoreID Join Worker: Loaded %d processed chunks\n", count)
+	}
+
 	// Initialize shared components
 	dictManager := dictionary.NewManager[*Store]()
+
+	// Create dictionary directory
+	dictDir := filepath.Join(stateDir, "dictionaries")
+	if err := os.MkdirAll(dictDir, 0755); err != nil {
+		dictionaryConsumer.Close()
+		chunkConsumer.Close()
+		outputProducer.Close()
+		completionConsumer.Close()
+		orchestratorProducer.Close()
+		messageManager.Close()
+		return nil, fmt.Errorf("failed to create dictionary directory: %w", err)
+	}
+
 	parseFunc := func(csvData string, clientID string) (map[string]*Store, error) {
 		return parser.ParseStores(csvData, clientID)
 	}
-	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, "StoreID Join Worker")
-	completionHandler := handler.NewCompletionHandler(dictManager, "StoreID Join Worker")
-	batchManager := batch.NewManager()
+
+	// Rebuild dictionaries on startup
+	rebuiltCount, err := dictManager.RebuildAllDictionaries(dictDir, parseFunc)
+	if err != nil {
+		fmt.Printf("StoreID Join Worker: Warning - failed to rebuild dictionaries: %v\n", err)
+	} else {
+		fmt.Printf("StoreID Join Worker: Rebuilt %d dictionaries on startup\n", rebuiltCount)
+	}
+
+	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, dictDir, "StoreID Join Worker")
+	completionHandler := handler.NewCompletionHandler(dictManager, dictDir, "StoreID Join Worker")
 	chunkSender := joinchunk.NewSender(outputProducer)
-	completionNotifier := notifier.NewCompletionNotifier(completionProducer, workerID, "stores")
 	orchestratorNotifier := notifier.NewOrchestratorNotifier(orchestratorProducer, "storeid-join-worker")
 
 	return &StoreIdJoinWorker{
@@ -175,16 +188,14 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer:        chunkConsumer,
 		completionConsumer:   completionConsumer,
 		outputProducer:       outputProducer,
-		completionProducer:   completionProducer,
 		orchestratorProducer: orchestratorProducer,
 		config:               config,
 		workerID:             workerID,
+		messageManager:       messageManager,
 		dictManager:          dictManager,
 		dictHandler:          dictHandler,
 		completionHandler:    completionHandler,
-		batchManager:         batchManager,
 		chunkSender:          chunkSender,
-		completionNotifier:   completionNotifier,
 		orchestratorNotifier: orchestratorNotifier,
 	}, nil
 }
@@ -192,6 +203,12 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 // Start starts the StoreID join worker
 func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 	fmt.Println("StoreID Join Worker: Starting to listen for messages...")
+
+	// Set queue names for persistent queues
+	dictionaryQueueName := fmt.Sprintf("storeid-dictionary-%s-queue", w.workerID)
+	w.dictionaryConsumer.SetQueueName(dictionaryQueueName)
+	completionQueueName := fmt.Sprintf("storeid-completion-%s-queue", w.workerID)
+	w.completionConsumer.SetQueueName(completionQueueName)
 
 	if err := w.dictionaryConsumer.StartConsuming(w.createDictionaryCallback()); err != 0 {
 		fmt.Printf("Failed to start dictionary consumer: %v\n", err)
@@ -210,6 +227,9 @@ func (w *StoreIdJoinWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (w *StoreIdJoinWorker) Close() {
+	if w.messageManager != nil {
+		w.messageManager.Close()
+	}
 	if w.dictionaryConsumer != nil {
 		w.dictionaryConsumer.Close()
 	}
@@ -222,9 +242,6 @@ func (w *StoreIdJoinWorker) Close() {
 	if w.outputProducer != nil {
 		w.outputProducer.Close()
 	}
-	if w.completionProducer != nil {
-		w.completionProducer.Close()
-	}
 	if w.orchestratorProducer != nil {
 		w.orchestratorProducer.Close()
 	}
@@ -234,12 +251,34 @@ func (w *StoreIdJoinWorker) Close() {
 func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.dictHandler.ProcessMessage(delivery)
-			if err != 0 {
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to deserialize dictionary chunk: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+
+			// Check if chunk was already processed
+			if w.messageManager.IsProcessed(chunkMsg.ID) {
+				fmt.Printf("StoreID Join Worker: Dictionary chunk %s already processed, skipping\n", chunkMsg.ID)
+				delivery.Ack(false)
+				continue
+			}
+
+			if err := w.dictHandler.ProcessMessage(chunkMsg); err != 0 {
+				delivery.Nack(false, false)
 				done <- fmt.Errorf("failed to process dictionary message: %v", err)
 				return
 			}
+
+			// Mark chunk as processed after successful processing
+			if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to mark dictionary chunk as processed: %v\n", err)
+			}
+
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }
 
@@ -247,94 +286,55 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 func (w *StoreIdJoinWorker) createChunkCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.processChunkMessage(delivery)
-			if err != 0 {
+
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to deserialize chunk: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+
+			if !w.dictManager.IsReady(chunkMsg.ClientID) {
+				fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", chunkMsg.ClientID)
+				delivery.Nack(false, true) // Requeue
+				continue
+			}
+
+			if err := w.processChunkMessage(chunkMsg); err != 0 {
+				fmt.Printf("StoreID Join Worker: Failed to process chunk message: %v\n", err)
+				delivery.Nack(false, false) // Don't requeue on processing errors
 				done <- fmt.Errorf("failed to process chunk message: %v", err)
 				return
 			}
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }
 
-// processChunkMessage processes chunk messages for joining with batching
-func (w *StoreIdJoinWorker) processChunkMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
+// processChunkMessage processes chunk messages for joining
+func (w *StoreIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	fmt.Printf("StoreID Join Worker: Received chunk message\n")
 
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to deserialize chunk: %v\n", err)
-		delivery.Nack(false, false)
+	// Check if chunk was already processed
+	if w.messageManager.IsProcessed(chunkMsg.ID) {
+		fmt.Printf("StoreID Join Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
+		return 0 // Success - callback will ack
+	}
+
+	// Process the chunk
+	if err := w.processChunk(chunkMsg); err != 0 {
+		fmt.Printf("StoreID Join Worker: Failed to process chunk: %v\n", err)
+		return middleware.MessageMiddlewareMessageError // Error - callback will nack
+	}
+
+	// Mark chunk as processed after successful processing
+	if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		fmt.Printf("StoreID Join Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	clientID := chunkMsg.ClientID
-	chunkNumber := int(chunkMsg.ChunkNumber)
-
-	// Check if dictionary is ready
-	if !w.dictManager.IsReady(clientID) {
-		fmt.Printf("StoreID Join Worker: Dictionary not ready for client %s, NACKing chunk for retry\n", clientID)
-		delivery.Nack(false, true)
-		return 0
-	}
-
-	// Add chunk to batch
-	w.batchManager.AddChunk(clientID, chunkMsg)
-	fmt.Printf("StoreID Join Worker: Added chunk %d (partition %d) for client %s to batch\n", chunkNumber, chunkNumber, clientID)
-
-	// Get expected number of partitions from environment (set in docker-compose)
-	numPartitionsStr := os.Getenv("NUM_PARTITIONS")
-	numPartitions := 100 // Default to 100 if not set
-	if numPartitionsStr != "" {
-		if n, err := strconv.Atoi(numPartitionsStr); err == nil && n > 0 {
-			numPartitions = n
-		}
-	}
-
-	// Get all chunks for this client
-	chunks := w.batchManager.GetChunks(clientID)
-
-	// Check if we've received all expected chunks (chunk numbers 0 through numPartitions-1)
-	receivedChunkNumbers := make(map[int]bool)
-	for _, ch := range chunks {
-		receivedChunkNumbers[int(ch.ChunkNumber)] = true
-	}
-
-	allChunksReceived := true
-	for i := 0; i < numPartitions; i++ {
-		if !receivedChunkNumbers[i] {
-			allChunksReceived = false
-			break
-		}
-	}
-
-	if allChunksReceived {
-		fmt.Printf("StoreID Join Worker: Received all %d chunks (partitions 0-%d) for client %s, processing batch...\n", numPartitions, numPartitions-1, clientID)
-
-		// Combine and process batch
-		combinedChunk, err := w.batchManager.CombineChunks(clientID)
-		if err != nil {
-			fmt.Printf("StoreID Join Worker: Failed to combine chunks: %v\n", err)
-			delivery.Nack(false, true)
-			return middleware.MessageMiddlewareMessageError
-		}
-
-		// Process the combined chunk
-		if err := w.processChunk(combinedChunk); err != 0 {
-			fmt.Printf("StoreID Join Worker: Failed to process batch: %v\n", err)
-			delivery.Nack(false, true)
-			return err
-		}
-
-		// Clear batch
-		w.batchManager.ClearClient(clientID)
-		fmt.Printf("StoreID Join Worker: Successfully processed batch for client %s\n", clientID)
-	} else {
-		receivedCount := len(receivedChunkNumbers)
-		fmt.Printf("StoreID Join Worker: Client %s has %d/%d chunks (partitions), waiting for more...\n", clientID, receivedCount, numPartitions)
-	}
-
-	delivery.Ack(false)
-	return 0
+	return 0 // Success - callback will ack
 }
 
 // processChunk processes a single chunk for joining
@@ -355,11 +355,7 @@ func (w *StoreIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messa
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send completion notifications
-	if err := w.completionNotifier.SendCompletionNotification(chunkMsg.ClientID); err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to send completion notification: %v\n", err)
-	}
-
+	// Send orchestrator notification
 	if err := w.orchestratorNotifier.SendChunkNotification(chunkMsg); err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to send orchestrator notification: %v\n", err)
 	}
@@ -404,7 +400,7 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 	// Create new chunk with joined data
 	joinedChunk := chunk.NewChunk(
 		chunkMsg.ClientID,
-		chunkMsg.FileID,
+		"0001", // Default file ID for StoreID join
 		chunkMsg.QueryType,
 		chunkMsg.ChunkNumber,
 		chunkMsg.IsLastChunk,
@@ -421,11 +417,21 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 func (w *StoreIdJoinWorker) createCompletionCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := w.completionHandler.ProcessMessage(delivery)
-			if err != 0 {
-				done <- fmt.Errorf("failed to process completion signal: %v", err)
-				return
+			
+			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
+			if err != nil {
+				fmt.Printf("StoreID Join Worker: Failed to deserialize completion signal: %v\n", err)
+				delivery.Ack(false) 
+				continue
 			}
+
+			if err := w.completionHandler.ProcessMessage(completionSignal); err != 0 {
+				fmt.Printf("StoreID Join Worker: Error processing completion signal: %v\n", err)
+				delivery.Nack(false, false)
+				continue
+			}
+			delivery.Ack(false)
 		}
+		done <- nil
 	}
 }

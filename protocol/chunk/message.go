@@ -18,7 +18,7 @@ const (
 	MessageType         = 2
 	ClientIDSize        = 4
 	FileIDSize          = 4
-	IDSize              = 12 // ClientIDSize (4) + ChunkNumberSize (8)
+	IDSize              = 17 // ClientIDSize (4) + FileIDSize (4) + QueryTypeSize (1) + ChunkNumberSize (8)
 	QueryTypeSize       = 1
 	TableIDSize         = 1
 	ChunkSizeSize       = 8
@@ -74,7 +74,7 @@ func SerializeChunkMessage(msg *ChunkMessage) ([]byte, error) {
 	copy(buf[offset:], []byte(msg.Chunk.FileID))
 	offset += FileIDSize
 
-	// Serialize ID (12 bytes: ClientID + ChunkNumber)
+	// Serialize ID (17 bytes: ClientID + FileID + QueryType + ChunkNumber)
 	if len(msg.Chunk.ID) != IDSize {
 		return nil, fmt.Errorf("id must be exactly %d bytes, got %d", IDSize, len(msg.Chunk.ID))
 	}

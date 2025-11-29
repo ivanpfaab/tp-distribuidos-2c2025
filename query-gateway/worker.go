@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 
+	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
@@ -16,6 +18,7 @@ type QueryGateway struct {
 	query4GroupByProducer *workerqueue.QueueMiddleware // Query 4 - MapReduce
 	query1ResultsProducer *workerqueue.QueueMiddleware
 	config                *middleware.ConnectionConfig
+	messageManager        *messagemanager.MessageManager
 }
 
 // NewQueryGateway creates a new QueryGateway instance
@@ -125,6 +128,15 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 		return nil, fmt.Errorf("failed to declare Query 1 results queue: %v", err)
 	}
 
+	// Initialize MessageManager for fault tolerance
+	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		fmt.Printf("Query Gateway: Warning - failed to load processed IDs: %v (starting with empty state)\n", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		fmt.Printf("Query Gateway: Loaded %d processed IDs\n", count)
+	}
+
 	return &QueryGateway{
 		consumer:              consumer,
 		query2GroupByProducer: query2GroupByProducer,
@@ -132,6 +144,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 		query4GroupByProducer: query4GroupByProducer,
 		query1ResultsProducer: query1ResultsProducer,
 		config:                config,
+		messageManager:        messageManager,
 	}, nil
 }
 
@@ -143,6 +156,9 @@ func (qg *QueryGateway) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (qg *QueryGateway) Close() {
+	if qg.messageManager != nil {
+		qg.messageManager.Close()
+	}
 	if qg.consumer != nil {
 		qg.consumer.Close()
 	}
@@ -165,7 +181,16 @@ func (qg *QueryGateway) createCallback() func(middleware.ConsumeChannel, chan er
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		fmt.Println("Query Gateway: Starting to listen for messages...")
 		for delivery := range *consumeChannel {
-			if err := qg.processMessage(delivery); err != 0 {
+			// Deserialize the chunk message in the callback (middleware layer)
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				fmt.Printf("Query Gateway: Failed to deserialize chunk message: %v\n", err)
+				delivery.Nack(false, true) // Reject and requeue
+				continue
+			}
+
+			// Process with deserialized chunk
+			if err := qg.processMessage(chunkMsg); err != 0 {
 				fmt.Printf("Query Gateway: Failed to process message: %v\n", err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

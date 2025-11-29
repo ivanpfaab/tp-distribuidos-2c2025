@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -26,6 +28,10 @@ type InFileJoinOrchestrator struct {
 
 	// Completion tracker
 	completionTracker *shared.CompletionTracker
+
+	// Fault tolerance components
+	messageManager *messagemanager.MessageManager
+	stateManager   *StateManager
 }
 
 // NewInFileJoinOrchestrator creates a new in-file join orchestrator
@@ -73,7 +79,30 @@ func NewInFileJoinOrchestrator(config *middleware.ConnectionConfig) (*InFileJoin
 		return nil, fmt.Errorf("failed to declare completion exchange: %v", err)
 	}
 
-	// Create completion tracker with callback
+	// Initialize fault tolerance components
+	metadataDir := "/app/orchestrator-data/metadata"
+	processedNotificationsPath := "/app/orchestrator-data/processed-notifications.txt"
+
+	// Ensure metadata directory exists
+	if err := os.MkdirAll(metadataDir, 0755); err != nil {
+		consumer.Close()
+		completionProducer.Close()
+		return nil, fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
+	// Initialize MessageManager for duplicate detection
+	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		log.Printf("Warning: failed to load processed notifications: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		log.Printf("Loaded %d processed notification IDs", count)
+	}
+
+	// Create state manager first (completion tracker will be set after creation)
+	stateManager := NewStateManager(metadataDir, nil)
+
+	// Create completion tracker with callback that uses state manager
 	completionTracker := shared.NewCompletionTracker(
 		"InFileJoinOrchestrator",
 		func(clientID string, clientStatus *shared.ClientStatus) {
@@ -87,15 +116,34 @@ func NewInFileJoinOrchestrator(config *middleware.ConnectionConfig) (*InFileJoin
 			} else {
 				log.Printf("Sent completion signal for client %s to all user join workers", clientID)
 			}
+
+			// Delete CSV metadata file for completed client
+			if err := stateManager.DeleteClientMetadata(clientID); err != nil {
+				log.Printf("Warning: failed to delete metadata file for client %s: %v", clientID, err)
+			} else {
+				log.Printf("Deleted metadata file for completed client %s", clientID)
+			}
 		},
 	)
 
-	return &InFileJoinOrchestrator{
+	// Set completion tracker in state manager
+	stateManager.completionTracker = completionTracker
+
+	orchestrator := &InFileJoinOrchestrator{
 		consumer:           consumer,
 		completionProducer: completionProducer,
 		config:             config,
 		completionTracker:  completionTracker,
-	}, nil
+		messageManager:     messageManager,
+		stateManager:       stateManager,
+	}
+
+	// Rebuild state from CSV metadata on startup
+	if err := orchestrator.stateManager.RebuildState(); err != nil {
+		log.Printf("Warning: failed to rebuild state from CSV: %v", err)
+	}
+
+	return orchestrator, nil
 }
 
 // Start starts the orchestrator
@@ -113,11 +161,28 @@ func (o *InFileJoinOrchestrator) Start() {
 				continue
 			}
 
+			// Check for duplicate notification
+			if o.messageManager.IsProcessed(message.ID) {
+				log.Printf("Notification %s already processed, skipping", message.ID)
+				delivery.Ack(false)
+				continue
+			}
+
 			// Process the chunk notification
 			if err := o.completionTracker.ProcessChunkNotification(message); err != nil {
 				log.Printf("Failed to process chunk notification: %v", err)
 				delivery.Ack(false)
 				continue
+			}
+
+			// Append notification to CSV for state rebuild
+			if err := o.stateManager.AppendNotification(message); err != nil {
+				log.Printf("Warning: failed to append notification to CSV: %v", err)
+			}
+
+			// Mark as processed in MessageManager
+			if err := o.messageManager.MarkProcessed(message.ID); err != nil {
+				log.Printf("Warning: failed to mark notification as processed: %v", err)
 			}
 
 			// Acknowledge the message
@@ -160,5 +225,8 @@ func (o *InFileJoinOrchestrator) Close() {
 	}
 	if o.completionProducer != nil {
 		o.completionProducer.Close()
+	}
+	if o.messageManager != nil {
+		o.messageManager.Close()
 	}
 }

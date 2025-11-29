@@ -137,28 +137,6 @@ func (fa *FileAggregator) getEmptyChunkData() string {
 	}
 }
 
-// processFilesAggregated aggregates all files together
-// NOTE: This approach holds all partition data in memory simultaneously
-// Currently unused - kept for reference only
-func (fa *FileAggregator) processFilesAggregated(files []string) ([]FileResult, error) {
-	// Create aggregator from first file
-	aggregator, err := aggregation.NewAggregatorFromFile(fa.queryType, files[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to create aggregator: %v", err)
-	}
-
-	// Aggregate and format all files
-	csvData := fa.aggregateAndFormat(aggregator, files)
-
-	// Return as single result (partition number doesn't matter when aggregated)
-	return []FileResult{
-		{
-			PartitionNumber: 0,
-			CSVData:         csvData,
-		},
-	}, nil
-}
-
 // processSingleFile processes a single file and returns formatted CSV
 // The map goes out of scope immediately, making it eligible for GC
 func (fa *FileAggregator) processSingleFile(aggregator aggregation.Aggregator, filePath string) string {
@@ -177,31 +155,6 @@ func (fa *FileAggregator) processSingleFile(aggregator aggregation.Aggregator, f
 	result := grouper.FormatOutput(aggregatedData)
 
 	// aggregatedData automatically goes out of scope here - eligible for GC
-	return result
-}
-
-// aggregateAndFormat performs aggregation and formatting in a separate scope
-// This ensures the aggregatedData map goes out of scope immediately after use,
-// making it eligible for garbage collection without explicit cleanup
-// Used for Query 2/3 where we aggregate all files together
-func (fa *FileAggregator) aggregateAndFormat(aggregator aggregation.Aggregator, files []string) string {
-	// Initialize aggregated data map - this will go out of scope when function returns
-	aggregatedData := aggregator.InitializeDataMap()
-
-	// Aggregate all partition files
-	for _, filePath := range files {
-		if err := aggregator.AggregatePartitionFile(filePath, aggregatedData); err != nil {
-			log.Printf("Failed to aggregate partition file %s: %v", filePath, err)
-			// Continue with other files
-			continue
-		}
-	}
-
-	// Format output using the grouper
-	grouper := aggregator.GetGrouper()
-	result := grouper.FormatOutput(aggregatedData)
-
-	// aggregatedData automatically goes out of scope here - no explicit cleanup needed
 	return result
 }
 

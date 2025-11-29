@@ -138,7 +138,10 @@ func (ct *CompletionTracker) ProcessChunkNotification(notification *signals.Chun
 				log.Printf("[%s] Client %s: Inferred total expected files = %d from FileID %s",
 					ct.trackerName, notification.ClientID, fileNumber, notification.FileID)
 			} else {
-				log.Printf("[%s] Client %s: Failed to parse file number from FileID %s: %v",
+				// If parsing fails, assume 1 file total
+				clientStatus.TotalExpectedFiles = 1
+				clientStatus.ExpectedFilesKnown = true
+				log.Printf("[%s] Client %s: Inferred default total expected files = 1 from FileID %s: %v",
 					ct.trackerName, notification.ClientID, notification.FileID, err)
 			}
 		}

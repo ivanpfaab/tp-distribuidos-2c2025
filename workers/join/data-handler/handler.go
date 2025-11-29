@@ -3,12 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -29,6 +30,7 @@ type JoinDataHandler struct {
 	config             *middleware.ConnectionConfig
 	itemIdWorkerCount  int       // Number of ItemID worker instances to broadcast to
 	storeIdWorkerCount int       // Number of StoreID worker instances to broadcast to
+	messageManager     *messagemanager.MessageManager
 }
 
 // NewJoinDataHandler creates a new JoinDataHandler instance
@@ -140,6 +142,25 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		return nil, fmt.Errorf("failed to declare user ID dictionary queue: %v", err)
 	}
 
+	// Initialize MessageManager for fault tolerance
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		consumer.Close()
+		itemIdProducer.Close()
+		storeIdProducer.Close()
+		userIdProducer.Close()
+		return nil, fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	messageManager := messagemanager.NewMessageManager(stateFilePath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		logWithTimestamp("Join Data Handler: Warning - failed to load processed chunks: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		logWithTimestamp("Join Data Handler: Loaded %d processed chunks", count)
+	}
+
 	return &JoinDataHandler{
 		consumer:           consumer,
 		itemIdProducer:     itemIdProducer,
@@ -148,6 +169,7 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		config:             config,
 		itemIdWorkerCount:  itemIdWorkerCount,
 		storeIdWorkerCount: storeIdWorkerCount,
+		messageManager:     messageManager,
 	}, nil
 }
 
@@ -159,6 +181,9 @@ func (jdh *JoinDataHandler) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (jdh *JoinDataHandler) Close() {
+	if jdh.messageManager != nil {
+		jdh.messageManager.Close()
+	}
 	if jdh.consumer != nil {
 		jdh.consumer.Close()
 	}
@@ -177,36 +202,50 @@ func (jdh *JoinDataHandler) Close() {
 func (jdh *JoinDataHandler) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			err := jdh.processMessage(delivery)
-			if err != 0 {
-				done <- fmt.Errorf("failed to process message: %v", err)
-				return
+			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
+			if err != nil {
+				logWithTimestamp("Join Data Handler: Failed to deserialize chunk message: %v", err)
+				delivery.Nack(false, false) // Reject the message
+				continue
 			}
+
+			if err := jdh.processMessage(chunkMsg, delivery.Body); err != 0 {
+				logWithTimestamp("Join Data Handler: Failed to process message: %v", err)
+				if err == middleware.MessageMiddlewareMessageError {
+					delivery.Nack(false, true) // Reject and requeue
+				} else {
+					delivery.Nack(false, false) // Reject without requeue
+				}
+				continue
+			}
+			delivery.Ack(false) // Acknowledge the original message
 		}
+		done <- nil
 	}
 }
 
 // processMessage processes a single message and routes it to the appropriate dictionary queue/exchange
-func (jdh *JoinDataHandler) processMessage(delivery amqp.Delivery) middleware.MessageMiddlewareError {
-
-	// Deserialize the chunk message
-	chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-	if err != nil {
-		logWithTimestamp("Join Data Handler: Failed to deserialize chunk message: %v", err)
-		delivery.Nack(false, false) // Reject the message
-		return middleware.MessageMiddlewareMessageError
+func (jdh *JoinDataHandler) processMessage(chunkMsg *chunk.Chunk, messageData []byte) middleware.MessageMiddlewareError {
+	// Check if chunk was already processed
+	if jdh.messageManager.IsProcessed(chunkMsg.ID) {
+		logWithTimestamp("Join Data Handler: Chunk %s already processed, skipping", chunkMsg.ID)
+		return 0
 	}
 
 	// Route based on FileID
-	sendErr := jdh.routeAndSendByFileId(chunkMsg.FileID, delivery.Body)
+	sendErr := jdh.routeAndSendByFileId(chunkMsg.FileID, messageData)
 	if sendErr != 0 {
 		logWithTimestamp("Join Data Handler: Failed to route chunk with FileID %s: %v", chunkMsg.FileID, sendErr)
-		delivery.Nack(false, true) // Reject and requeue
 		return sendErr
 	}
 
+	// Mark chunk as processed after successful routing
+	if err := jdh.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		logWithTimestamp("Join Data Handler: Failed to mark chunk as processed: %v", err)
+		return middleware.MessageMiddlewareMessageError
+	}
+
 	logWithTimestamp("Join Data Handler: Successfully routed chunk with FileID %s", chunkMsg.FileID)
-	delivery.Ack(false) // Acknowledge the original message
 	return 0
 }
 
