@@ -4,13 +4,13 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	"github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
@@ -30,7 +30,7 @@ func NewStateManager(metadataDir string, completionTracker *shared.CompletionTra
 
 // RebuildState rebuilds completion tracker state from CSV metadata files
 func (sm *StateManager) RebuildState() error {
-	log.Println("Rebuilding state from CSV metadata...")
+	testing.LogInfo("In-Memory Join Orchestrator", "Rebuilding state from CSV metadata...")
 
 	// Read all CSV files in metadata directory
 	files, err := os.ReadDir(sm.metadataDir)
@@ -54,7 +54,7 @@ func (sm *StateManager) RebuildState() error {
 		// Read notifications from CSV
 		notifications, err := sm.readNotificationsFromCSV(filePath)
 		if err != nil {
-			log.Printf("Warning: failed to read notifications from %s: %v", filePath, err)
+			testing.LogWarn("In-Memory Join Orchestrator", "Failed to read notifications from %s: %v", filePath, err)
 			continue
 		}
 
@@ -67,7 +67,7 @@ func (sm *StateManager) RebuildState() error {
 		// during normal operation (duplicate check will skip them)
 		for _, notification := range notifications {
 			if err := sm.completionTracker.ProcessChunkNotification(notification); err != nil {
-				log.Printf("Warning: failed to process notification during rebuild: %v", err)
+				testing.LogWarn("In-Memory Join Orchestrator", "Failed to process notification during rebuild: %v", err)
 			}
 		}
 
@@ -75,17 +75,17 @@ func (sm *StateManager) RebuildState() error {
 		if sm.completionTracker.IsClientCompleted(clientID) {
 			// Client already completed, delete CSV file
 			if err := os.Remove(filePath); err != nil {
-				log.Printf("Warning: failed to delete metadata file for completed client %s: %v", clientID, err)
+				testing.LogWarn("In-Memory Join Orchestrator", "Failed to delete metadata file for completed client %s: %v", clientID, err)
 			} else {
-				log.Printf("Deleted metadata file for already-completed client %s", clientID)
+				testing.LogInfo("In-Memory Join Orchestrator", "Deleted metadata file for already-completed client %s", clientID)
 			}
 		} else {
 			rebuiltCount++
-			log.Printf("Rebuilt state for client %s (%d notifications)", clientID, len(notifications))
+			testing.LogInfo("In-Memory Join Orchestrator", "Rebuilt state for client %s (%d notifications)", clientID, len(notifications))
 		}
 	}
 
-	log.Printf("State rebuild complete: %d clients rebuilt", rebuiltCount)
+	testing.LogInfo("In-Memory Join Orchestrator", "State rebuild complete: %d clients rebuilt", rebuiltCount)
 	return nil
 }
 
@@ -114,7 +114,7 @@ func (sm *StateManager) AppendNotification(notification *signals.ChunkNotificati
 	}
 
 	if stat.Size() == 0 {
-		header := []string{"notification_id", "client_id", "file_id", "table_id", "chunk_number", "is_last_chunk", "is_last_from_table"}
+		header := []string{"notification_id", "client_id", "file_id", "table_id", "chunk_number", "is_last_chunk", "is_last_from_table", "map_worker_id"}
 		if err := writer.Write(header); err != nil {
 			return fmt.Errorf("failed to write header: %w", err)
 		}
@@ -138,6 +138,7 @@ func (sm *StateManager) AppendNotification(notification *signals.ChunkNotificati
 		strconv.Itoa(notification.ChunkNumber),
 		isLastChunkStr,
 		isLastFromTableStr,
+		notification.MapWorkerID,
 	}
 
 	if err := writer.Write(row); err != nil {
@@ -172,7 +173,7 @@ func (sm *StateManager) readNotificationsFromCSV(filePath string) ([]*signals.Ch
 		if err := sm.removeIncompleteLastRow(filePath); err != nil {
 			return nil, fmt.Errorf("failed to remove incomplete row: %w", err)
 		}
-		log.Printf("Fixed incomplete last row in %s", filePath)
+		testing.LogInfo("In-Memory Join Orchestrator", "Fixed incomplete last row in %s", filePath)
 	}
 
 	file, err := os.Open(filePath)
@@ -196,9 +197,11 @@ func (sm *StateManager) readNotificationsFromCSV(filePath string) ([]*signals.Ch
 		return nil, err
 	}
 
-	// Validate header
-	expectedHeader := []string{"notification_id", "client_id", "file_id", "table_id", "chunk_number", "is_last_chunk", "is_last_from_table"}
-	if len(header) < len(expectedHeader) {
+	// Validate header (support both old format without map_worker_id and new format with it)
+	expectedHeader := []string{"notification_id", "client_id", "file_id", "table_id", "chunk_number", "is_last_chunk", "is_last_from_table", "map_worker_id"}
+	hasMapWorkerID := len(header) >= len(expectedHeader)
+	minRequiredFields := len(expectedHeader) - 1 // Old format has one less field
+	if len(header) < minRequiredFields {
 		return nil, fmt.Errorf("invalid CSV header")
 	}
 
@@ -212,7 +215,7 @@ func (sm *StateManager) readNotificationsFromCSV(filePath string) ([]*signals.Ch
 			return nil, err
 		}
 
-		if len(row) < len(expectedHeader) {
+		if len(row) < minRequiredFields {
 			continue // Skip malformed rows
 		}
 
@@ -230,12 +233,18 @@ func (sm *StateManager) readNotificationsFromCSV(filePath string) ([]*signals.Ch
 		}
 		isLastChunk := row[5] == "1" || strings.ToLower(row[5]) == "true"
 		isLastFromTable := row[6] == "1" || strings.ToLower(row[6]) == "true"
+		
+		// MapWorkerID is optional for backward compatibility
+		mapWorkerID := ""
+		if hasMapWorkerID && len(row) > 7 {
+			mapWorkerID = row[7]
+		}
 
-		// Create notification (MapWorkerID not persisted)
+		// Create notification
 		notification := signals.NewChunkNotification(
 			clientID,
 			fileID,
-			"", // MapWorkerID not persisted
+			mapWorkerID,
 			tableID,
 			chunkNumber,
 			isLastChunk,
@@ -334,4 +343,3 @@ func (sm *StateManager) removeIncompleteLastRow(filePath string) error {
 	// No newline found, truncate to 0
 	return file.Truncate(0)
 }
-

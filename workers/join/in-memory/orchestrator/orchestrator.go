@@ -2,11 +2,10 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
+	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
@@ -14,6 +13,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	"github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
@@ -23,7 +23,6 @@ type InMemoryJoinOrchestrator struct {
 	itemIdProducer    *exchange.ExchangeMiddleware
 	storeIdProducer   *exchange.ExchangeMiddleware
 	completionTracker *shared.CompletionTracker
-	config            *middleware.ConnectionConfig
 	workerID          string
 
 	// Fault tolerance components
@@ -111,46 +110,48 @@ func NewInMemoryJoinOrchestrator(config *middleware.ConnectionConfig) (*InMemory
 	// Initialize MessageManager for duplicate detection
 	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
 	if err := messageManager.LoadProcessedIDs(); err != nil {
-		log.Printf("Warning: failed to load processed notifications: %v (starting with empty state)", err)
+		testing.LogWarn("In-Memory Join Orchestrator", "Failed to load processed notifications: %v (starting with empty state)", err)
 	} else {
 		count := messageManager.GetProcessedCount()
-		log.Printf("Loaded %d processed notification IDs", count)
+		testing.LogInfo("In-Memory Join Orchestrator", "Loaded %d processed notification IDs", count)
 	}
-
-	// Create state manager first (completion tracker will be set after creation)
-	stateManager := NewStateManager(metadataDir, nil)
-
-	// Create completion tracker with callback that uses state manager
-	completionTracker := shared.NewCompletionTracker("in-memory-join-orchestrator", func(clientID string, clientStatus *shared.ClientStatus) {
-		log.Printf("In-Memory Join Orchestrator: Client %s completed", clientID)
-		// Delete CSV metadata file for completed client
-		if err := stateManager.DeleteClientMetadata(clientID); err != nil {
-			log.Printf("Warning: failed to delete metadata file for client %s: %v", clientID, err)
-		} else {
-			log.Printf("Deleted metadata file for completed client %s", clientID)
-		}
-	})
-
-	// Set completion tracker in state manager
-	stateManager.completionTracker = completionTracker
 
 	// Generate worker ID
 	workerID := "in-memory-join-orchestrator"
 
+	// Create state manager first (completion tracker will be set after creation)
+	stateManager := NewStateManager(metadataDir, nil)
+
+	// Create orchestrator instance first (will be used in callback)
 	orchestrator := &InMemoryJoinOrchestrator{
-		consumer:          consumer,
-		itemIdProducer:    itemIdProducer,
-		storeIdProducer:   storeIdProducer,
-		completionTracker: completionTracker,
-		config:            config,
-		workerID:          workerID,
-		messageManager:    messageManager,
-		stateManager:      stateManager,
+		consumer:        consumer,
+		itemIdProducer:  itemIdProducer,
+		storeIdProducer: storeIdProducer,
+		workerID:        workerID,
+		messageManager:  messageManager,
+		stateManager:    stateManager,
 	}
+
+	// Create completion tracker with callback for StoreID completion
+	completionTracker := shared.NewCompletionTracker("in-memory-join-orchestrator", func(clientID string, clientStatus *shared.ClientStatus) {
+		testing.LogInfo("In-Memory Join Orchestrator", "StoreID client %s completed", clientID)
+
+		// Send completion signal for StoreID (query type 3)
+		orchestrator.sendCompletionSignal(clientID, 3, orchestrator.storeIdProducer)
+
+		// Delete CSV metadata file for completed client
+		if err := stateManager.DeleteClientMetadata(clientID); err != nil {
+			testing.LogWarn("In-Memory Join Orchestrator", "Failed to delete metadata file for client %s: %v", clientID, err)
+		}
+	})
+
+	// Set completion tracker in orchestrator and state manager
+	orchestrator.completionTracker = completionTracker
+	stateManager.completionTracker = completionTracker
 
 	// Rebuild state from CSV metadata on startup
 	if err := orchestrator.stateManager.RebuildState(); err != nil {
-		log.Printf("Warning: failed to rebuild state from CSV: %v", err)
+		testing.LogWarn("In-Memory Join Orchestrator", "Failed to rebuild state from CSV: %v", err)
 	}
 
 	return orchestrator, nil
@@ -158,16 +159,13 @@ func NewInMemoryJoinOrchestrator(config *middleware.ConnectionConfig) (*InMemory
 
 // Start starts the in-memory join orchestrator
 func (imo *InMemoryJoinOrchestrator) Start() middleware.MessageMiddlewareError {
-	fmt.Println("In-Memory Join Orchestrator: Starting...")
-
-	// Start consuming completion notifications
-	fmt.Println("In-Memory Join Orchestrator: Starting to listen for completion notifications...")
+	testing.LogInfo("In-Memory Join Orchestrator", "Starting...")
 	return imo.consumer.StartConsuming(imo.createCallback())
 }
 
 // Close closes all connections
 func (imo *InMemoryJoinOrchestrator) Close() {
-	fmt.Println("In-Memory Join Orchestrator: Shutting down...")
+	testing.LogInfo("In-Memory Join Orchestrator", "Shutting down...")
 
 	if imo.consumer != nil {
 		imo.consumer.Close()
@@ -183,7 +181,7 @@ func (imo *InMemoryJoinOrchestrator) Close() {
 		imo.messageManager.Close()
 	}
 
-	fmt.Println("In-Memory Join Orchestrator: Shutdown complete")
+	testing.LogInfo("In-Memory Join Orchestrator", "Shutdown complete")
 }
 
 // createCallback creates the message processing callback
@@ -191,7 +189,7 @@ func (imo *InMemoryJoinOrchestrator) createCallback() func(middleware.ConsumeCha
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
 			if err := imo.processChunkNotification(delivery); err != 0 {
-				fmt.Printf("In-Memory Join Orchestrator: Error processing chunk notification: %v\n", err)
+				testing.LogError("In-Memory Join Orchestrator", "Error processing chunk notification: %v", err)
 			}
 		}
 		done <- nil
@@ -203,184 +201,87 @@ func (imo *InMemoryJoinOrchestrator) processChunkNotification(delivery amqp.Deli
 	// Deserialize the message using the deserializer
 	message, err := deserializer.Deserialize(delivery.Body)
 	if err != nil {
-		fmt.Printf("In-Memory Join Orchestrator: Failed to deserialize message: %v\n", err)
+		testing.LogError("In-Memory Join Orchestrator", "Failed to deserialize message: %v", err)
 		delivery.Ack(false)
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Handle different message types
-	switch msg := message.(type) {
-	case *signals.ChunkNotification:
-		// Handle chunk notification from join workers
-		fmt.Printf("In-Memory Join Orchestrator: Received chunk notification - ClientID: %s, FileID: %s, ChunkNumber: %d, IsLastChunk: %t\n",
-			msg.ClientID, msg.FileID, msg.ChunkNumber, msg.IsLastChunk)
+	// Handle chunk notification from join workers
+	msg, ok := message.(*signals.ChunkNotification)
+	if !ok {
+		testing.LogWarn("In-Memory Join Orchestrator", "Received unknown message type: %T", message)
+		delivery.Ack(false)
+		return 0
+	}
 
-		// Check for duplicate notification
-		if imo.messageManager.IsProcessed(msg.ID) {
-			log.Printf("Notification %s already processed, skipping", msg.ID)
-			delivery.Ack(false)
-			return 0
-		}
+	testing.LogInfo("In-Memory Join Orchestrator", "Received chunk notification - ClientID: %s, FileID: %s, MapWorkerID: %s",
+		msg.ClientID, msg.FileID, msg.MapWorkerID)
 
-		// Process chunk notification using completion tracker
-		err = imo.completionTracker.ProcessChunkNotification(msg)
-		if err != nil {
-			fmt.Printf("In-Memory Join Orchestrator: Failed to process chunk notification: %v\n", err)
-			delivery.Ack(false)
+	// Check for duplicate notification
+	if imo.messageManager.IsProcessed(msg.ID) {
+		delivery.Ack(false)
+		return 0
+	}
+
+	// Handle ItemID worker notifications immediately (no file tracking needed)
+	if strings.Contains(msg.MapWorkerID, "itemid-join-worker") {
+		if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
+			testing.LogError("In-Memory Join Orchestrator", "Failed to mark notification as processed: %v", err)
+			delivery.Nack(false, true)
 			return middleware.MessageMiddlewareMessageError
 		}
 
-		// Append notification to CSV for state rebuild
-		if err := imo.stateManager.AppendNotification(msg); err != nil {
-			log.Printf("Warning: failed to append notification to CSV: %v", err)
-		}
+		imo.sendCompletionSignal(msg.ClientID, 2, imo.itemIdProducer)
+		delivery.Ack(false)
+		return 0
+	}
 
-		// Mark as processed in MessageManager
-		if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
-			log.Printf("Warning: failed to mark notification as processed: %v", err)
-		}
+	// Handle StoreID worker notifications with CompletionTracker and CSV persistence
+	if err := imo.completionTracker.ProcessChunkNotification(msg); err != nil {
+		testing.LogError("In-Memory Join Orchestrator", "Failed to process chunk notification: %v", err)
+		delivery.Ack(false)
+		return middleware.MessageMiddlewareMessageError
+	}
 
-		// Check if client is completed
-		if imo.completionTracker.IsClientCompleted(msg.ClientID) {
-			// Infer query type from file ID patterns
-			queryType := imo.inferQueryTypeFromFileID(msg.FileID)
-			imo.onClientCompletion(msg.ClientID, queryType)
-		}
+	if err := imo.stateManager.AppendNotification(msg); err != nil {
+		testing.LogWarn("In-Memory Join Orchestrator", "Failed to append notification to CSV: %v", err)
+	}
 
-	case *chunk.Chunk:
-		// Handle chunk message (fallback for direct chunk messages)
-		fmt.Printf("In-Memory Join Orchestrator: Received chunk - ClientID: %s, QueryType: %d, IsLastChunk: %t\n",
-			msg.ClientID, msg.QueryType, msg.IsLastChunk)
-
-		// Create chunk notification
-		notification := &signals.ChunkNotification{
-			ClientID:        msg.ClientID,
-			FileID:          msg.FileID,
-			TableID:         int(msg.TableID),
-			ChunkNumber:     int(msg.ChunkNumber),
-			IsLastChunk:     msg.IsLastChunk,
-			IsLastFromTable: msg.IsLastFromTable,
-			MapWorkerID:     imo.workerID,
-		}
-
-		// Check for duplicate notification (using chunk ID)
-		if imo.messageManager.IsProcessed(msg.ID) {
-			log.Printf("Chunk %s already processed, skipping", msg.ID)
-			delivery.Ack(false)
-			return 0
-		}
-
-		// Process chunk notification using completion tracker
-		err = imo.completionTracker.ProcessChunkNotification(notification)
-		if err != nil {
-			fmt.Printf("In-Memory Join Orchestrator: Failed to process chunk notification: %v\n", err)
-			delivery.Ack(false)
-			return middleware.MessageMiddlewareMessageError
-		}
-
-		// Append notification to CSV for state rebuild
-		if err := imo.stateManager.AppendNotification(notification); err != nil {
-			log.Printf("Warning: failed to append notification to CSV: %v", err)
-		}
-
-		// Mark as processed in MessageManager
-		if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
-			log.Printf("Warning: failed to mark chunk as processed: %v", err)
-		}
-
-		// Check if client is completed
-		if imo.completionTracker.IsClientCompleted(msg.ClientID) {
-			imo.onClientCompletion(msg.ClientID, int(msg.QueryType))
-		}
-
-	case *signals.JoinCompletionSignal:
-		// Handle completion signal from join workers
-		fmt.Printf("In-Memory Join Orchestrator: Received completion signal for client %s\n", msg.ClientID)
-
-		// For now, just acknowledge - the completion tracker should handle this
-		// In the future, we might want to track completion signals differently
-
-	default:
-		fmt.Printf("In-Memory Join Orchestrator: Received unknown message type: %T\n", message)
+	if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
+		testing.LogWarn("In-Memory Join Orchestrator", "Failed to mark notification as processed: %v", err)
 	}
 
 	delivery.Ack(false)
 	return 0
 }
 
-// onClientCompletion handles when a client's query is completed
-func (imo *InMemoryJoinOrchestrator) onClientCompletion(clientID string, queryType int) {
-	fmt.Printf("In-Memory Join Orchestrator: Client %s completed query type %d\n", clientID, queryType)
-
-	// Determine which exchange to use based on query type
-	var producer *exchange.ExchangeMiddleware
-	var exchangeName string
+// sendCompletionSignal sends a completion signal to the appropriate workers
+func (imo *InMemoryJoinOrchestrator) sendCompletionSignal(clientID string, queryType int, producer *exchange.ExchangeMiddleware) {
+	var resourceType string
 	var routingKey string
 
 	switch queryType {
-	case 2: // ItemID join
-		producer = imo.itemIdProducer
-		exchangeName = queues.ItemIdCompletionExchange
+	case 2:
+		resourceType = "itemid"
 		routingKey = queues.ItemIdCompletionRoutingKey
-	case 3: // StoreID join
-		producer = imo.storeIdProducer
-		exchangeName = queues.StoreIdCompletionExchange
+	case 3:
+		resourceType = "storeid"
 		routingKey = queues.StoreIdCompletionRoutingKey
 	default:
-		fmt.Printf("In-Memory Join Orchestrator: Unknown query type %d for client %s\n", queryType, clientID)
+		testing.LogWarn("In-Memory Join Orchestrator", "Unknown query type %d for client %s", queryType, clientID)
 		return
 	}
 
-	// Send completion signal
-	imo.sendCompletionSignal(clientID, queryType, producer, exchangeName, routingKey)
-}
-
-// sendCompletionSignal sends a completion signal to the appropriate workers
-func (imo *InMemoryJoinOrchestrator) sendCompletionSignal(clientID string, queryType int, producer *exchange.ExchangeMiddleware, exchangeName, routingKey string) {
-	completionSignal := signals.NewJoinCompletionSignal(clientID, getResourceType(queryType), imo.workerID)
-
+	completionSignal := signals.NewJoinCompletionSignal(clientID, resourceType, imo.workerID)
 	messageData, err := signals.SerializeJoinCompletionSignal(completionSignal)
 	if err != nil {
-		fmt.Printf("In-Memory Join Orchestrator: Failed to serialize completion signal: %v\n", err)
+		testing.LogError("In-Memory Join Orchestrator", "Failed to serialize completion signal: %v", err)
 		return
 	}
 
 	if err := producer.Send(messageData, []string{routingKey}); err != 0 {
-		fmt.Printf("In-Memory Join Orchestrator: Failed to send completion signal to %s: %v\n", exchangeName, err)
+		testing.LogError("In-Memory Join Orchestrator", "Failed to send completion signal for client %s: %v", clientID, err)
 	} else {
-		fmt.Printf("In-Memory Join Orchestrator: Sent completion signal for client %s to %s\n", clientID, exchangeName)
+		testing.LogInfo("In-Memory Join Orchestrator", "Sent completion signal for client %s", clientID)
 	}
-}
-
-// getResourceType returns the resource type string based on query type
-func getResourceType(queryType int) string {
-	switch queryType {
-	case 2:
-		return "itemid"
-	case 3:
-		return "storeid"
-	default:
-		return "unknown"
-	}
-}
-
-// inferQueryTypeFromFileID infers the query type from file ID patterns
-func (imo *InMemoryJoinOrchestrator) inferQueryTypeFromFileID(fileID string) int {
-	// File ID patterns:
-	// Query 2 (ItemID): Files start with "I" (e.g., "I001", "I002")
-	// Query 3 (StoreID): Files start with "S" (e.g., "S001", "S002")
-	// Query 4 (UserID): Files start with "U" (e.g., "U001", "U002")
-
-	if len(fileID) > 0 {
-		switch fileID[0] {
-		case 'I':
-			return 2 // ItemID join
-		case 'S':
-			return 3 // StoreID join
-		case 'U':
-			return 4 // UserID join
-		}
-	}
-
-	return 0 // Unknown
 }

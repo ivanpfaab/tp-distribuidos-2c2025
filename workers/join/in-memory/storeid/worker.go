@@ -26,7 +26,6 @@ type StoreIdJoinWorker struct {
 	chunkConsumer        *workerqueue.QueueConsumer
 	completionConsumer   *exchange.ExchangeConsumer
 	outputProducer       *workerqueue.QueueMiddleware
-	completionProducer   *workerqueue.QueueMiddleware
 	orchestratorProducer *workerqueue.QueueMiddleware
 	config               *StoreIdConfig
 	workerID             string
@@ -37,7 +36,6 @@ type StoreIdJoinWorker struct {
 	dictHandler          *handler.DictionaryHandler[*Store]
 	completionHandler    *handler.CompletionHandler[*Store]
 	chunkSender          *joinchunk.Sender
-	completionNotifier   *notifier.CompletionNotifier
 	orchestratorNotifier *notifier.OrchestratorNotifier
 }
 
@@ -92,18 +90,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, fmt.Errorf("failed to create completion consumer")
 	}
 
-	completionProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.InMemoryJoinCompletionQueue,
-		config.ConnectionConfig,
-	)
-	if completionProducer == nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		return nil, fmt.Errorf("failed to create completion producer")
-	}
-
 	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(
 		queues.InMemoryJoinCompletionQueue,
 		config.ConnectionConfig,
@@ -113,7 +99,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create orchestrator producer")
 	}
 
@@ -124,7 +109,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to create input queue declarer")
 	}
 	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
@@ -132,7 +116,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		inputQueueDeclarer.Close()
 		return nil, fmt.Errorf("failed to declare input queue: %v", err)
 	}
@@ -143,17 +126,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		return nil, fmt.Errorf("failed to declare output queue: %v", err)
-	}
-
-	if err := completionProducer.DeclareQueue(false, false, false, false); err != 0 {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		completionProducer.Close()
-		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
 	}
 
 	workerID := fmt.Sprintf("storeid-worker-%s", instanceID)
@@ -165,7 +138,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer.Close()
 		outputProducer.Close()
 		completionConsumer.Close()
-		completionProducer.Close()
 		orchestratorProducer.Close()
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
@@ -187,7 +159,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, "StoreID Join Worker")
 	completionHandler := handler.NewCompletionHandler(dictManager, "StoreID Join Worker")
 	chunkSender := joinchunk.NewSender(outputProducer)
-	completionNotifier := notifier.NewCompletionNotifier(completionProducer, workerID, "stores")
 	orchestratorNotifier := notifier.NewOrchestratorNotifier(orchestratorProducer, "storeid-join-worker")
 
 	return &StoreIdJoinWorker{
@@ -195,7 +166,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		chunkConsumer:        chunkConsumer,
 		completionConsumer:   completionConsumer,
 		outputProducer:       outputProducer,
-		completionProducer:   completionProducer,
 		orchestratorProducer: orchestratorProducer,
 		config:               config,
 		workerID:             workerID,
@@ -204,7 +174,6 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		dictHandler:          dictHandler,
 		completionHandler:    completionHandler,
 		chunkSender:          chunkSender,
-		completionNotifier:   completionNotifier,
 		orchestratorNotifier: orchestratorNotifier,
 	}, nil
 }
@@ -250,9 +219,6 @@ func (w *StoreIdJoinWorker) Close() {
 	}
 	if w.outputProducer != nil {
 		w.outputProducer.Close()
-	}
-	if w.completionProducer != nil {
-		w.completionProducer.Close()
 	}
 	if w.orchestratorProducer != nil {
 		w.orchestratorProducer.Close()
@@ -363,11 +329,7 @@ func (w *StoreIdJoinWorker) processChunk(chunkMsg *chunk.Chunk) middleware.Messa
 		return middleware.MessageMiddlewareMessageError
 	}
 
-	// Send completion notifications
-	if err := w.completionNotifier.SendCompletionNotification(chunkMsg.ClientID); err != nil {
-		fmt.Printf("StoreID Join Worker: Failed to send completion notification: %v\n", err)
-	}
-
+	// Send orchestrator notification
 	if err := w.orchestratorNotifier.SendChunkNotification(chunkMsg); err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to send orchestrator notification: %v\n", err)
 	}
