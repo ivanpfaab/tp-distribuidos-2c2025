@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -13,6 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 )
@@ -32,88 +32,73 @@ type GroupByWorker struct {
 
 // NewGroupByWorker creates a new group by worker instance
 func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
-	// Create exchange consumer for the routing keys this worker handles
-	consumer := exchange.NewExchangeConsumer(config.ExchangeName, config.RoutingKeys, config.ConnectionConfig)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create exchange consumer")
-	}
-
-	// Declare the topic exchange
-	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(config.ExchangeName, []string{}, config.ConnectionConfig)
-	if exchangeDeclarer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create exchange declarer")
-	}
-	if err := exchangeDeclarer.DeclareExchange("topic", false, false, false, false); err != 0 {
-		consumer.Close()
-		exchangeDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare topic exchange: %v", err)
-	}
-	exchangeDeclarer.Close()
-
-	// Create producer for orchestrator chunk notifications (fanout exchange)
-	orchestratorProducer := exchange.NewMessageMiddlewareExchange(config.OrchestratorExchange, []string{}, config.ConnectionConfig)
-	if orchestratorProducer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create orchestrator exchange producer")
-	}
-
-	// Declare fanout exchange for orchestrator notifications
-	if err := orchestratorProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
-		consumer.Close()
-		orchestratorProducer.Close()
-		return nil, fmt.Errorf("failed to declare orchestrator fanout exchange: %v", err)
-	}
-
 	// Generate worker ID string
 	workerIDStr := fmt.Sprintf("query%d-groupby-worker-%d", config.QueryType, config.WorkerID)
+
+	// Get base directory for this worker
+	baseDir := common.GetBaseDir(config.QueryType, config.WorkerID)
+	stateDir := filepath.Join(baseDir, "state")
+	stateFilePath := filepath.Join(stateDir, "processed-chunks.txt")
+
+	// Use builder to create all resources
+	builder := worker_builder.NewWorkerBuilder(fmt.Sprintf("GroupBy Worker (Query %d, Worker %d)", config.QueryType, config.WorkerID)).
+		WithConfig(config.ConnectionConfig).
+		// Exchange consumer (topic exchange)
+		WithExchangeConsumer(config.ExchangeName, config.RoutingKeys, true, worker_builder.ExchangeDeclarationOptions{
+			Type: "topic",
+		}).
+		// Exchange producer (fanout exchange for orchestrator notifications)
+		WithExchangeProducer(config.OrchestratorExchange, []string{}, true, worker_builder.ExchangeDeclarationOptions{
+			Type: "fanout",
+		}).
+		// State management
+		WithDirectory(baseDir, 0755).
+		WithDirectory(stateDir, 0755).
+		WithMessageManager(stateFilePath).
+		// PartitionManager
+		WithPartitionManager(worker_builder.PartitionManagerConfig{
+			PartitionsDir:           baseDir,
+			NumPartitions:           config.NumPartitions,
+			RecoverIncompleteWrites: true,
+		})
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
+	}
+
+	// Extract resources from builder
+	consumer := builder.GetExchangeConsumer(config.ExchangeName)
+	orchestratorProducer := builder.GetExchangeProducer(config.OrchestratorExchange)
+
+	if consumer == nil || orchestratorProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
+	}
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
+	}
+
+	// Extract PartitionManager from builder
+	partitionManager := builder.GetPartitionManager()
+	if partitionManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get partition manager from builder"))
+	}
+
+	testing_utils.LogInfo("GroupBy Worker", "PartitionManager initialized with %d partitions", config.NumPartitions)
 
 	// Create file manager and processor
 	fileManager := NewFileManager(config.QueryType, config.WorkerID)
 	processor := NewChunkProcessor(config.QueryType)
-
-	// Get base directory for this worker
-	baseDir := common.GetBaseDir(config.QueryType, config.WorkerID)
-
-	// Ensure state directory exists
-	stateDir := filepath.Join(baseDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		consumer.Close()
-		orchestratorProducer.Close()
-		return nil, fmt.Errorf("failed to create state directory: %w", err)
-	}
-
-	// Initialize MessageManager for chunk deduplication
-	stateFilePath := filepath.Join(stateDir, "processed-chunks.txt")
-	messageManager := messagemanager.NewMessageManager(stateFilePath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		testing_utils.LogWarn("GroupBy Worker", "Failed to load processed chunks: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		testing_utils.LogInfo("GroupBy Worker", "Loaded %d processed chunks", count)
-	}
-
-	// Initialize PartitionManager for fault-tolerant partition writing
-	partitionManager, err := partitionmanager.NewPartitionManager(baseDir, config.NumPartitions)
-	if err != nil {
-		consumer.Close()
-		orchestratorProducer.Close()
-		messageManager.Close()
-		return nil, fmt.Errorf("failed to create partition manager: %w", err)
-	}
-	testing_utils.LogInfo("GroupBy Worker", "PartitionManager initialized with %d partitions", config.NumPartitions)
-
-	// Recover incomplete writes on startup
-	fixedCount, err := partitionManager.DeleteIncompleteLines()
-	if err != nil {
-		consumer.Close()
-		orchestratorProducer.Close()
-		messageManager.Close()
-		return nil, fmt.Errorf("failed to recover incomplete writes: %w", err)
-	}
-	if fixedCount > 0 {
-		testing_utils.LogInfo("GroupBy Worker", "Fixed %d incomplete last lines on startup", fixedCount)
-	}
 
 	// Pass partitionManager to fileManager
 	fileManager.SetPartitionManager(partitionManager)
@@ -125,7 +110,7 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 		workerIDStr:          workerIDStr,
 		fileManager:          fileManager,
 		processor:            processor,
-		messageManager:       messageManager,
+		messageManager:       mm,
 		partitionManager:     partitionManager,
 		firstChunkProcessed:  false,
 	}, nil
