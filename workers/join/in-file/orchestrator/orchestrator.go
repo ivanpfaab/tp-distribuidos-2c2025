@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
@@ -12,6 +11,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
@@ -36,67 +36,46 @@ type InFileJoinOrchestrator struct {
 
 // NewInFileJoinOrchestrator creates a new in-file join orchestrator
 func NewInFileJoinOrchestrator(config *middleware.ConnectionConfig) (*InFileJoinOrchestrator, error) {
-	// Create consumer for chunk notifications from user partition writers
-	consumer := workerqueue.NewQueueConsumer(
-		queues.UserPartitionCompletionQueue, // Queue for receiving completion notifications
-		config,
-	)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create consumer")
-	}
-
-	// Declare the completion queue
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(
-		queues.UserPartitionCompletionQueue,
-		config,
-	)
-	if queueDeclarer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue declarer for user partition completion queue")
-	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		queueDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare user partition completion queue: %v", err)
-	}
-	queueDeclarer.Close()
-
-	// Create exchange producer for signaling user join workers
-	completionProducer := exchange.NewMessageMiddlewareExchange(
-		queues.UserIdCompletionExchange,
-		[]string{queues.UserIdCompletionRoutingKey}, // Use fanout exchange to broadcast to all user join workers
-		config,
-	)
-	if completionProducer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create completion exchange producer")
-	}
-
-	// Declare the exchange
-	if err := completionProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
-		consumer.Close()
-		completionProducer.Close()
-		return nil, fmt.Errorf("failed to declare completion exchange: %v", err)
-	}
-
-	// Initialize fault tolerance components
+	// Use builder to create all resources
 	metadataDir := "/app/orchestrator-data/metadata"
 	processedNotificationsPath := "/app/orchestrator-data/processed-notifications.txt"
 
-	// Ensure metadata directory exists
-	if err := os.MkdirAll(metadataDir, 0755); err != nil {
-		consumer.Close()
-		completionProducer.Close()
-		return nil, fmt.Errorf("failed to create metadata directory: %w", err)
+	builder := worker_builder.NewWorkerBuilder("In-File Join Orchestrator").
+		WithConfig(config).
+		// Queue consumer
+		WithQueueConsumer(queues.UserPartitionCompletionQueue, true).
+		// Exchange producer (fanout exchange for broadcasting to all user join workers)
+		WithExchangeProducer(queues.UserIdCompletionExchange, []string{queues.UserIdCompletionRoutingKey}, true, worker_builder.ExchangeDeclarationOptions{
+			Type: "fanout",
+		}).
+		// State management
+		WithDirectory(metadataDir, 0755).
+		WithMessageManager(processedNotificationsPath)
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
 	}
 
-	// Initialize MessageManager for duplicate detection
-	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		log.Printf("Warning: failed to load processed notifications: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		log.Printf("Loaded %d processed notification IDs", count)
+	// Extract resources from builder
+	consumer := builder.GetQueueConsumer(queues.UserPartitionCompletionQueue)
+	completionProducer := builder.GetExchangeProducer(queues.UserIdCompletionExchange)
+
+	if consumer == nil || completionProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
+	}
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
 	// Create state manager first (completion tracker will be set after creation)
@@ -134,7 +113,7 @@ func NewInFileJoinOrchestrator(config *middleware.ConnectionConfig) (*InFileJoin
 		completionProducer: completionProducer,
 		config:             config,
 		completionTracker:  completionTracker,
-		messageManager:     messageManager,
+		messageManager:     mm,
 		stateManager:       stateManager,
 	}
 
