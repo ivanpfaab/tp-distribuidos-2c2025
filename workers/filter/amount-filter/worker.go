@@ -7,6 +7,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	filterbase "github.com/tp-distribuidos-2c2025/workers/filter"
 )
 
@@ -17,13 +18,20 @@ type AmountFilterWorker struct {
 
 // NewAmountFilterWorker creates a new AmountFilterWorker instance
 func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWorker, error) {
-	// Create reply producer
-	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.ReplyFilterBusQueue,
-		config,
-	)
+	// Use builder to create queue producer
+	builder := worker_builder.NewWorkerBuilder("Amount Filter Worker").
+		WithConfig(config).
+		WithQueueProducer(queues.ReplyFilterBusQueue, true) // auto-declare
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
+	}
+
+	// Extract producer from builder
+	replyProducer := builder.GetQueueProducer(queues.ReplyFilterBusQueue)
 	if replyProducer == nil {
-		return nil, fmt.Errorf("failed to create reply producer")
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get producer from builder"))
 	}
 
 	// Configure routing rules - amount filter always routes to reply bus
@@ -45,13 +53,15 @@ func NewAmountFilterWorker(config *middleware.ConnectionConfig) (*AmountFilterWo
 		ConnectionConfig: config,
 	}
 
-	// Create base worker
+	// Create base worker (still creates consumer and MessageManager internally)
 	baseWorker, err := filterbase.NewBaseFilterWorker(filterConfig)
 	if err != nil {
-		replyProducer.Close()
-		return nil, fmt.Errorf("failed to create base filter worker: %w", err)
+		// Builder will handle cleanup of producer on error
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to create base filter worker: %w", err))
 	}
 
+	// Note: Producer is now managed by the worker's lifecycle, not the builder
+	// The builder's cleanup is only called on error during initialization
 	return &AmountFilterWorker{
 		BaseFilterWorker: baseWorker,
 	}, nil

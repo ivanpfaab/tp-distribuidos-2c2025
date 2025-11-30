@@ -7,6 +7,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	filterbase "github.com/tp-distribuidos-2c2025/workers/filter"
 )
 
@@ -17,23 +18,23 @@ type TimeFilterWorker struct {
 
 // NewTimeFilterWorker creates a new TimeFilterWorker instance
 func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker, error) {
-	// Create amount filter producer
-	amountFilterProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.AmountFilterQueue,
-		config,
-	)
-	if amountFilterProducer == nil {
-		return nil, fmt.Errorf("failed to create amount filter producer")
+	// Use builder to create queue producers
+	builder := worker_builder.NewWorkerBuilder("Time Filter Worker").
+		WithConfig(config).
+		WithQueueProducer(queues.AmountFilterQueue, true).  // auto-declare
+		WithQueueProducer(queues.ReplyFilterBusQueue, true)
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
 	}
 
-	// Create reply producer
-	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.ReplyFilterBusQueue,
-		config,
-	)
-	if replyProducer == nil {
-		amountFilterProducer.Close()
-		return nil, fmt.Errorf("failed to create reply producer")
+	// Extract producers from builder
+	amountFilterProducer := builder.GetQueueProducer(queues.AmountFilterQueue)
+	replyProducer := builder.GetQueueProducer(queues.ReplyFilterBusQueue)
+
+	if amountFilterProducer == nil || replyProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get producers from builder"))
 	}
 
 	// Configure routing rules
@@ -59,14 +60,15 @@ func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker
 		ConnectionConfig: config,
 	}
 
-	// Create base worker
+	// Create base worker (still creates consumer and MessageManager internally)
 	baseWorker, err := filterbase.NewBaseFilterWorker(filterConfig)
 	if err != nil {
-		amountFilterProducer.Close()
-		replyProducer.Close()
-		return nil, fmt.Errorf("failed to create base filter worker: %w", err)
+		// Builder will handle cleanup of producers on error
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to create base filter worker: %w", err))
 	}
 
+	// Note: Producers are now managed by the worker's lifecycle, not the builder
+	// The builder's cleanup is only called on error during initialization
 	return &TimeFilterWorker{
 		BaseFilterWorker: baseWorker,
 	}, nil
