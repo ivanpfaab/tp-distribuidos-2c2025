@@ -12,6 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	joinchunk "github.com/tp-distribuidos-2c2025/workers/join/shared/chunk"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/dictionary"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/handler"
@@ -49,133 +50,81 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 	instanceRoutingKey := fmt.Sprintf("%s-instance-%s", queues.StoreIdDictionaryRoutingKey, instanceID)
 	fmt.Printf("StoreID Join Worker: Initializing with instance ID: %s, routing key: %s\n", instanceID, instanceRoutingKey)
 
-	// Create consumers and producers
-	dictionaryConsumer := exchange.NewExchangeConsumer(
-		queues.StoreIdDictionaryExchange,
-		[]string{instanceRoutingKey},
-		config.ConnectionConfig,
+	// Use builder to create all resources
+	stateDir := "/app/worker-data"
+	dictDir := filepath.Join(stateDir, "dictionaries")
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+
+	builder := worker_builder.NewWorkerBuilder("StoreID Join Worker").
+		WithConfig(config.ConnectionConfig).
+		// Exchange consumers (exchanges already declared by data-handler and orchestrator)
+		WithExchangeConsumer(queues.StoreIdDictionaryExchange, []string{instanceRoutingKey}, false).
+		WithExchangeConsumer(queues.StoreIdCompletionExchange, []string{queues.StoreIdCompletionRoutingKey}, false).
+		// Queue consumer
+		WithQueueConsumer(queues.StoreIdChunkQueue, true).
+		// Queue producers
+		WithQueueProducer(queues.Query3ResultsQueue, true).
+		WithQueueProducer(queues.InMemoryJoinCompletionQueue, true).
+		// State management
+		WithDirectory(stateDir, 0755).
+		WithDirectory(dictDir, 0755).
+		WithMessageManager(stateFilePath).
+		// DictionaryManager config (actual manager created separately)
+		WithDictionaryManager(worker_builder.DictionaryManagerConfig{
+			DictDir: dictDir,
+			ParseFunc: func(csvData string, clientID string) (map[string]*Store, error) {
+				return parser.ParseStores(csvData, clientID)
+			},
+			RebuildOnStart: true,
+		})
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
+	}
+
+	// Extract resources from builder
+	dictionaryConsumer := builder.GetExchangeConsumer(queues.StoreIdDictionaryExchange)
+	completionConsumer := builder.GetExchangeConsumer(queues.StoreIdCompletionExchange)
+	chunkConsumer := builder.GetQueueConsumer(queues.StoreIdChunkQueue)
+	outputProducer := builder.GetQueueProducer(queues.Query3ResultsQueue)
+	orchestratorProducer := builder.GetQueueProducer(queues.InMemoryJoinCompletionQueue)
+
+	if dictionaryConsumer == nil || completionConsumer == nil || chunkConsumer == nil || outputProducer == nil || orchestratorProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
 	)
-	if dictionaryConsumer == nil {
-		return nil, fmt.Errorf("failed to create dictionary consumer")
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
 	}
-
-	chunkConsumer := workerqueue.NewQueueConsumer(
-		queues.StoreIdChunkQueue,
-		config.ConnectionConfig,
-	)
-	if chunkConsumer == nil {
-		dictionaryConsumer.Close()
-		return nil, fmt.Errorf("failed to create chunk consumer")
-	}
-
-	outputProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.Query3ResultsQueue,
-		config.ConnectionConfig,
-	)
-	if outputProducer == nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		return nil, fmt.Errorf("failed to create output producer")
-	}
-
-	completionConsumer := exchange.NewExchangeConsumer(
-		queues.StoreIdCompletionExchange,
-		[]string{queues.StoreIdCompletionRoutingKey},
-		config.ConnectionConfig,
-	)
-	if completionConsumer == nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		return nil, fmt.Errorf("failed to create completion consumer")
-	}
-
-	orchestratorProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.InMemoryJoinCompletionQueue,
-		config.ConnectionConfig,
-	)
-	if orchestratorProducer == nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		return nil, fmt.Errorf("failed to create orchestrator producer")
-	}
-
-	// Declare queues
-	inputQueueDeclarer := workerqueue.NewMessageMiddlewareQueue(queues.StoreIdChunkQueue, config.ConnectionConfig)
-	if inputQueueDeclarer == nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		return nil, fmt.Errorf("failed to create input queue declarer")
-	}
-	if err := inputQueueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		inputQueueDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare input queue: %v", err)
-	}
-	inputQueueDeclarer.Close()
-
-	if err := outputProducer.DeclareQueue(false, false, false, false); err != 0 {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		return nil, fmt.Errorf("failed to declare output queue: %v", err)
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
 	workerID := fmt.Sprintf("storeid-worker-%s", instanceID)
 
-	// Initialize MessageManager for fault tolerance
-	stateDir := "/app/worker-data"
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		orchestratorProducer.Close()
-		return nil, fmt.Errorf("failed to create state directory: %w", err)
-	}
-
-	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
-	messageManager := messagemanager.NewMessageManager(stateFilePath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		fmt.Printf("StoreID Join Worker: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("StoreID Join Worker: Loaded %d processed chunks\n", count)
-	}
-
-	// Initialize shared components
+	// Initialize DictionaryManager (worker-specific, created separately)
 	dictManager := dictionary.NewManager[*Store]()
-
-	// Create dictionary directory
-	dictDir := filepath.Join(stateDir, "dictionaries")
-	if err := os.MkdirAll(dictDir, 0755); err != nil {
-		dictionaryConsumer.Close()
-		chunkConsumer.Close()
-		outputProducer.Close()
-		completionConsumer.Close()
-		orchestratorProducer.Close()
-		messageManager.Close()
-		return nil, fmt.Errorf("failed to create dictionary directory: %w", err)
-	}
+	dictConfig := builder.GetDictionaryManagerConfig()
 
 	parseFunc := func(csvData string, clientID string) (map[string]*Store, error) {
 		return parser.ParseStores(csvData, clientID)
 	}
 
-	// Rebuild dictionaries on startup
-	rebuiltCount, err := dictManager.RebuildAllDictionaries(dictDir, parseFunc)
-	if err != nil {
-		fmt.Printf("StoreID Join Worker: Warning - failed to rebuild dictionaries: %v\n", err)
-	} else {
-		fmt.Printf("StoreID Join Worker: Rebuilt %d dictionaries on startup\n", rebuiltCount)
+	// Rebuild dictionaries on startup if configured
+	if dictConfig != nil && dictConfig.RebuildOnStart {
+		rebuiltCount, err := dictManager.RebuildAllDictionaries(dictConfig.DictDir, parseFunc)
+		if err != nil {
+			fmt.Printf("StoreID Join Worker: Warning - failed to rebuild dictionaries: %v\n", err)
+		} else {
+			fmt.Printf("StoreID Join Worker: Rebuilt %d dictionaries on startup\n", rebuiltCount)
+		}
 	}
 
 	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, dictDir, "StoreID Join Worker")
@@ -191,7 +140,7 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		orchestratorProducer: orchestratorProducer,
 		config:               config,
 		workerID:             workerID,
-		messageManager:       messageManager,
+		messageManager:       mm,
 		dictManager:          dictManager,
 		dictHandler:          dictHandler,
 		completionHandler:    completionHandler,
