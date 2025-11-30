@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"strconv"
+	"strings"
 
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
+	"github.com/tp-distribuidos-2c2025/shared/utils"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
@@ -14,16 +15,17 @@ import (
 type FileManager struct {
 	storageManager   *storage.FileManager
 	queryType        int
-	csvWriter        *storage.CSVWriter
+	csvHandler       *utils.CSVHandler
 	partitionManager *partitionmanager.PartitionManager
 }
 
 // NewFileManager creates a new file manager for a specific query type and worker
 func NewFileManager(queryType int, workerID int) *FileManager {
+	baseDir := storage.NewFileManager(queryType, workerID).GetBaseDir()
 	return &FileManager{
 		storageManager: storage.NewFileManager(queryType, workerID),
 		queryType:      queryType,
-		csvWriter:      storage.NewCSVWriter(),
+		csvHandler:     utils.NewCSVHandler(baseDir),
 	}
 }
 
@@ -52,10 +54,10 @@ func (fm *FileManager) AppendToPartitionCSV(clientID string, partition int, user
 		return err
 	}
 
-	// Append record using CSV writer
+	// Append record using CSV handler
 	header := []string{"user_id", "store_id"}
 	record := []string{userID, storeID}
-	return fm.csvWriter.AppendRecord(filePath, header, record)
+	return fm.csvHandler.AppendRow(filePath, record, header)
 }
 
 // CSVRecord defines the interface for records that can be written to CSV
@@ -84,7 +86,7 @@ func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition in
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"user_id", "store_id", "chunk_id","row_number"},
+		Header:     []string{"user_id", "store_id", "chunk_id", "row_number"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
@@ -93,7 +95,7 @@ func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition in
 }
 
 // writePartitionWithFaultTolerance writes partition data with fault tolerance support
-func (fm *FileManager) writePartitionWithFaultTolerance(partition int, lines []string, opts partitionmanager.WriteOptions,isFirstChunk bool) error {
+func (fm *FileManager) writePartitionWithFaultTolerance(partition int, lines []string, opts partitionmanager.WriteOptions, isFirstChunk bool) error {
 	if fm.partitionManager == nil {
 		return fmt.Errorf("partition manager not initialized")
 	}
@@ -147,12 +149,12 @@ func (fm *FileManager) AppendQuery2RecordsToPartitionCSV(clientID string, partit
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"year", "month", "item_id", "quantity", "subtotal", "chunk_id","row_number"},
+		Header:     []string{"year", "month", "item_id", "quantity", "subtotal", "chunk_id", "row_number"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
 
-		return fm.writePartitionWithFaultTolerance(partition, lines, opts, isFirstChunk)
+	return fm.writePartitionWithFaultTolerance(partition, lines, opts, isFirstChunk)
 }
 
 // AppendQuery3RecordsToPartitionCSV appends multiple store_id,final_amount records to a Query 3 partition CSV file
@@ -176,7 +178,7 @@ func (fm *FileManager) AppendQuery3RecordsToPartitionCSV(clientID string, partit
 
 	opts := partitionmanager.WriteOptions{
 		FilePrefix: fmt.Sprintf("q%d-partition", fm.queryType),
-		Header:     []string{"year", "semester", "store_id", "final_amount", "chunk_id","row_number"},
+		Header:     []string{"year", "semester", "store_id", "final_amount", "chunk_id", "row_number"},
 		ClientID:   clientID,
 		DebugMode:  false,
 	}
