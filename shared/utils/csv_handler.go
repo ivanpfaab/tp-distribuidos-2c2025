@@ -22,6 +22,16 @@ func NewCSVHandler(baseDir string) *CSVHandler {
 
 // AppendRow appends a row to a CSV file, writing the header if the file is new
 func (h *CSVHandler) AppendRow(filePath string, row []string, columns []string) error {
+	return h.AppendRows(filePath, [][]string{row}, columns)
+}
+
+// AppendRows appends multiple rows to a CSV file, writing the header if the file is new
+// This method keeps the file open for all writes and only syncs once at the end (more efficient)
+func (h *CSVHandler) AppendRows(filePath string, rows [][]string, columns []string) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
 	// Ensure directory exists
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -49,12 +59,14 @@ func (h *CSVHandler) AppendRow(filePath string, row []string, columns []string) 
 		}
 	}
 
-	// Write data row
-	if err := writer.Write(row); err != nil {
-		return fmt.Errorf("failed to write row: %w", err)
+	// Write all data rows
+	for _, row := range rows {
+		if err := writer.Write(row); err != nil {
+			return fmt.Errorf("failed to write row: %w", err)
+		}
 	}
 
-	// Sync to ensure data is written to disk
+	// Sync once after all rows written
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("failed to sync file: %w", err)
 	}
