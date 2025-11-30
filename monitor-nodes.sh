@@ -19,6 +19,9 @@ declare -A node_line_number
 declare -A node_column
 
 CURRENT_LINE=0
+SUPERVISOR_LEADER=""
+SUPERVISOR_LEADER_LAST_CHECK=0
+SUPERVISOR_LEADER_CACHE_DURATION=5
 
 move_to_line() {
     local line=$1
@@ -98,6 +101,58 @@ categorize_nodes() {
     done < <(extract_all_containers)
 }
 
+get_supervisor_leader() {
+    local supervisor_containers=()
+    local running_containers
+    running_containers=$(docker ps --format "{{.Names}}" 2>/dev/null)
+    
+    while IFS= read -r container; do
+        if [[ "$container" =~ ^supervisor-[0-9]+$ ]]; then
+            supervisor_containers+=("$container")
+        fi
+    done <<< "$running_containers"
+    
+    if [ ${#supervisor_containers[@]} -eq 0 ]; then
+        echo ""
+        return
+    fi
+    
+    local leader=""
+    local latest_timestamp=0
+    
+    for supervisor in "${supervisor_containers[@]}"; do
+        local recent_logs
+        recent_logs=$(docker logs --since 6s --timestamps "$supervisor" 2>&1 | grep "Broadcasting LEADER announcement" | tail -1)
+        
+        if [ -n "$recent_logs" ]; then
+            local log_time_str
+            log_time_str=$(echo "$recent_logs" | awk '{print $1}')
+            
+            if [ -n "$log_time_str" ]; then
+                local timestamp
+                timestamp=$(date -d "$log_time_str" +%s 2>/dev/null || echo 0)
+                
+                if [ $timestamp -gt $latest_timestamp ] && [ $timestamp -gt 0 ]; then
+                    latest_timestamp=$timestamp
+                    leader="$supervisor"
+                fi
+            fi
+        fi
+    done
+    
+    echo "$leader"
+}
+
+update_supervisor_leader() {
+    local current_time=$(date +%s)
+    local time_since_check=$((current_time - SUPERVISOR_LEADER_LAST_CHECK))
+    
+    if [ $time_since_check -ge $SUPERVISOR_LEADER_CACHE_DURATION ]; then
+        SUPERVISOR_LEADER=$(get_supervisor_leader)
+        SUPERVISOR_LEADER_LAST_CHECK=$current_time
+    fi
+}
+
 update_status() {
     local running_containers
     running_containers=$(docker ps --format "{{.Names}}" 2>/dev/null)
@@ -124,6 +179,8 @@ update_status() {
             node_history["$container"]="${node_history[$container]: -$max_history}"
         fi
     done
+    
+    update_supervisor_leader
 }
 
 get_category_color() {
@@ -149,8 +206,14 @@ get_category_color() {
 
 get_status_color() {
     local status="$1"
+    local container="$2"
+    
     if [ "$status" == "alive" ]; then
-        echo -n "${WHITE}"
+        if [ "$container" == "$SUPERVISOR_LEADER" ]; then
+            echo -n "${YELLOW}"
+        else
+            echo -n "${WHITE}"
+        fi
     else
         echo -n "${RED}"
     fi
@@ -165,7 +228,7 @@ display_node_line() {
     local container="$1"
     local status="${node_status[$container]}"
     local history="${node_history[$container]}"
-    local name_color=$(get_status_color "$status")
+    local name_color=$(get_status_color "$status" "$container")
     
     local history_len=${#history}
     local history_display
@@ -316,7 +379,7 @@ update_display() {
         
         local status="${node_status[$container]}"
         local history="${node_history[$container]}"
-        local name_color=$(get_status_color "$status")
+        local name_color=$(get_status_color "$status" "$container")
         
         local history_len=${#history}
         local history_display
@@ -355,7 +418,7 @@ update_display() {
         
         local status="${node_status[$container]}"
         local history="${node_history[$container]}"
-        local name_color=$(get_status_color "$status")
+        local name_color=$(get_status_color "$status" "$container")
         
         local history_len=${#history}
         local history_display
@@ -412,6 +475,8 @@ main() {
     echo -ne "\033[?25l"
     
     update_status
+    SUPERVISOR_LEADER=$(get_supervisor_leader)
+    SUPERVISOR_LEADER_LAST_CHECK=$(date +%s)
     display_initial
     
     while true; do
