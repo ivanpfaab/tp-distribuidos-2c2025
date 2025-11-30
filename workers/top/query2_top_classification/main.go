@@ -14,6 +14,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
 // ItemRecord represents a single item aggregation
@@ -70,61 +71,53 @@ func NewTopItemsWorker() *TopItemsWorker {
 	}
 	log.Printf("Top Items Worker: Expecting %d chunks per client (one per partition)", numPartitions)
 
-	// Create consumer for top items queue
-	consumer := workerqueue.NewQueueConsumer(queues.Query2TopItemsQueue, config)
-	if consumer == nil {
-		log.Fatal("Failed to create consumer")
-	}
-
-	// Declare the input queue
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(queues.Query2TopItemsQueue, config)
-	if queueDeclarer == nil {
-		consumer.Close()
-		log.Fatal("Failed to create queue declarer")
-	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		queueDeclarer.Close()
-		log.Fatalf("Failed to declare input queue '%s': %v", queues.Query2TopItemsQueue, err)
-	}
-	queueDeclarer.Close()
-
-	// Create producer for output queue (to ItemID join)
-	producer := workerqueue.NewMessageMiddlewareQueue(queues.ItemIdChunkQueue, config)
-	if producer == nil {
-		consumer.Close()
-		log.Fatal("Failed to create producer")
-	}
-
-	// Declare the output queue
-	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		producer.Close()
-		log.Fatalf("Failed to declare output queue '%s': %v", queues.ItemIdChunkQueue, err)
-	}
-
-	// Initialize fault tolerance components
+	// Use builder to create all resources
 	stateDir := "/app/worker-data"
 	metadataDir := filepath.Join(stateDir, "metadata")
 	processedChunksPath := filepath.Join(stateDir, "processed-chunks.txt")
 
-	// Ensure state directory exists
-	if err := os.MkdirAll(metadataDir, 0755); err != nil {
-		consumer.Close()
-		producer.Close()
-		log.Fatalf("Failed to create state directory: %v", err)
+	builder := worker_builder.NewWorkerBuilder("Top Items Worker").
+		WithConfig(config).
+		// Queue consumer
+		WithQueueConsumer(queues.Query2TopItemsQueue, true).
+		// Queue producer
+		WithQueueProducer(queues.ItemIdChunkQueue, true).
+		// State management
+		WithDirectory(stateDir, 0755).
+		WithDirectory(metadataDir, 0755).
+		WithMessageManager(processedChunksPath)
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		log.Fatalf("Top Items Worker: Builder validation failed: %v", err)
 	}
 
-	// Initialize MessageManager for duplicate detection
-	messageManager := messagemanager.NewMessageManager(processedChunksPath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		log.Printf("Top Items Worker: Warning - failed to load processed chunks: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		log.Printf("Top Items Worker: Loaded %d processed chunk IDs", count)
+	// Extract consumer from builder
+	consumer := builder.GetQueueConsumer(queues.Query2TopItemsQueue)
+	if consumer == nil {
+		log.Fatal("Top Items Worker: Failed to get consumer from builder")
 	}
 
-	// Initialize StateManager
+	// Extract producer from builder
+	producer := builder.GetQueueProducer(queues.ItemIdChunkQueue)
+	if producer == nil {
+		log.Fatal("Top Items Worker: Failed to get producer from builder")
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManager == nil {
+		log.Fatal("Top Items Worker: Failed to get message manager from builder")
+	}
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		log.Fatal("Top Items Worker: Message manager has wrong type")
+	}
+
+	// Initialize custom StateManager (worker-specific, not part of builder)
 	stateManager := NewTopItemsStateManager(metadataDir, numPartitions)
 
 	worker := &TopItemsWorker{
@@ -133,7 +126,7 @@ func NewTopItemsWorker() *TopItemsWorker {
 		config:         config,
 		clientStates:   make(map[string]*ClientState),
 		numPartitions:  numPartitions,
-		messageManager: messageManager,
+		messageManager: mm,
 		stateManager:   stateManager,
 	}
 

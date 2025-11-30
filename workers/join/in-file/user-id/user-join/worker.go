@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	joinchunk "github.com/tp-distribuidos-2c2025/workers/join/shared/chunk"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/file"
 	"github.com/tp-distribuidos-2c2025/workers/join/shared/parser"
@@ -30,8 +32,9 @@ type JoinByUserIdWorker struct {
 	messageManager     *messagemanager.MessageManager
 
 	// Completion tracking (no buffering needed)
-	completionSignals map[string]bool // clientID -> completion received
-	completionMutex   sync.RWMutex
+	completionSignals     map[string]bool // clientID -> completion received
+	completionMutex       sync.RWMutex
+	completionSignalsPath string // Path to persistence file
 
 	// Shared components
 	partitionManager *file.PartitionManager
@@ -41,67 +44,64 @@ type JoinByUserIdWorker struct {
 
 // NewJoinByUserIdWorker creates a new JoinByUserIdWorker instance
 func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Config) (*JoinByUserIdWorker, error) {
-	// Create exchange consumer for user ID chunks (with reader-specific routing key)
+	// Get reader-specific routing key
 	routingKey := queues.GetUserIdJoinRoutingKey(readerConfig.ReaderID)
-	topUsersConsumer := exchange.NewExchangeConsumer(
-		queues.UserIdJoinChunksExchange,
-		[]string{routingKey},
-		config,
-	)
-	if topUsersConsumer == nil {
-		return nil, fmt.Errorf("failed to create user ID chunk exchange consumer")
+
+	// Use builder to create all resources
+	stateDir := "/app/worker-data"
+	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
+	completionSignalsPath := filepath.Join(stateDir, "completion-signals.txt")
+
+	builder := worker_builder.NewWorkerBuilder(fmt.Sprintf("Join by User ID Worker (Reader %d)", readerConfig.ReaderID)).
+		WithConfig(config).
+		// Exchange consumers (exchanges already declared by orchestrator)
+		WithExchangeConsumer(queues.UserIdJoinChunksExchange, []string{routingKey}, false).
+		WithExchangeConsumer(queues.UserIdCompletionExchange, []string{queues.UserIdCompletionRoutingKey}, false).
+		// Queue producer
+		WithQueueProducer(Query4ResultsQueue, true).
+		// State management
+		WithDirectory(stateDir, 0755).
+		WithMessageManager(stateFilePath)
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
 	}
 
-	// Create completion signal consumer
-	completionConsumer := exchange.NewExchangeConsumer(
-		queues.UserIdCompletionExchange,
-		[]string{queues.UserIdCompletionRoutingKey},
-		config,
-	)
-	if completionConsumer == nil {
-		topUsersConsumer.Close()
-		return nil, fmt.Errorf("failed to create completion signal consumer")
+	// Extract resources from builder
+	topUsersConsumer := builder.GetExchangeConsumer(queues.UserIdJoinChunksExchange)
+	completionConsumer := builder.GetExchangeConsumer(queues.UserIdCompletionExchange)
+	producer := builder.GetQueueProducer(Query4ResultsQueue)
+
+	if topUsersConsumer == nil || completionConsumer == nil || producer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
 	}
 
-	// Create producer for query 4 results
-	producer := workerqueue.NewMessageMiddlewareQueue(
-		Query4ResultsQueue,
-		config,
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
 	)
-	if producer == nil {
-		topUsersConsumer.Close()
-		completionConsumer.Close()
-		return nil, fmt.Errorf("failed to create query 4 results producer")
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
 	}
-
-	// Declare producer queue
-	if err := producer.DeclareQueue(false, false, false, false); err != 0 {
-		topUsersConsumer.Close()
-		completionConsumer.Close()
-		producer.Close()
-		return nil, fmt.Errorf("failed to declare query 4 results queue: %v", err)
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
 	// Generate worker ID from reader config
 	workerID := fmt.Sprintf("userid-reader-%d", readerConfig.ReaderID)
 
-	// Initialize MessageManager for fault tolerance
-	// Directory is created in Dockerfile with correct ownership, but ensure it exists as safety measure
-	stateDir := "/app/worker-data"
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		topUsersConsumer.Close()
-		completionConsumer.Close()
-		producer.Close()
-		return nil, fmt.Errorf("failed to create state directory: %w", err)
-	}
-
-	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
-	messageManager := messagemanager.NewMessageManager(stateFilePath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		fmt.Printf("Join by User ID Worker: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
+	// Initialize completion signals persistence (custom logic, not in builder)
+	completionSignals := make(map[string]bool)
+	if err := loadCompletionSignals(completionSignalsPath, completionSignals); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to load completion signals: %v (starting with empty state)\n", err)
 	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("Join by User ID Worker: Loaded %d processed chunks\n", count)
+		count := len(completionSignals)
+		if count > 0 {
+			fmt.Printf("Join by User ID Worker: Loaded %d completion signals\n", count)
+		}
 	}
 
 	// Initialize shared components
@@ -109,17 +109,18 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 	chunkSender := joinchunk.NewSender(producer)
 
 	return &JoinByUserIdWorker{
-		topUsersConsumer:   topUsersConsumer,
-		completionConsumer: completionConsumer,
-		producer:           producer,
-		config:             config,
-		readerConfig:       readerConfig,
-		workerID:           workerID,
-		messageManager:     messageManager,
-		completionSignals:  make(map[string]bool),
-		partitionManager:   partitionManager,
-		chunkSender:        chunkSender,
-		stopChan:           make(chan struct{}),
+		topUsersConsumer:      topUsersConsumer,
+		completionConsumer:    completionConsumer,
+		producer:              producer,
+		config:                config,
+		readerConfig:          readerConfig,
+		workerID:              workerID,
+		messageManager:        mm,
+		completionSignals:     completionSignals,
+		partitionManager:      partitionManager,
+		chunkSender:           chunkSender,
+		stopChan:              make(chan struct{}),
+		completionSignalsPath: completionSignalsPath,
 	}, nil
 }
 
@@ -170,7 +171,7 @@ func (jw *JoinByUserIdWorker) Close() {
 func (jw *JoinByUserIdWorker) createTopUsersCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 			if err != nil {
 				fmt.Printf("Join by User ID Worker: Failed to deserialize chunk message: %v\n", err)
@@ -200,7 +201,7 @@ func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
 
 	err := jw.completionConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
 			if err != nil {
 				fmt.Printf("Join by User ID Worker: Failed to deserialize completion signal: %v\n", err)
@@ -271,10 +272,15 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(chunkMsg *chunk.Chunk) midd
 	// Perform cleanup for partition files (reader shares volume with paired writer)
 	jw.performCleanup(chunkMsg.ClientID)
 
-	// Remove completion signal tracking for this client
+	// Remove completion signal tracking for this client (after all chunks processed)
 	jw.completionMutex.Lock()
 	delete(jw.completionSignals, chunkMsg.ClientID)
 	jw.completionMutex.Unlock()
+
+	// Remove from persistence file
+	if err := removeCompletionSignal(jw.completionSignalsPath, chunkMsg.ClientID); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to remove completion signal for client %s: %v\n", chunkMsg.ClientID, err)
+	}
 
 	return 0
 }
@@ -287,6 +293,11 @@ func (jw *JoinByUserIdWorker) processCompletionSignal(completionSignal *signals.
 	jw.completionMutex.Lock()
 	jw.completionSignals[completionSignal.ClientID] = true
 	jw.completionMutex.Unlock()
+
+	// Persist completion signal
+	if err := saveCompletionSignal(jw.completionSignalsPath, completionSignal.ClientID); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to persist completion signal for client %s: %v\n", completionSignal.ClientID, err)
+	}
 
 	// Chunks will be processed when they arrive (or re-arrive after requeue)
 	fmt.Printf("Join by User ID Worker: Client %s marked as ready, chunks can now be processed\n", completionSignal.ClientID)
@@ -359,4 +370,87 @@ func (jw *JoinByUserIdWorker) performCleanup(clientID string) {
 	} else {
 		fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s (reader %d)\n", clientID, jw.readerConfig.ReaderID)
 	}
+}
+
+// loadCompletionSignals loads completion signals from a file
+func loadCompletionSignals(filePath string, signals map[string]bool) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist yet (first run), return nil
+			return nil
+		}
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			signals[line] = true
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	return nil
+}
+
+// saveCompletionSignal appends a client ID to the completion signals file
+func saveCompletionSignal(filePath string, clientID string) error {
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(clientID + "\n"); err != nil {
+		return fmt.Errorf("failed to write to file: %w", err)
+	}
+
+	return nil
+}
+
+// removeCompletionSignal removes a client ID from the completion signals file
+func removeCompletionSignal(filePath string, clientID string) error {
+	// Read all lines
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // File doesn't exist, nothing to remove
+		}
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && line != clientID {
+			lines = append(lines, line)
+		}
+	}
+	file.Close()
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Write back all lines except the removed one
+	file, err = os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	for _, line := range lines {
+		if _, err := file.WriteString(line + "\n"); err != nil {
+			return fmt.Errorf("failed to write to file: %w", err)
+		}
+	}
+
+	return nil
 }

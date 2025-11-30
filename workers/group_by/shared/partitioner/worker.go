@@ -9,6 +9,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
 // PartitionerWorker handles partitioning of chunks based on query type
@@ -21,46 +22,48 @@ type PartitionerWorker struct {
 
 // NewPartitionerWorker creates a new partitioner worker instance
 func NewPartitionerWorker(config *PartitionerConfig) (*PartitionerWorker, error) {
-	// Create queue consumer
-	consumer := workerqueue.NewQueueConsumer(config.QueueName, config.ConnectionConfig)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create queue consumer")
+	// Use builder to create queue consumer and MessageManager
+	builder := worker_builder.NewWorkerBuilder("Partitioner Worker").
+		WithConfig(config.ConnectionConfig).
+		WithQueueConsumer(config.QueueName, true). // auto-declare
+		WithStandardStateDirectory("/app/worker-data").
+		WithMessageManager("/app/worker-data/processed-ids.txt")
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
 	}
 
-	// Declare the input queue (following the pattern from time-filter/worker.go)
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(config.QueueName, config.ConnectionConfig)
-	if queueDeclarer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue declarer")
+	// Extract consumer from builder
+	consumer := builder.GetQueueConsumer(config.QueueName)
+	if consumer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get consumer from builder"))
 	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		queueDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare input queue: %v", err)
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
 	}
-	queueDeclarer.Close() // Close the declarer as we don't need it anymore
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
+	}
 
 	// Create processor with partitioning configuration
 	processor, err := NewPartitionerProcessor(config.QueryType, config.NumPartitions, config.NumWorkers, config.ConnectionConfig)
 	if err != nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create processor: %v", err)
-	}
-
-	// Initialize MessageManager for fault tolerance
-	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		testing_utils.LogWarn("Partitioner Worker", "Failed to load processed IDs: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		testing_utils.LogInfo("Partitioner Worker", "Loaded %d processed IDs", count)
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to create processor: %v", err))
 	}
 
 	return &PartitionerWorker{
 		config:         config,
 		consumer:       consumer,
 		processor:      processor,
-		messageManager: messageManager,
+		messageManager: mm,
 	}, nil
 }
 

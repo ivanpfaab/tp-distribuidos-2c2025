@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -12,6 +10,7 @@ import (
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
 // UserRecord represents a single user row
@@ -34,57 +33,58 @@ type UserPartitionSplitter struct {
 
 // NewUserPartitionSplitter creates a new splitter instance
 func NewUserPartitionSplitter(connConfig *middleware.ConnectionConfig, splitterConfig *Config) (*UserPartitionSplitter, error) {
-	// Create consumer for user data from join-data-handler (consume from user ID dictionary queue)
-	consumer := workerqueue.NewQueueConsumer(
-		JoinUserIdDictionaryQueue,
-		connConfig,
-	)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create consumer")
-	}
+	// Use builder to create all resources
+	builder := worker_builder.NewWorkerBuilder("User Partition Splitter").
+		WithConfig(connConfig).
+		// Queue consumer
+		WithQueueConsumer(JoinUserIdDictionaryQueue, true)
 
-	// Declare the input queue before consuming
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(JoinUserIdDictionaryQueue, connConfig)
-	if queueDeclarer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue declarer")
-	}
-
-	// Declare the queue
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		queueDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare fixed join data queue: %v", err)
-	}
-	queueDeclarer.Close() // Close the declarer as we don't need it anymore
-
-	// Create producer queues for each writer
-	writerQueues := make([]*workerqueue.QueueMiddleware, splitterConfig.NumWriters)
+	// Add queue producers for each writer
 	for i := 0; i < splitterConfig.NumWriters; i++ {
 		queueName := GetWriterQueueName(i + 1) // Writers are 1-indexed
-		producer := workerqueue.NewMessageMiddlewareQueue(queueName, connConfig)
+		builder = builder.WithQueueProducer(queueName, true)
+		fmt.Printf("User Partition Splitter: Adding queue %s for writer %d\n", queueName, i+1)
+	}
+
+	// Add state management
+	builder = builder.
+		WithStandardStateDirectory("/app/worker-data").
+		WithMessageManager("/app/worker-data/processed-ids.txt")
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
+	}
+
+	// Extract consumer from builder
+	consumer := builder.GetQueueConsumer(JoinUserIdDictionaryQueue)
+	if consumer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get consumer from builder"))
+	}
+
+	// Extract writer queue producers from builder
+	writerQueues := make([]*workerqueue.QueueMiddleware, splitterConfig.NumWriters)
+	for i := 0; i < splitterConfig.NumWriters; i++ {
+		queueName := GetWriterQueueName(i + 1)
+		producer := builder.GetQueueProducer(queueName)
 		if producer == nil {
-			// Clean up already created producers
-			for j := 0; j < i; j++ {
-				writerQueues[j].Close()
-			}
-			consumer.Close()
-			return nil, fmt.Errorf("failed to create producer for writer %d", i+1)
+			return nil, builder.CleanupOnError(fmt.Errorf("failed to get producer for writer %d", i+1))
 		}
-
-		// Declare the queue
-		if err := producer.DeclareQueue(false, false, false, false); err != 0 {
-			// Clean up
-			producer.Close()
-			for j := 0; j < i; j++ {
-				writerQueues[j].Close()
-			}
-			consumer.Close()
-			return nil, fmt.Errorf("failed to declare queue for writer %d: %v", i+1, err)
-		}
-
 		writerQueues[i] = producer
 		fmt.Printf("User Partition Splitter: Created queue %s for writer %d\n", queueName, i+1)
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
+	}
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
 	// Initialize buffers
@@ -93,35 +93,13 @@ func NewUserPartitionSplitter(connConfig *middleware.ConnectionConfig, splitterC
 		buffers[i] = make([]UserRecord, 0, MaxBufferSize)
 	}
 
-	// Initialize MessageManager for fault tolerance
-	stateDir := "/app/worker-data"
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		// Clean up
-		for _, producer := range writerQueues {
-			if producer != nil {
-				producer.Close()
-			}
-		}
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create state directory: %w", err)
-	}
-
-	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
-	messageManager := messagemanager.NewMessageManager(stateFilePath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		fmt.Printf("User Partition Splitter: Warning - failed to load processed chunks: %v (starting with empty state)\n", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("User Partition Splitter: Loaded %d processed chunks\n", count)
-	}
-
 	return &UserPartitionSplitter{
 		consumer:       consumer,
 		writerQueues:   writerQueues,
 		config:         connConfig,
 		splitterConfig: splitterConfig,
 		buffers:        buffers,
-		messageManager: messageManager,
+		messageManager: mm,
 	}, nil
 }
 
