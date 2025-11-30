@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
@@ -13,6 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 	"github.com/tp-distribuidos-2c2025/shared/testing"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
@@ -31,88 +31,50 @@ type InMemoryJoinOrchestrator struct {
 
 // NewInMemoryJoinOrchestrator creates a new InMemoryJoinOrchestrator instance
 func NewInMemoryJoinOrchestrator(config *middleware.ConnectionConfig) (*InMemoryJoinOrchestrator, error) {
-	// Create consumer for completion notifications
-	consumer := workerqueue.NewQueueConsumer(
-		queues.InMemoryJoinCompletionQueue,
-		config,
-	)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create completion consumer")
-	}
-
-	// Declare the completion queue
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(
-		queues.InMemoryJoinCompletionQueue,
-		config,
-	)
-	if queueDeclarer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue declarer")
-	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		queueDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare completion queue: %v", err)
-	}
-	queueDeclarer.Close()
-
-	// Create ItemID completion signal producer
-	itemIdProducer := exchange.NewMessageMiddlewareExchange(
-		queues.ItemIdCompletionExchange,
-		[]string{queues.ItemIdCompletionRoutingKey},
-		config,
-	)
-	if itemIdProducer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create ItemID completion producer")
-	}
-
-	// Create StoreID completion signal producer
-	storeIdProducer := exchange.NewMessageMiddlewareExchange(
-		queues.StoreIdCompletionExchange,
-		[]string{queues.StoreIdCompletionRoutingKey},
-		config,
-	)
-	if storeIdProducer == nil {
-		consumer.Close()
-		itemIdProducer.Close()
-		return nil, fmt.Errorf("failed to create StoreID completion producer")
-	}
-
-	// Declare exchanges
-	if err := itemIdProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare ItemID completion exchange: %v", err)
-	}
-
-	if err := storeIdProducer.DeclareExchange("fanout", false, false, false, false); err != 0 {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare StoreID completion exchange: %v", err)
-	}
-
-	// Initialize fault tolerance components
+	// Use builder to create all resources
 	metadataDir := "/app/orchestrator-data/metadata"
 	processedNotificationsPath := "/app/orchestrator-data/processed-notifications.txt"
 
-	// Ensure metadata directory exists
-	if err := os.MkdirAll(metadataDir, 0755); err != nil {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		return nil, fmt.Errorf("failed to create metadata directory: %w", err)
+	builder := worker_builder.NewWorkerBuilder("In-Memory Join Orchestrator").
+		WithConfig(config).
+		// Queue consumer
+		WithQueueConsumer(queues.InMemoryJoinCompletionQueue, true).
+		// Exchange producers (fanout exchanges for broadcasting to all join workers)
+		WithExchangeProducer(queues.ItemIdCompletionExchange, []string{queues.ItemIdCompletionRoutingKey}, true, worker_builder.ExchangeDeclarationOptions{
+			Type: "fanout",
+		}).
+		WithExchangeProducer(queues.StoreIdCompletionExchange, []string{queues.StoreIdCompletionRoutingKey}, true, worker_builder.ExchangeDeclarationOptions{
+			Type: "fanout",
+		}).
+		// State management
+		WithDirectory(metadataDir, 0755).
+		WithMessageManager(processedNotificationsPath)
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
 	}
 
-	// Initialize MessageManager for duplicate detection
-	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		testing.LogWarn("In-Memory Join Orchestrator", "Failed to load processed notifications: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		testing.LogInfo("In-Memory Join Orchestrator", "Loaded %d processed notification IDs", count)
+	// Extract resources from builder
+	consumer := builder.GetQueueConsumer(queues.InMemoryJoinCompletionQueue)
+	itemIdProducer := builder.GetExchangeProducer(queues.ItemIdCompletionExchange)
+	storeIdProducer := builder.GetExchangeProducer(queues.StoreIdCompletionExchange)
+
+	if consumer == nil || itemIdProducer == nil || storeIdProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
+	}
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
 	// Generate worker ID
@@ -127,7 +89,7 @@ func NewInMemoryJoinOrchestrator(config *middleware.ConnectionConfig) (*InMemory
 		itemIdProducer:  itemIdProducer,
 		storeIdProducer: storeIdProducer,
 		workerID:        workerID,
-		messageManager:  messageManager,
+		messageManager:  mm,
 		stateManager:    stateManager,
 	}
 
