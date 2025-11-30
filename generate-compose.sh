@@ -1114,8 +1114,7 @@ MONITORED_WORKERS="${MONITORED_WORKERS}query4-top-users-worker-1:8888,"
 # Add orchestrators and dispatcher
 MONITORED_WORKERS="${MONITORED_WORKERS}in-memory-join-orchestrator-1:8888,"
 MONITORED_WORKERS="${MONITORED_WORKERS}in-file-join-orchestrator-1:8888,"
-MONITORED_WORKERS="${MONITORED_WORKERS}results-dispatcher-1:8888,"
-MONITORED_WORKERS="${MONITORED_WORKERS}proxy-1:8888"
+MONITORED_WORKERS="${MONITORED_WORKERS}results-dispatcher-1:8888"
 
 # Generate TARGET_CONTAINERS for Chaos Monkey (same as MONITORED_WORKERS but without port numbers)
 echo -e "${BLUE}Generating TARGET_CONTAINERS for Chaos Monkey...${NC}"
