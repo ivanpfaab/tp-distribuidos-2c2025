@@ -16,6 +16,7 @@ declare -A node_status
 declare -A node_history
 declare -A node_category
 declare -A node_line_number
+declare -A node_column
 
 CURRENT_LINE=0
 
@@ -71,13 +72,7 @@ extract_monitored_workers() {
 }
 
 extract_all_containers() {
-    local compose_file="${1:-docker-compose.yaml}"
-    if [ ! -f "$compose_file" ]; then
-        echo "Error: docker-compose.yaml not found" >&2
-        return 1
-    fi
-    
-    grep "container_name:" "$compose_file" | sed 's/.*container_name: \(.*\)/\1/' | tr -d ' '
+    docker ps --format "{{.Names}}" 2>/dev/null | sort
 }
 
 categorize_nodes() {
@@ -102,7 +97,7 @@ categorize_nodes() {
 
 check_container_alive() {
     local container_name="$1"
-    docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^${container_name}$"
+    docker ps --format "{{.Names}}" 2>/dev/null | grep -Fxq "$container_name"
 }
 
 update_status() {
@@ -160,9 +155,52 @@ get_status_color() {
     fi
 }
 
+get_terminal_width() {
+    local width=$(tput cols 2>/dev/null || echo 120)
+    echo $width
+}
+
+display_node_line() {
+    local container="$1"
+    local status="${node_status[$container]}"
+    local history="${node_history[$container]}"
+    local name_color=$(get_status_color "$status")
+    
+    local history_len=${#history}
+    local history_display
+    
+    if [ $history_len -eq 0 ]; then
+        history_display="."
+    elif [ $history_len -le 50 ]; then
+        history_display="$history"
+    else
+        history_display="${history: -50}"
+    fi
+    
+    printf "${name_color}%-40s${NC} [" "$container"
+    print_colored_history "$history_display"
+    printf "]"
+}
+
+get_history_display_length() {
+    local history="$1"
+    local history_len=${#history}
+    if [ $history_len -eq 0 ]; then
+        echo 1
+    elif [ $history_len -le 50 ]; then
+        echo $history_len
+    else
+        echo 50
+    fi
+}
+
 display_initial() {
     clear
     CURRENT_LINE=1
+    
+    local terminal_width=$(get_terminal_width)
+    local col1_width=$((terminal_width / 2 - 2))
+    local col2_start=$((terminal_width / 2 + 2))
     
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
@@ -180,45 +218,62 @@ display_initial() {
     for i in "${!categories[@]}"; do
         local category="${categories[$i]}"
         local label="${category_labels[$i]}"
-        local found=false
         
+        local category_nodes=()
         for container in "${!node_category[@]}"; do
             if [ "${node_category[$container]}" == "$category" ]; then
-                if [ "$found" == false ]; then
-                    local cat_color=$(get_category_color "$category")
-                    echo -e "${cat_color}━━━ $label ━━━${NC}"
-                    CURRENT_LINE=$((CURRENT_LINE + 1))
-                    found=true
-                fi
-                
-                node_line_number["$container"]=$CURRENT_LINE
-                
-                local status="${node_status[$container]}"
-                local history="${node_history[$container]}"
-                local name_color=$(get_status_color "$status")
-                
-                local history_len=${#history}
-                local history_display
-                
-                if [ $history_len -eq 0 ]; then
-                    history_display="."
-                elif [ $history_len -le 50 ]; then
-                    history_display="$history"
-                else
-                    history_display="${history: -50}"
-                fi
-                
-                printf "${name_color}%-40s${NC} [" "$container"
-                print_colored_history "$history_display"
-                printf "]\n"
-                CURRENT_LINE=$((CURRENT_LINE + 1))
+                category_nodes+=("$container")
             fi
         done
         
-        if [ "$found" == true ]; then
+        if [ ${#category_nodes[@]} -eq 0 ]; then
+            continue
+        fi
+        
+        local cat_color=$(get_category_color "$category")
+        echo -e "${cat_color}━━━ $label ━━━${NC}"
+        CURRENT_LINE=$((CURRENT_LINE + 1))
+        
+        local total_nodes=${#category_nodes[@]}
+        local half=$(( (total_nodes + 1) / 2 ))
+        
+        local max_rows=$half
+        local col_width=$((terminal_width / 2 - 5))
+        
+        for ((row=0; row<max_rows; row++)); do
+            local idx1=$row
+            local idx2=$((row + half))
+            
+            if [ $idx1 -lt $total_nodes ]; then
+                local container1="${category_nodes[$idx1]}"
+                node_line_number["$container1"]=$CURRENT_LINE
+                node_column["$container1"]=1
+                local hist1="${node_history[$container1]}"
+                local hist1_len=$(get_history_display_length "$hist1")
+                display_node_line "$container1"
+                local used1=$((40 + 3 + hist1_len))
+                if [ $used1 -lt $col_width ]; then
+                    printf "%*s" $((col_width - used1)) ""
+                fi
+            else
+                printf "%${col_width}s" ""
+            fi
+            
+            printf "  "
+            
+            if [ $idx2 -lt $total_nodes ]; then
+                local container2="${category_nodes[$idx2]}"
+                node_line_number["$container2"]=$CURRENT_LINE
+                node_column["$container2"]=2
+                display_node_line "$container2"
+            fi
+            
             echo ""
             CURRENT_LINE=$((CURRENT_LINE + 1))
-        fi
+        done
+        
+        echo ""
+        CURRENT_LINE=$((CURRENT_LINE + 1))
     done
     
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -232,12 +287,29 @@ display_initial() {
 update_display() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     
+    move_to_line 1
+    clear_to_end_of_line
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+    
     move_to_line 2
     clear_to_end_of_line
     printf "${GREEN}║${NC} ${WHITE}Node Status Monitor${NC} %-45s ${GREEN}║${NC}" "$timestamp"
     
+    move_to_line 3
+    clear_to_end_of_line
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+    
+    local terminal_width=$(get_terminal_width)
+    local col_width=$((terminal_width / 2 - 5))
+    local col2_start=$((col_width + 7))
+    
     for container in "${!node_line_number[@]}"; do
         local line_num="${node_line_number[$container]}"
+        local col="${node_column[$container]}"
+        
+        move_to_line "$line_num"
+        clear_to_end_of_line
+        
         local status="${node_status[$container]}"
         local history="${node_history[$container]}"
         local name_color=$(get_status_color "$status")
@@ -253,11 +325,22 @@ update_display() {
             history_display="${history: -50}"
         fi
         
-        move_to_line "$line_num"
-        clear_to_end_of_line
+        if [ "$col" == "2" ]; then
+            printf "%*s" $col2_start ""
+        fi
+        
         printf "${name_color}%-40s${NC} [" "$container"
         print_colored_history "$history_display"
         printf "]"
+        
+        if [ "$col" == "1" ]; then
+            local hist_len=$(get_history_display_length "$history")
+            local used=$((40 + 3 + hist_len))
+            if [ $used -lt $col_width ]; then
+                printf "%*s" $((col_width - used)) ""
+            fi
+            printf "  "
+        fi
     done
 }
 
