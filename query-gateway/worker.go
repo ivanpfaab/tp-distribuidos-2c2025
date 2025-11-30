@@ -8,6 +8,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
 // QueryGateway encapsulates the query gateway state and dependencies
@@ -23,118 +24,53 @@ type QueryGateway struct {
 
 // NewQueryGateway creates a new QueryGateway instance
 func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error) {
-	// Create reply-filter-bus consumer
-	consumer := workerqueue.NewQueueConsumer(
-		queues.ReplyFilterBusQueue,
-		config,
-	)
+	// Use builder to create all resources
+	builder := worker_builder.NewWorkerBuilder("Query Gateway").
+		WithConfig(config).
+		// Queue consumer
+		WithQueueConsumer(queues.ReplyFilterBusQueue, true).
+		// Queue producers for GroupBy workers
+		WithQueueProducer(queues.Query2GroupByQueue, true).
+		WithQueueProducer(queues.Query3GroupByQueue, true).
+		WithQueueProducer(queues.Query4GroupByQueue, true).
+		// Queue producer for Query 1 results
+		WithQueueProducer(queues.Query1ResultsQueue, true).
+		// State management
+		WithStandardStateDirectory("/app/worker-data").
+		WithMessageManager("/app/worker-data/processed-ids.txt")
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
+	}
+
+	// Extract consumer from builder
+	consumer := builder.GetQueueConsumer(queues.ReplyFilterBusQueue)
 	if consumer == nil {
-		return nil, fmt.Errorf("failed to create query gateway consumer")
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get consumer from builder"))
 	}
 
-	// Declare the reply-filter-bus queue using QueueMiddleware
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(
-		queues.ReplyFilterBusQueue,
-		config,
+	// Extract producers from builder
+	query2GroupByProducer := builder.GetQueueProducer(queues.Query2GroupByQueue)
+	query3GroupByProducer := builder.GetQueueProducer(queues.Query3GroupByQueue)
+	query4GroupByProducer := builder.GetQueueProducer(queues.Query4GroupByQueue)
+	query1ResultsProducer := builder.GetQueueProducer(queues.Query1ResultsQueue)
+
+	if query2GroupByProducer == nil || query3GroupByProducer == nil || query4GroupByProducer == nil || query1ResultsProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get producers from builder"))
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
 	)
-	if queueDeclarer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue declarer")
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
 	}
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		queueDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare reply-filter-bus queue: %v", err)
-	}
-	queueDeclarer.Close() // Close the declarer as we don't need it anymore
-
-	// Initialize queue producer for sending chunks to Query 2 GroupBy (MapReduce Worker)
-	query2GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.Query2GroupByQueue, // query2-groupby-queue
-		config,
-	)
-	if query2GroupByProducer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create Query 2 GroupBy producer")
-	}
-
-	// Declare the Query 2 GroupBy producer queue
-	if err := query2GroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		query2GroupByProducer.Close()
-		return nil, fmt.Errorf("failed to declare Query 2 GroupBy queue: %v", err)
-	}
-
-	// Initialize queue producer for sending chunks to Query 3 GroupBy (MapReduce Worker)
-	query3GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.Query3GroupByQueue, // query3-groupby-queue
-		config,
-	)
-	if query3GroupByProducer == nil {
-		consumer.Close()
-		query2GroupByProducer.Close()
-		return nil, fmt.Errorf("failed to create Query 3 GroupBy producer")
-	}
-
-	// Declare the Query 3 GroupBy producer queue
-	if err := query3GroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		query2GroupByProducer.Close()
-		query3GroupByProducer.Close()
-		return nil, fmt.Errorf("failed to declare Query 3 GroupBy queue: %v", err)
-	}
-
-	// Initialize queue producer for sending chunks to Query 4 GroupBy (MapReduce Worker)
-	query4GroupByProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.Query4GroupByQueue, // query4-groupby-queue
-		config,
-	)
-	if query4GroupByProducer == nil {
-		consumer.Close()
-		query2GroupByProducer.Close()
-		query3GroupByProducer.Close()
-		return nil, fmt.Errorf("failed to create Query 4 GroupBy producer")
-	}
-
-	// Declare the Query 4 GroupBy producer queue
-	if err := query4GroupByProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		query2GroupByProducer.Close()
-		query3GroupByProducer.Close()
-		query4GroupByProducer.Close()
-		return nil, fmt.Errorf("failed to declare Query 4 GroupBy queue: %v", err)
-	}
-
-	// Initialize queue producer for Query 1 results
-	query1ResultsProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.Query1ResultsQueue,
-		config,
-	)
-	if query1ResultsProducer == nil {
-		consumer.Close()
-		query2GroupByProducer.Close()
-		query3GroupByProducer.Close()
-		query4GroupByProducer.Close()
-		return nil, fmt.Errorf("failed to create Query 1 results producer")
-	}
-
-	// Declare the Query 1 results queue
-	if err := query1ResultsProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		query2GroupByProducer.Close()
-		query3GroupByProducer.Close()
-		query4GroupByProducer.Close()
-		query1ResultsProducer.Close()
-		return nil, fmt.Errorf("failed to declare Query 1 results queue: %v", err)
-	}
-
-	// Initialize MessageManager for fault tolerance
-	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		fmt.Printf("Query Gateway: Warning - failed to load processed IDs: %v (starting with empty state)\n", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("Query Gateway: Loaded %d processed IDs\n", count)
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
 	return &QueryGateway{
@@ -144,7 +80,7 @@ func NewQueryGateway(config *middleware.ConnectionConfig) (*QueryGateway, error)
 		query4GroupByProducer: query4GroupByProducer,
 		query1ResultsProducer: query1ResultsProducer,
 		config:                config,
-		messageManager:        messageManager,
+		messageManager:        mm,
 	}, nil
 }
 
