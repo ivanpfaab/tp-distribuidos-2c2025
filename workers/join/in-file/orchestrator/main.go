@@ -7,10 +7,19 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/tp-distribuidos-2c2025/shared/health_server"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
 
 func main() {
+	healthPort := os.Getenv("HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "8888"
+	}
+	healthSrv := health_server.NewHealthServer(healthPort)
+	go healthSrv.Start()
+	defer healthSrv.Stop()
+
 	fmt.Println("Starting In-File Join Orchestrator...")
 
 	// Load configuration

@@ -6,6 +6,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/common"
+	"github.com/tp-distribuidos-2c2025/protocol/election"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 )
 
@@ -41,6 +42,8 @@ func Deserialize(data []byte) (interface{}, error) {
 		return signals.DeserializeJoinCleanupSignal(data)
 	case common.ClientCompletionSignalType:
 		return signals.DeserializeClientCompletionSignal(data)
+	case common.ElectionMessageType:
+		return election.DeserializeElectionMessage(data)
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msgType)
 	}

@@ -146,6 +146,96 @@ services:
       retries: 5
       start_period: 30s
 
+  # Fault Tolerance - Supervisors
+  supervisor-1:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "1"
+      SUPERVISOR_PEERS: "supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  supervisor-2:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "2"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  supervisor-3:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "3"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  # Chaos Monkey (optional - use with 'chaos' profile)
+  chaos-monkey:
+    build:
+      context: .
+      dockerfile: ./chaos-monkey/Dockerfile
+    container_name: chaos-monkey
+    depends_on:
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      KILL_INTERVAL: "5s"
+      KILL_PROBABILITY: "0.5"
+      PAUSE_DURATION: "10s"
+    profiles: ["chaos"]
+
 EOF_HEADER
 
 # Function to generate year-filter workers
@@ -167,6 +257,7 @@ generate_year_filter_workers() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -192,6 +283,7 @@ generate_time_filter_workers() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -217,6 +309,7 @@ generate_amount_filter_workers() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -233,21 +326,13 @@ generate_amount_filter_workers $AMOUNT_FILTER_COUNT
 generate_itemid_join_workers() {
     local count=$1
     for i in $(seq 1 $count); do
-        # First worker has simpler container name for backward compatibility
-        local container_name
-        if [ $i -eq 1 ]; then
-            container_name="itemid-join-worker"
-        else
-            container_name="itemid-join-worker-${i}"
-        fi
-        
         cat >> docker-compose.yaml << EOF
   # ItemID Join Worker ${i} (scalable with dictionary broadcasting)
   itemid-join-worker-${i}:
     build:
       context: .
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
-    container_name: ${container_name}
+    container_name: itemid-join-worker-${i}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -259,6 +344,7 @@ generate_itemid_join_workers() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "${i}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -276,14 +362,6 @@ generate_storeid_join_workers() {
     local num_partitions=$3       # Number of Query 3 partitions
     
     for i in $(seq 1 $count); do
-        # First worker has simpler container name for backward compatibility
-        local container_name
-        if [ $i -eq 1 ]; then
-            container_name="storeid-join-worker"
-        else
-            container_name="storeid-join-worker-${i}"
-        fi
-        
         # Build dependencies on all Query 3 orchestrators
         local orchestrator_deps=""
         for w in $(seq 1 $num_groupby_workers); do
@@ -298,7 +376,7 @@ generate_storeid_join_workers() {
     build:
       context: .
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
-    container_name: ${container_name}
+    container_name: storeid-join-worker-${i}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -313,6 +391,7 @@ $(echo -e "${orchestrator_deps}")
       WORKER_INSTANCE_ID: "${i}"
       STOREID_BATCH_SIZE: 5
       NUM_PARTITIONS: "${num_partitions}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -326,11 +405,11 @@ generate_storeid_join_workers $STOREID_JOIN_WORKER_COUNT $Q3_GROUPBY_WORKER_COUN
 # Add remaining non-scalable services
 cat >> docker-compose.yaml << 'EOF_REMAINING'
   # Results dispatcher (NOT SCALABLE - outputs to stdout)
-  results-dispatcher:
+  results-dispatcher-1:
     build:
       context: .
       dockerfile: ./dispatcher/Dockerfile
-    container_name: results-dispatcher
+    container_name: results-dispatcher-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -339,14 +418,15 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
   # In-Memory Join Orchestrator
-  in-memory-join-orchestrator:
+  in-memory-join-orchestrator-1:
     build:
       context: .
       dockerfile: ./workers/join/in-memory/orchestrator/Dockerfile
-    container_name: in-memory-join-orchestrator
+    container_name: in-memory-join-orchestrator-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -355,15 +435,16 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - in-memory-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
 
-  in-file-join-orchestrator:
+  in-file-join-orchestrator-1:
     build:
       context: .
       dockerfile: ./workers/join/in-file/orchestrator/Dockerfile
-    container_name: in-file-join-orchestrator
+    container_name: in-file-join-orchestrator-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -372,6 +453,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - in-file-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
@@ -412,6 +494,7 @@ generate_partitioner() {
       QUERY_TYPE: "${query_type}"
       NUM_PARTITIONS: "${num_partitions}"
       NUM_WORKERS: "${num_workers}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -443,6 +526,7 @@ generate_orchestrators() {
       RABBITMQ_PASS: password
       QUERY_TYPE: "${query_type}"
       WORKER_ID: "${i}"
+      HEALTH_PORT: "8888"
     volumes:
       - query${query_type}-groupby-worker-${i}-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -493,6 +577,7 @@ $(echo -e "${partitioner_deps}")
       WORKER_ID: "${i}"
       NUM_WORKERS: "${count}"
       NUM_PARTITIONS: "${num_partitions}"
+      HEALTH_PORT: "8888"
     volumes:
       - query${query_type}-groupby-worker-${i}-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -521,11 +606,11 @@ generate_top_worker() {
 
     cat >> docker-compose.yaml << EOF
   # Query ${query_type} Top ${worker_name} Classification
-  query${query_type}-top-${worker_name}-worker:
+  query${query_type}-top-${worker_name}-worker-1:
     build:
       context: .
       dockerfile: ./workers/top/query${query_type}_top_classification/Dockerfile
-    container_name: query${query_type}-top-${worker_name}-worker
+    container_name: query${query_type}-top-${worker_name}-worker-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -536,6 +621,7 @@ $(echo -e "${deps}")
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_PARTITIONS: "${num_partitions}"
+      HEALTH_PORT: "8888"
     volumes:
       - query${query_type}-top-${worker_name}-worker-data:/app/worker-data
     profiles: ["orchestration"]
@@ -548,11 +634,11 @@ generate_user_partition_splitter() {
     local num_writers=$1
     cat >> docker-compose.yaml << EOF
   # User Partition Splitter (distributes users to writers)
-  user-partition-splitter:
+  user-partition-splitter-1:
     build:
       context: .
       dockerfile: ./workers/join/in-file/user-id/user-partition-splitter/Dockerfile
-    container_name: user-partition-splitter
+    container_name: user-partition-splitter-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -562,6 +648,7 @@ generate_user_partition_splitter() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_WRITERS: ${num_writers}
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -581,7 +668,7 @@ generate_user_partition_writers() {
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-splitter:
+      user-partition-splitter-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -590,6 +677,7 @@ generate_user_partition_writers() {
       RABBITMQ_PASS: password
       WRITER_ID: ${i}
       NUM_WRITERS: ${count}
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-${i}-data:/shared-data
     profiles: ["orchestration"]
@@ -615,9 +703,9 @@ generate_user_join_readers() {
         condition: service_healthy
       user-partition-writer-${i}:
         condition: service_started
-      in-file-join-orchestrator:
+      in-file-join-orchestrator-1:
         condition: service_started
-      query4-top-users-worker:
+      query4-top-users-worker-1:
         condition: service_started
     environment:
       RABBITMQ_HOST: rabbitmq
@@ -626,6 +714,7 @@ generate_user_join_readers() {
       RABBITMQ_PASS: password
       READER_ID: ${i}
       NUM_WRITERS: ${count}
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-${i}-data:/shared-data
     profiles: ["orchestration"]
@@ -640,21 +729,13 @@ generate_join_data_handler() {
     local itemid_worker_count=$2
     local storeid_worker_count=$3
     for i in $(seq 1 $count); do
-        # First handler has simpler container name for backward compatibility
-        local container_name
-        if [ $i -eq 1 ]; then
-            container_name="join-data-handler"
-        else
-            container_name="join-data-handler-${i}"
-        fi
-        
         cat >> docker-compose.yaml << EOF
   # Join Data Handler ${i}
   join-data-handler-${i}:
     build:
       context: .
       dockerfile: ./workers/join/data-handler/Dockerfile
-    container_name: ${container_name}
+    container_name: join-data-handler-${i}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -665,6 +746,7 @@ generate_join_data_handler() {
       RABBITMQ_PASS: password
       ITEMID_WORKER_COUNT: "${itemid_worker_count}"
       STOREID_WORKER_COUNT: "${storeid_worker_count}"
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -675,21 +757,13 @@ EOF
 generate_query_gateway() {
     local count=$1
     for i in $(seq 1 $count); do
-        # First gateway has simpler container name for backward compatibility
-        local container_name
-        if [ $i -eq 1 ]; then
-            container_name="query-gateway"
-        else
-            container_name="query-gateway-${i}"
-        fi
-        
         cat >> docker-compose.yaml << EOF
   # Query Gateway ${i}
   query-gateway-${i}:
     build:
       context: .
       dockerfile: ./query-gateway/Dockerfile
-    container_name: ${container_name}
+    container_name: query-gateway-${i}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -698,6 +772,7 @@ generate_query_gateway() {
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     profiles: ["orchestration"]
 
 EOF
@@ -747,11 +822,11 @@ generate_top_worker 4 "users" $Q4_GROUPBY_WORKER_COUNT $Q4_NUM_PARTITIONS
 # Generate server service with dependencies on all filter workers
 generate_server_dependencies() {
     echo "  # Core application (data flow services)"
-    echo "  proxy:"
+    echo "  proxy-1:"
     echo "    build:"
     echo "      context: ."
     echo "      dockerfile: ./proxy/Dockerfile"
-    echo "    container_name: proxy"
+    echo "    container_name: proxy-1"
     echo "    ports:"
     echo "      - \"8081:8080\"  # TCP port for client connections"
     echo "    depends_on:"
@@ -789,7 +864,7 @@ generate_server_dependencies() {
     done
     
     # Add dependencies for user partition components
-    echo "      user-partition-splitter:"
+    echo "      user-partition-splitter-1:"
     echo "        condition: service_started"
     
     for i in $(seq 1 $USER_PARTITION_WRITERS); do
@@ -822,11 +897,7 @@ generate_server_dependencies() {
 
     # Query 2 partitioners
     for i in $(seq 1 $Q2_PARTITIONER_COUNT); do
-        if [ $Q2_PARTITIONER_COUNT -eq 1 ]; then
-            echo "      query2-partitioner:"
-        else
-            echo "      query2-partitioner-${i}:"
-        fi
+        echo "      query2-partitioner-${i}:"
         echo "        condition: service_started"
     done
 
@@ -836,7 +907,7 @@ generate_server_dependencies() {
         echo "        condition: service_started"
     done
 
-    echo "      query2-top-items-worker:"
+    echo "      query2-top-items-worker-1:"
     echo "        condition: service_started"
 
     # Query 3 orchestrators
@@ -847,11 +918,7 @@ generate_server_dependencies() {
 
     # Query 3 partitioners
     for i in $(seq 1 $Q3_PARTITIONER_COUNT); do
-        if [ $Q3_PARTITIONER_COUNT -eq 1 ]; then
-            echo "      query3-partitioner:"
-        else
-            echo "      query3-partitioner-${i}:"
-        fi
+        echo "      query3-partitioner-${i}:"
         echo "        condition: service_started"
     done
 
@@ -869,11 +936,7 @@ generate_server_dependencies() {
 
     # Query 4 partitioners
     for i in $(seq 1 $Q4_PARTITIONER_COUNT); do
-        if [ $Q4_PARTITIONER_COUNT -eq 1 ]; then
-            echo "      query4-partitioner:"
-        else
-            echo "      query4-partitioner-${i}:"
-        fi
+        echo "      query4-partitioner-${i}:"
         echo "        condition: service_started"
     done
 
@@ -883,14 +946,14 @@ generate_server_dependencies() {
         echo "        condition: service_started"
     done
 
-    echo "      query4-top-users-worker:"
+    echo "      query4-top-users-worker-1:"
     echo "        condition: service_started"
 
-    echo "      results-dispatcher:"
+    echo "      results-dispatcher-1:"
     echo "        condition: service_started"
-    echo "      in-memory-join-orchestrator:"
+    echo "      in-memory-join-orchestrator-1:"
     echo "        condition: service_started"
-    echo "      in-file-join-orchestrator:"
+    echo "      in-file-join-orchestrator-1:"
     echo "        condition: service_started"
     echo "    environment:"
     echo "      - SERVER_PORT=8080"
@@ -898,7 +961,8 @@ generate_server_dependencies() {
     echo "      - RABBITMQ_PORT=5672"
     echo "      - RABBITMQ_USER=admin"
     echo "      - RABBITMQ_PASS=password"
-    echo "    profiles: [\"data-flow\"]"
+    echo "      - HEALTH_PORT=8888"
+    echo "    profiles: [\"orchestration\", \"data-flow\"]"
     echo ""
 }
 
@@ -922,7 +986,7 @@ generate_clients() {
       dockerfile: ./client/Dockerfile
     container_name: ${container_name}
     depends_on:
-      proxy:
+      proxy-1:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -930,7 +994,7 @@ generate_clients() {
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=${client_id}
-    command: ["./main", "/app/data", "proxy:8080"]
+    command: ["./main", "/app/data", "proxy-1:8080"]
     profiles: ["data-flow"]
 
 EOF
@@ -940,6 +1004,112 @@ EOF
 # Generate clients
 echo -e "${BLUE}Generating clients...${NC}"
 generate_clients $CLIENT_COUNT
+
+# Generate the MONITORED_WORKERS list for supervisors
+echo -e "${BLUE}Generating MONITORED_WORKERS list for supervisors...${NC}"
+
+MONITORED_WORKERS=""
+
+# Add all year-filter workers
+for i in $(seq 1 $YEAR_FILTER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}year-filter-worker-${i}:8888,"
+done
+
+# Add all time-filter workers
+for i in $(seq 1 $TIME_FILTER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}time-filter-worker-${i}:8888,"
+done
+
+# Add all amount-filter workers
+for i in $(seq 1 $AMOUNT_FILTER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}amount-filter-worker-${i}:8888,"
+done
+
+# Add all query-gateway workers
+for i in $(seq 1 $QUERY_GATEWAY_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query-gateway-${i}:8888,"
+done
+
+# Add all join-data-handler workers
+for i in $(seq 1 $JOIN_DATA_HANDLER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}join-data-handler-${i}:8888,"
+done
+
+# Add all itemid-join workers
+for i in $(seq 1 $ITEMID_JOIN_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}itemid-join-worker-${i}:8888,"
+done
+
+# Add all storeid-join workers
+for i in $(seq 1 $STOREID_JOIN_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}storeid-join-worker-${i}:8888,"
+done
+
+# Add user partition components
+MONITORED_WORKERS="${MONITORED_WORKERS}user-partition-splitter-1:8888,"
+
+for i in $(seq 1 $USER_PARTITION_WRITERS); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}user-partition-writer-${i}:8888,"
+done
+
+for i in $(seq 1 $USER_JOIN_READERS); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}user-join-reader-${i}:8888,"
+done
+
+# Add Query 2 components
+for i in $(seq 1 $Q2_PARTITIONER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query2-partitioner-${i}:8888,"
+done
+
+for i in $(seq 1 $Q2_GROUPBY_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query2-orchestrator-${i}:8888,"
+    MONITORED_WORKERS="${MONITORED_WORKERS}query2-groupby-worker-${i}:8888,"
+done
+
+MONITORED_WORKERS="${MONITORED_WORKERS}query2-top-items-worker-1:8888,"
+
+# Add Query 3 components
+for i in $(seq 1 $Q3_PARTITIONER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query3-partitioner-${i}:8888,"
+done
+
+for i in $(seq 1 $Q3_GROUPBY_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query3-orchestrator-${i}:8888,"
+    MONITORED_WORKERS="${MONITORED_WORKERS}query3-groupby-worker-${i}:8888,"
+done
+
+# Add Query 4 components
+for i in $(seq 1 $Q4_PARTITIONER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query4-partitioner-${i}:8888,"
+done
+
+for i in $(seq 1 $Q4_GROUPBY_WORKER_COUNT); do
+    MONITORED_WORKERS="${MONITORED_WORKERS}query4-orchestrator-${i}:8888,"
+    MONITORED_WORKERS="${MONITORED_WORKERS}query4-groupby-worker-${i}:8888,"
+done
+
+MONITORED_WORKERS="${MONITORED_WORKERS}query4-top-users-worker-1:8888,"
+
+# Add orchestrators and dispatcher
+MONITORED_WORKERS="${MONITORED_WORKERS}in-memory-join-orchestrator-1:8888,"
+MONITORED_WORKERS="${MONITORED_WORKERS}in-file-join-orchestrator-1:8888,"
+MONITORED_WORKERS="${MONITORED_WORKERS}results-dispatcher-1:8888,"
+MONITORED_WORKERS="${MONITORED_WORKERS}proxy-1:8888"
+
+# Generate TARGET_CONTAINERS for Chaos Monkey (same as MONITORED_WORKERS but without port numbers)
+echo -e "${BLUE}Generating TARGET_CONTAINERS for Chaos Monkey...${NC}"
+
+# Convert MONITORED_WORKERS to TARGET_CONTAINERS by removing :8888 port suffixes
+TARGET_CONTAINERS=$(echo "${MONITORED_WORKERS}" | sed 's/:8888//g')
+
+# Now update the supervisor services with the MONITORED_WORKERS variable
+# Use sed to replace the MONITORED_WORKERS placeholder
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+
+# Update chaos-monkey with TARGET_CONTAINERS
+sed -i "s|KILL_PROBABILITY: \"0.5\"|KILL_PROBABILITY: \"0.5\"\n      TARGET_CONTAINERS: \"${TARGET_CONTAINERS}\"|" docker-compose.yaml
 
 # Add test runner and volumes
 cat >> docker-compose.yaml << 'EOF_FOOTER'
@@ -953,7 +1123,7 @@ cat >> docker-compose.yaml << 'EOF_FOOTER'
     depends_on:
       rabbitmq:
         condition: service_healthy
-      proxy:
+      proxy-1:
         condition: service_started
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"

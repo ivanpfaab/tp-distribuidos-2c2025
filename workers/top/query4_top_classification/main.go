@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/health_server"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -318,7 +319,6 @@ func (tw *TopUsersWorker) processMessage(chunkMsg *chunk.Chunk) middleware.Messa
 	return 0
 }
 
-
 // getUserPartition returns the partition number for a given user ID
 func getUserPartition(userID string, numPartitions int) (int, error) {
 	// Parse user ID (handle both int and float formats)
@@ -471,6 +471,14 @@ func (tw *TopUsersWorker) Close() {
 }
 
 func main() {
+	healthPort := os.Getenv("HEALTH_PORT")
+	if healthPort == "" {
+		healthPort = "8888"
+	}
+	healthSrv := health_server.NewHealthServer(healthPort)
+	go healthSrv.Start()
+	defer healthSrv.Stop()
+
 	topUsersWorker := NewTopUsersWorker()
 	defer topUsersWorker.Close()
 

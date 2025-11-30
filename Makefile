@@ -1,17 +1,19 @@
 # Simple Makefile for Docker Compose Management
 
-.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup
+.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-up-chaos docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-logs-chaos docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup volume-cleanup
 
 # Default target
 help: ## Show this help message
 	@echo "Available commands:"
 	@echo "  docker-compose-up                - Start all services in orchestrated order"
 	@echo "  docker-compose-up-quick          - Start all services quickly (alternative)"
+	@echo "  docker-compose-up-chaos          - Start all services WITH Chaos Monkey for fault injection testing"
 	@echo "  docker-compose-down              - Stop all services"
 	@echo "  docker-compose-down-force        - Force stop all services (handles restart policies)"
 	@echo "  docker-compose-logs              - Show logs from all services"
 	@echo "  docker-compose-logs-orchestration - Show logs for orchestration services only"
 	@echo "  docker-compose-logs-data-flow    - Show logs for data-flow services only"
+	@echo "  docker-compose-logs-chaos        - Show logs for Chaos Monkey and supervisors only"
 	@echo "  docker-compose-build             - Build all Docker images"
 	@echo "  docker-compose-rebuild           - Rebuild everything from scratch (no cache)"
 	@echo "  docker-compose-cleanup           - Cleanup services, images, and volumes"
@@ -19,6 +21,7 @@ help: ## Show this help message
 	@echo "  docker-compose-test              - Run tests"
 	@echo "  docker-compose-generate          - Generate docker-compose.yaml (scale: filters, gateways, join workers, clients)"
 	@echo "  docker-compose-restore           - Restore original docker-compose.yaml from backup"
+	@echo "  volume-cleanup                   - Clean up all Docker volumes and system resources"
 	@echo "  help                             - Show this help message"
 
 # Start all services in proper order
@@ -31,7 +34,7 @@ docker-compose-up: ## Start all services in proper order
 	@echo "2. Starting all orchestration services (workers, gateways, etc.)..."
 	docker compose --profile orchestration up -d
 	@echo "3. Starting Proxy..."
-	docker compose --profile orchestration --profile data-flow up -d proxy
+	docker compose --profile orchestration --profile data-flow up -d proxy-1
 	@echo "4. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d
 	@echo "All services started successfully!"
@@ -45,7 +48,7 @@ docker-compose-up-build: ## Start all services in proper order with build
 	@echo "2. Starting all orchestration services (workers, gateways, etc.)..."
 	docker compose --profile orchestration up -d --build
 	@echo "3. Starting Proxy..."
-	docker compose --profile orchestration --profile data-flow up -d --build proxy
+	docker compose --profile orchestration --profile data-flow up -d --build proxy-1
 	@echo "4. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d --build
 	@echo "All services started successfully!"
@@ -53,6 +56,32 @@ docker-compose-up-build: ## Start all services in proper order with build
 # Quick start (alternative - starts all at once with dependencies)
 docker-compose-up-quick: ## Start all services quickly (alternative method)
 	docker compose --profile orchestration --profile data-flow up
+
+# Start with Chaos Monkey for fault injection testing
+docker-compose-up-chaos: ## Start all services WITH Chaos Monkey for fault injection testing
+	@echo "Starting services with Chaos Monkey enabled..."
+	@echo "WARNING: Chaos Monkey will randomly kill/pause/stop containers!"
+	@echo ""
+	@echo "1. Starting RabbitMQ..."
+	docker compose up -d rabbitmq
+	@echo "Waiting for RabbitMQ to be healthy..."
+	@bash -c 'for i in {1..30}; do if docker compose ps rabbitmq | grep -q "healthy"; then break; fi; sleep 2; done'
+	@echo "2. Starting supervisors..."
+	docker compose --profile orchestration --profile data-flow up -d supervisor-1 supervisor-2 supervisor-3
+	@echo "Waiting for supervisors to start election..."
+	sleep 5
+	@echo "3. Starting all orchestration services..."
+	docker compose --profile orchestration up -d
+	@echo "4. Starting Proxy..."
+	docker compose --profile orchestration --profile data-flow up -d proxy-1
+	@echo "5. Starting Clients..."
+	docker compose --profile orchestration --profile data-flow up -d
+	@echo "6. Starting Chaos Monkey..."
+	docker compose --profile orchestration --profile data-flow --profile chaos up -d chaos-monkey
+	@echo ""
+	@echo "All services started with Chaos Monkey!"
+	@echo "Monitor logs with: make docker-compose-logs-chaos"
+	@echo "Stop everything with: make docker-compose-down"
 
 # Stop all services
 docker-compose-down: ## Stop all services
@@ -96,6 +125,10 @@ docker-compose-logs-orchestration: ## Show logs for orchestration services only
 docker-compose-logs-data-flow: ## Show logs for data-flow services only
 	docker compose --profile data-flow logs -f
 
+# Show logs for Chaos Monkey and supervisors only
+docker-compose-logs-chaos: ## Show logs for Chaos Monkey and supervisors only (fault injection monitoring)
+	docker compose logs -f chaos-monkey supervisor-1 supervisor-2 supervisor-3
+
 # Build all Docker images
 docker-compose-build: ## Build all Docker images
 	docker compose build
@@ -117,7 +150,7 @@ docker-compose-rebuild: ## Rebuild everything from scratch (no cache)
 	@echo "   Starting Workers..."
 	docker compose --profile orchestration up -d year-filter-worker-1 year-filter-worker-2 year-filter-worker-3 time-filter-worker-1 time-filter-worker-2 amount-filter-worker-1 join-data-handler-1 itemid-join-worker-1 storeid-join-worker-1 user-partition-splitter user-partition-writer-1 user-partition-writer-2 user-partition-writer-3 user-partition-writer-4 user-partition-writer-5 user-join-reader-1 user-join-reader-2 query2-orchestrator-1 query2-orchestrator-2 query2-orchestrator-3 query2-partitioner query2-groupby-worker-1 query2-groupby-worker-2 query2-groupby-worker-3 query2-top-items-worker query3-orchestrator-1 query3-orchestrator-2 query3-orchestrator-3 query3-partitioner query3-groupby-worker-1 query3-groupby-worker-2 query3-groupby-worker-3 query4-orchestrator-1 query4-orchestrator-2 query4-orchestrator-3 query4-partitioner-1 query4-partitioner-2 query4-partitioner-3 query4-groupby-worker-1 query4-groupby-worker-2 query4-groupby-worker-3 query4-top-users-worker results-dispatcher in-memory-join-orchestrator in-file-join-orchestrator query-gateway-1
 	@echo "   Starting Proxy..."
-	docker compose --profile orchestration --profile data-flow up -d proxy
+	docker compose --profile orchestration --profile data-flow up -d proxy-1
 	@echo "   Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d client-1 client-2
 	@echo "Rebuild complete! All services started successfully!"
@@ -156,3 +189,8 @@ docker-compose-restore: ## Restore original docker-compose.yaml from backup
 		echo "✗ No backup file found (docker-compose.yaml.backup)"; \
 		exit 1; \
 	fi
+
+# Clean up all Docker volumes and system resources
+volume-cleanup: ## Clean up all Docker volumes and system resources
+	docker system prune -a --volumes
+	docker volume rm $$(docker volume ls -q) 2>/dev/null || true
