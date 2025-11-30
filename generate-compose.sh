@@ -231,7 +231,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      KILL_INTERVAL: "5"
+      KILL_INTERVAL: "5s"
       KILL_PROBABILITY: "0.5"
       PAUSE_DURATION: "10s"
     profiles: ["chaos"]

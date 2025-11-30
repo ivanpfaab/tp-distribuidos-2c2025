@@ -1,6 +1,6 @@
 # Simple Makefile for Docker Compose Management
 
-.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-up-chaos docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-logs-chaos docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup
+.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-up-chaos docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-logs-chaos docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup volume-cleanup
 
 # Default target
 help: ## Show this help message
@@ -21,6 +21,7 @@ help: ## Show this help message
 	@echo "  docker-compose-test              - Run tests"
 	@echo "  docker-compose-generate          - Generate docker-compose.yaml (scale: filters, gateways, join workers, clients)"
 	@echo "  docker-compose-restore           - Restore original docker-compose.yaml from backup"
+	@echo "  volume-cleanup                   - Clean up all Docker volumes and system resources"
 	@echo "  help                             - Show this help message"
 
 # Start all services in proper order
@@ -188,3 +189,8 @@ docker-compose-restore: ## Restore original docker-compose.yaml from backup
 		echo "✗ No backup file found (docker-compose.yaml.backup)"; \
 		exit 1; \
 	fi
+
+# Clean up all Docker volumes and system resources
+volume-cleanup: ## Clean up all Docker volumes and system resources
+	docker system prune -a --volumes
+	docker volume rm $$(docker volume ls -q) 2>/dev/null || true
