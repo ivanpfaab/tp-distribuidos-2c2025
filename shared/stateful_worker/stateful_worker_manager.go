@@ -1,15 +1,14 @@
 package statefulworker
 
 import (
-	"encoding/csv"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	"github.com/tp-distribuidos-2c2025/shared/utils"
 )
 
 // ClientState represents the state for a specific client
@@ -32,6 +31,7 @@ type StatefulWorkerManager struct {
 	buildStatus     StatusBuilderFunc
 	extractMetadata MetadataExtractor
 	csvColumns      []string
+	csvHandler      *utils.CSVHandler
 }
 
 // NewStatefulWorkerManager creates a new stateful worker manager
@@ -47,6 +47,7 @@ func NewStatefulWorkerManager(
 		buildStatus:     buildStatus,
 		extractMetadata: extractMetadata,
 		csvColumns:      csvColumns,
+		csvHandler:      utils.NewCSVHandler(metadataDir),
 	}
 }
 
@@ -60,19 +61,36 @@ func (swm *StatefulWorkerManager) RebuildState() error {
 	// Scan metadata directory for CSV files
 	files, err := os.ReadDir(swm.metadataDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("failed to read metadata directory: %w", err)
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), ".csv") {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".csv") {
 			continue
 		}
 
 		// Extract clientID from filename: {clientID}.csv
 		clientID := strings.TrimSuffix(file.Name(), ".csv")
+		filePath := filepath.Join(swm.metadataDir, file.Name())
+
+		// Check and fix incomplete last row
+		hasIncomplete, err := swm.csvHandler.HasIncompleteLastRow(filePath)
+		if err != nil {
+			log.Printf("StatefulWorkerManager: Warning - failed to check incomplete row in %s: %v", filePath, err)
+			continue
+		}
+		if hasIncomplete {
+			if err := swm.csvHandler.RemoveIncompleteLastRow(filePath); err != nil {
+				log.Printf("StatefulWorkerManager: Warning - failed to remove incomplete row in %s: %v", filePath, err)
+				continue
+			}
+			log.Printf("StatefulWorkerManager: Fixed incomplete last row in %s", filePath)
+		}
 
 		// Initialize empty state
-		filePath := filepath.Join(swm.metadataDir, file.Name())
 		state, err := swm.buildStatus(clientID, [][]string{})
 		if err != nil {
 			log.Printf("StatefulWorkerManager: Failed to initialize state for client %s: %v", clientID, err)
@@ -80,7 +98,17 @@ func (swm *StatefulWorkerManager) RebuildState() error {
 		}
 
 		// Read CSV file line-by-line and update state incrementally
-		rowCount, err := swm.rebuildState(filePath, state)
+		rowCount := 0
+		err = swm.csvHandler.ReadFileStreamingWithHeader(filePath, swm.csvColumns, func(row []string) error {
+			// Update state from this row (incremental)
+			if err := state.UpdateState(row); err != nil {
+				log.Printf("StatefulWorkerManager: Failed to update state from CSV row: %v", err)
+				return nil // Continue with next row
+			}
+			rowCount++
+			return nil
+		})
+
 		if err != nil {
 			log.Printf("StatefulWorkerManager: Failed to rebuild state from CSV for client %s: %v", clientID, err)
 			continue
@@ -92,7 +120,7 @@ func (swm *StatefulWorkerManager) RebuildState() error {
 			log.Printf("StatefulWorkerManager: Rebuilt state for client %s (%d rows)", clientID, rowCount)
 		} else {
 			// Client already ready, delete CSV file
-			if err := os.Remove(filePath); err != nil {
+			if err := swm.csvHandler.DeleteFile(filePath); err != nil {
 				log.Printf("StatefulWorkerManager: Failed to delete metadata file for ready client %s: %v", clientID, err)
 			} else {
 				log.Printf("StatefulWorkerManager: Client %s already ready, deleted metadata file", clientID)
@@ -101,52 +129,6 @@ func (swm *StatefulWorkerManager) RebuildState() error {
 	}
 
 	return nil
-}
-
-// rebuildState reads CSV file line-by-line and updates state incrementally
-func (swm *StatefulWorkerManager) rebuildState(filePath string, state ClientState) (int, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	rowCount := 0
-
-	// Read header (first line) - skip it
-	_, err = reader.Read()
-	if err == io.EOF {
-		return 0, nil // Empty file
-	}
-	if err != nil {
-		return 0, err
-	}
-
-	// Read data rows line by line and update state incrementally
-	for {
-		row, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return rowCount, err
-		}
-
-		// Update state from this row (incremental)
-		if err := state.UpdateState(row); err != nil {
-			log.Printf("StatefulWorkerManager: Failed to update state from CSV row: %v", err)
-			// Continue with next row
-			continue
-		}
-
-		rowCount++
-	}
-
-	return rowCount, nil
 }
 
 // ProcessMessage processes a message: checks duplicates, updates state, appends to CSV
@@ -178,7 +160,7 @@ func (swm *StatefulWorkerManager) ProcessMessage(message interface{}) error {
 
 	// Append to CSV metadata file
 	csvPath := filepath.Join(swm.metadataDir, clientID+".csv")
-	if err := appendMetadataRow(csvPath, swm.csvColumns, metadataRow); err != nil {
+	if err := swm.csvHandler.AppendRow(csvPath, metadataRow, swm.csvColumns); err != nil {
 		return fmt.Errorf("failed to append metadata row: %w", err)
 	}
 
@@ -194,27 +176,28 @@ func (swm *StatefulWorkerManager) IsMessageProcessed(clientID, msgID string) (bo
 		return false, nil
 	}
 
-	// Read CSV file and check for msgID
-	rows, err := readMetadataCSV(csvPath)
+	// Read CSV file line-by-line and check for msgID (memory efficient)
+	found := false
+	err := swm.csvHandler.ReadFileStreaming(csvPath, func(row []string) error {
+		// Check if msgID exists (first column is msg_id)
+		if len(row) > 0 && row[0] == msgID {
+			found = true
+		}
+		return nil
+	})
+
 	if err != nil {
 		return false, err
 	}
 
-	// Check if msgID exists (first column is msg_id)
-	for _, row := range rows {
-		if len(row) > 0 && row[0] == msgID {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return found, nil
 }
 
 // MarkClientReady deletes CSV file and state when client completes
 func (swm *StatefulWorkerManager) MarkClientReady(clientID string) error {
 	// Delete CSV file
 	csvPath := filepath.Join(swm.metadataDir, clientID+".csv")
-	if err := os.Remove(csvPath); err != nil && !os.IsNotExist(err) {
+	if err := swm.csvHandler.DeleteFile(csvPath); err != nil {
 		return fmt.Errorf("failed to delete metadata file: %w", err)
 	}
 
@@ -245,77 +228,6 @@ func (swm *StatefulWorkerManager) getOrCreateClientState(clientID string) Client
 
 	swm.clientStates[clientID] = state
 	return state
-}
-
-// readMetadataCSV reads a CSV metadata file line-by-line (memory efficient)
-func readMetadataCSV(filePath string) ([][]string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return [][]string{}, nil
-		}
-		return nil, err
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	rows := [][]string{}
-
-	// Read header (first line) - we'll skip it
-	_, err = reader.Read()
-	if err == io.EOF {
-		return rows, nil // Empty file
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	// Read data rows line by line
-	for {
-		row, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, row)
-	}
-
-	return rows, nil
-}
-
-// appendMetadataRow appends a row to the CSV metadata file
-func appendMetadataRow(filePath string, columns []string, row []string) error {
-	// Ensure directory exists
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write header if file is new (size == 0)
-	stat, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	if stat.Size() == 0 {
-		if err := writer.Write(columns); err != nil {
-			return err
-		}
-	}
-
-	// Write data row
-	return writer.Write(row)
 }
 
 // extractClientID extracts client ID from message (works with chunk.Chunk)
