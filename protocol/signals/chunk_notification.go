@@ -3,7 +3,6 @@ package signals
 import (
 	"encoding/binary"
 	"fmt"
-	"strconv"
 
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 )
@@ -24,7 +23,7 @@ type ChunkNotification struct {
 
 // NewChunkNotification creates a new ChunkNotification
 func NewChunkNotification(clientID, fileID, mapWorkerID string, tableID, chunkNumber int, isLastChunk, isLastFromTable bool) *ChunkNotification {
-	id := clientID + fileID + strconv.Itoa(chunkNumber)
+	id := clientID + fileID + fmt.Sprintf("%08d", chunkNumber)
 	return &ChunkNotification{
 		Header: common.Header{
 			HeaderLength: 0,
@@ -184,4 +183,3 @@ func DeserializeChunkNotification(data []byte) (*ChunkNotification, error) {
 		MapWorkerID:     mapWorkerID,
 	}, nil
 }
-
