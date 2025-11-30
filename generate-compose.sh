@@ -258,6 +258,8 @@ generate_year_filter_workers() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       HEALTH_PORT: "8888"
+    volumes:
+      - year-filter-worker-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -284,6 +286,8 @@ generate_time_filter_workers() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       HEALTH_PORT: "8888"
+    volumes:
+      - time-filter-worker-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -310,6 +314,8 @@ generate_amount_filter_workers() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       HEALTH_PORT: "8888"
+    volumes:
+      - amount-filter-worker-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -345,6 +351,8 @@ generate_itemid_join_workers() {
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "${i}"
       HEALTH_PORT: "8888"
+    volumes:
+      - itemid-join-worker-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -392,6 +400,8 @@ $(echo -e "${orchestrator_deps}")
       STOREID_BATCH_SIZE: 5
       NUM_PARTITIONS: "${num_partitions}"
       HEALTH_PORT: "8888"
+    volumes:
+      - storeid-join-worker-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -419,6 +429,8 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       HEALTH_PORT: "8888"
+    volumes:
+      - results-dispatcher-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # In-Memory Join Orchestrator
@@ -495,6 +507,8 @@ generate_partitioner() {
       NUM_PARTITIONS: "${num_partitions}"
       NUM_WORKERS: "${num_workers}"
       HEALTH_PORT: "8888"
+    volumes:
+      - query${query_type}-partitioner$([ $count -gt 1 ] && echo "-${i}" || echo "")-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -649,6 +663,8 @@ generate_user_partition_splitter() {
       RABBITMQ_PASS: password
       NUM_WRITERS: ${num_writers}
       HEALTH_PORT: "8888"
+    volumes:
+      - user-partition-splitter-1-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -717,6 +733,7 @@ generate_user_join_readers() {
       HEALTH_PORT: "8888"
     volumes:
       - user-writer-${i}-data:/shared-data
+      - user-join-reader-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -747,6 +764,8 @@ generate_join_data_handler() {
       ITEMID_WORKER_COUNT: "${itemid_worker_count}"
       STOREID_WORKER_COUNT: "${storeid_worker_count}"
       HEALTH_PORT: "8888"
+    volumes:
+      - join-data-handler-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -773,6 +792,8 @@ generate_query_gateway() {
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       HEALTH_PORT: "8888"
+    volumes:
+      - query-gateway-${i}-data:/app/worker-data
     profiles: ["orchestration"]
 
 EOF
@@ -1193,8 +1214,113 @@ EOF
 done
 
 cat >> docker-compose.yaml << EOF
-  # Results dispatcher volume
-  results-dispatcher-data:
+  # Filter workers volumes
+EOF
+for i in $(seq 1 $YEAR_FILTER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  year-filter-worker-${i}-data:
+    driver: local
+EOF
+done
+for i in $(seq 1 $TIME_FILTER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  time-filter-worker-${i}-data:
+    driver: local
+EOF
+done
+for i in $(seq 1 $AMOUNT_FILTER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  amount-filter-worker-${i}-data:
+    driver: local
+EOF
+done
+
+cat >> docker-compose.yaml << EOF
+  # Join workers volumes
+EOF
+for i in $(seq 1 $ITEMID_JOIN_WORKER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  itemid-join-worker-${i}-data:
+    driver: local
+EOF
+done
+for i in $(seq 1 $STOREID_JOIN_WORKER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  storeid-join-worker-${i}-data:
+    driver: local
+EOF
+done
+for i in $(seq 1 $JOIN_DATA_HANDLER_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  join-data-handler-${i}-data:
+    driver: local
+EOF
+done
+cat >> docker-compose.yaml << EOF
+  user-partition-splitter-1-data:
+    driver: local
+EOF
+for i in $(seq 1 $USER_JOIN_READERS); do
+    cat >> docker-compose.yaml << EOF
+  user-join-reader-${i}-data:
+    driver: local
+EOF
+done
+
+cat >> docker-compose.yaml << EOF
+  # Partitioner volumes
+EOF
+for i in $(seq 1 $Q2_PARTITIONER_COUNT); do
+    if [ $Q2_PARTITIONER_COUNT -eq 1 ]; then
+        cat >> docker-compose.yaml << EOF
+  query2-partitioner-data:
+    driver: local
+EOF
+    else
+        cat >> docker-compose.yaml << EOF
+  query2-partitioner-${i}-data:
+    driver: local
+EOF
+    fi
+done
+for i in $(seq 1 $Q3_PARTITIONER_COUNT); do
+    if [ $Q3_PARTITIONER_COUNT -eq 1 ]; then
+        cat >> docker-compose.yaml << EOF
+  query3-partitioner-data:
+    driver: local
+EOF
+    else
+        cat >> docker-compose.yaml << EOF
+  query3-partitioner-${i}-data:
+    driver: local
+EOF
+    fi
+done
+for i in $(seq 1 $Q4_PARTITIONER_COUNT); do
+    if [ $Q4_PARTITIONER_COUNT -eq 1 ]; then
+        cat >> docker-compose.yaml << EOF
+  query4-partitioner-data:
+    driver: local
+EOF
+    else
+        cat >> docker-compose.yaml << EOF
+  query4-partitioner-${i}-data:
+    driver: local
+EOF
+    fi
+done
+
+cat >> docker-compose.yaml << EOF
+  # Query gateway and dispatcher volumes
+EOF
+for i in $(seq 1 $QUERY_GATEWAY_COUNT); do
+    cat >> docker-compose.yaml << EOF
+  query-gateway-${i}-data:
+    driver: local
+EOF
+done
+cat >> docker-compose.yaml << EOF
+  results-dispatcher-1-data:
     driver: local
   # Join orchestrator volumes
   in-memory-join-orchestrator-data:
