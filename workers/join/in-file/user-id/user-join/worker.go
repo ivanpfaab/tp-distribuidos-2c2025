@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,8 +31,9 @@ type JoinByUserIdWorker struct {
 	messageManager     *messagemanager.MessageManager
 
 	// Completion tracking (no buffering needed)
-	completionSignals map[string]bool // clientID -> completion received
-	completionMutex   sync.RWMutex
+	completionSignals     map[string]bool // clientID -> completion received
+	completionMutex       sync.RWMutex
+	completionSignalsPath string // Path to persistence file
 
 	// Shared components
 	partitionManager *file.PartitionManager
@@ -104,22 +106,35 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 		fmt.Printf("Join by User ID Worker: Loaded %d processed chunks\n", count)
 	}
 
+	// Initialize completion signals persistence
+	completionSignalsPath := filepath.Join(stateDir, "completion-signals.txt")
+	completionSignals := make(map[string]bool)
+	if err := loadCompletionSignals(completionSignalsPath, completionSignals); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to load completion signals: %v (starting with empty state)\n", err)
+	} else {
+		count := len(completionSignals)
+		if count > 0 {
+			fmt.Printf("Join by User ID Worker: Loaded %d completion signals\n", count)
+		}
+	}
+
 	// Initialize shared components
 	partitionManager := file.NewPartitionManager(SharedDataDir, NumPartitions)
 	chunkSender := joinchunk.NewSender(producer)
 
 	return &JoinByUserIdWorker{
-		topUsersConsumer:   topUsersConsumer,
-		completionConsumer: completionConsumer,
-		producer:           producer,
-		config:             config,
-		readerConfig:       readerConfig,
-		workerID:           workerID,
-		messageManager:     messageManager,
-		completionSignals:  make(map[string]bool),
-		partitionManager:   partitionManager,
-		chunkSender:        chunkSender,
-		stopChan:           make(chan struct{}),
+		topUsersConsumer:      topUsersConsumer,
+		completionConsumer:    completionConsumer,
+		producer:              producer,
+		config:                config,
+		readerConfig:          readerConfig,
+		workerID:              workerID,
+		messageManager:        messageManager,
+		completionSignals:     completionSignals,
+		partitionManager:      partitionManager,
+		chunkSender:           chunkSender,
+		stopChan:              make(chan struct{}),
+		completionSignalsPath: completionSignalsPath,
 	}, nil
 }
 
@@ -170,7 +185,7 @@ func (jw *JoinByUserIdWorker) Close() {
 func (jw *JoinByUserIdWorker) createTopUsersCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 			if err != nil {
 				fmt.Printf("Join by User ID Worker: Failed to deserialize chunk message: %v\n", err)
@@ -200,7 +215,7 @@ func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
 
 	err := jw.completionConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
 			if err != nil {
 				fmt.Printf("Join by User ID Worker: Failed to deserialize completion signal: %v\n", err)
@@ -271,10 +286,15 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(chunkMsg *chunk.Chunk) midd
 	// Perform cleanup for partition files (reader shares volume with paired writer)
 	jw.performCleanup(chunkMsg.ClientID)
 
-	// Remove completion signal tracking for this client
+	// Remove completion signal tracking for this client (after all chunks processed)
 	jw.completionMutex.Lock()
 	delete(jw.completionSignals, chunkMsg.ClientID)
 	jw.completionMutex.Unlock()
+
+	// Remove from persistence file
+	if err := removeCompletionSignal(jw.completionSignalsPath, chunkMsg.ClientID); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to remove completion signal for client %s: %v\n", chunkMsg.ClientID, err)
+	}
 
 	return 0
 }
@@ -287,6 +307,11 @@ func (jw *JoinByUserIdWorker) processCompletionSignal(completionSignal *signals.
 	jw.completionMutex.Lock()
 	jw.completionSignals[completionSignal.ClientID] = true
 	jw.completionMutex.Unlock()
+
+	// Persist completion signal
+	if err := saveCompletionSignal(jw.completionSignalsPath, completionSignal.ClientID); err != nil {
+		fmt.Printf("Join by User ID Worker: Warning - failed to persist completion signal for client %s: %v\n", completionSignal.ClientID, err)
+	}
 
 	// Chunks will be processed when they arrive (or re-arrive after requeue)
 	fmt.Printf("Join by User ID Worker: Client %s marked as ready, chunks can now be processed\n", completionSignal.ClientID)
@@ -359,4 +384,87 @@ func (jw *JoinByUserIdWorker) performCleanup(clientID string) {
 	} else {
 		fmt.Printf("Join by User ID Worker: Completed cleanup for client: %s (reader %d)\n", clientID, jw.readerConfig.ReaderID)
 	}
+}
+
+// loadCompletionSignals loads completion signals from a file
+func loadCompletionSignals(filePath string, signals map[string]bool) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist yet (first run), return nil
+			return nil
+		}
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			signals[line] = true
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	return nil
+}
+
+// saveCompletionSignal appends a client ID to the completion signals file
+func saveCompletionSignal(filePath string, clientID string) error {
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(clientID + "\n"); err != nil {
+		return fmt.Errorf("failed to write to file: %w", err)
+	}
+
+	return nil
+}
+
+// removeCompletionSignal removes a client ID from the completion signals file
+func removeCompletionSignal(filePath string, clientID string) error {
+	// Read all lines
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // File doesn't exist, nothing to remove
+		}
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && line != clientID {
+			lines = append(lines, line)
+		}
+	}
+	file.Close()
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Write back all lines except the removed one
+	file, err = os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	for _, line := range lines {
+		if _, err := file.WriteString(line + "\n"); err != nil {
+			return fmt.Errorf("failed to write to file: %w", err)
+		}
+	}
+
+	return nil
 }
