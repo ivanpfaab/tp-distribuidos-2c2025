@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -370,6 +371,27 @@ func (c *TCPClient) KeepConnectionOpen() error {
 	select {}
 }
 
+// getChunkSize gets the chunk size from environment variable or returns default
+func getChunkSize() int {
+	chunkSizeStr := os.Getenv("CHUNK_SIZE")
+	if chunkSizeStr == "" {
+		return 1000 // Default chunk size
+	}
+
+	chunkSize, err := strconv.Atoi(chunkSizeStr)
+	if err != nil {
+		log.Printf("Invalid CHUNK_SIZE environment variable '%s', using default 1000: %v", chunkSizeStr, err)
+		return 1000
+	}
+
+	if chunkSize <= 0 {
+		log.Printf("CHUNK_SIZE must be positive, got %d, using default 1000", chunkSize)
+		return 1000
+	}
+
+	return chunkSize
+}
+
 // runClient runs the client with the given data folder and keeps connection open
 func runClient(dataFolder string, serverAddr string, clientID string) error {
 	// Scan for CSV files in the data folder
@@ -434,7 +456,8 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 
 		// Read lines from file and send to server
 		r := csv.NewReader(f)
-		sentRecords, sentBatches, err := client.sendBatches(r, 10000, fileID, isLastFromTable)
+		chunkSize := getChunkSize()
+		sentRecords, sentBatches, err := client.sendBatches(r, chunkSize, fileID, isLastFromTable)
 		if err != nil {
 			log.Printf("Error sending batches for file %s: %v", filePath, err)
 			f.Close()

@@ -39,6 +39,33 @@ prompt_worker_count() {
     done
 }
 
+# Function to prompt for chunk size (required, no default)
+prompt_chunk_size() {
+    local chunk_size
+    
+    while true; do
+        echo -e "${BLUE}How many ${YELLOW}rows per chunk${BLUE} do you want? (required)${NC}" >&2
+        read -p "> " chunk_size
+        
+        # Validate input is provided and is a positive integer
+        if [ -z "$chunk_size" ]; then
+            echo -e "${YELLOW}⚠ Chunk size is required. Please enter a positive number${NC}" >&2
+            echo "" >&2
+            continue
+        fi
+        
+        if [[ "$chunk_size" =~ ^[1-9][0-9]*$ ]]; then
+            echo -e "${GREEN}✓ Setting chunk size: ${chunk_size} rows${NC}" >&2
+            echo "" >&2
+            echo "$chunk_size"
+            return
+        else
+            echo -e "${YELLOW}⚠ Please enter a valid positive number${NC}" >&2
+            echo "" >&2
+        fi
+    done
+}
+
 # Collect worker counts
 echo -e "${BLUE}Configure Filter Workers (stateless, fully scalable)${NC}"
 echo ""
@@ -88,6 +115,12 @@ echo ""
 
 CLIENT_COUNT=$(prompt_worker_count "client" 1)
 
+echo ""
+echo -e "${BLUE}Configure Client Settings${NC}"
+echo ""
+
+CHUNK_SIZE=$(prompt_chunk_size)
+
 # Summary
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Configuration Summary:${NC}"
@@ -102,6 +135,7 @@ echo -e "StoreID Join Workers:   ${YELLOW}${STOREID_JOIN_WORKER_COUNT}${NC}"
 echo -e "User Partition Writers: ${YELLOW}${USER_PARTITION_WRITERS}${NC}"
 echo -e "User Join Readers:      ${YELLOW}${USER_JOIN_READERS}${NC}"
 echo -e "Clients:                ${YELLOW}${CLIENT_COUNT}${NC}"
+echo -e "Chunk Size:             ${YELLOW}${CHUNK_SIZE}${NC} rows per chunk"
 echo ""
 echo -e "Query 2 Partitioners:   ${YELLOW}${Q2_PARTITIONER_COUNT}${NC} instance(s)"
 echo -e "Query 2 GroupBy Workers: ${YELLOW}${Q2_GROUPBY_WORKER_COUNT}${NC} instance(s) (${Q2_NUM_PARTITIONS} partitions)"
@@ -983,6 +1017,8 @@ generate_server_dependencies() {
     echo "      - RABBITMQ_USER=admin"
     echo "      - RABBITMQ_PASS=password"
     echo "      - HEALTH_PORT=8888"
+    echo "    volumes:"
+    echo "      - proxy-1-data:/app/worker-data"
     echo "    profiles: [\"orchestration\", \"data-flow\"]"
     echo ""
 }
@@ -1015,6 +1051,7 @@ generate_clients() {
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=${client_id}
+      - CHUNK_SIZE=${CHUNK_SIZE}  # Number of rows per chunk
     command: ["./main", "/app/data", "proxy-1:8080"]
     profiles: ["data-flow"]
 
@@ -1321,6 +1358,9 @@ EOF
 done
 cat >> docker-compose.yaml << EOF
   results-dispatcher-1-data:
+    driver: local
+  # Proxy volume
+  proxy-1-data:
     driver: local
   # Join orchestrator volumes
   in-memory-join-orchestrator-data:
