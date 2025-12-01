@@ -109,7 +109,7 @@ func (fm *FileManager) writePartitionWithFaultTolerance(partition int, lines []s
 	if isFirstChunk {
 		// First chunk after restart - check for duplicates/incomplete writes
 		filePath := fm.partitionManager.GetPartitionFilePath(opts, partition)
-		linesCount := len(lines)
+		linesCount := len(lines) + 1 // TODO CHECK
 		lastLines, err := fm.partitionManager.GetLastLines(filePath, linesCount)
 		if err != nil {
 			return fmt.Errorf("failed to get last lines for partition %d: %w", partition, err)
