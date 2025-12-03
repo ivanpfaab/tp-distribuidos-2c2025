@@ -18,6 +18,7 @@ const (
 	ResourceTypePartitionManager
 	ResourceTypeDictionaryManager
 	ResourceTypeCompletionTracker
+	ResourceTypeCompletionCleaner
 	ResourceTypeDirectory
 )
 

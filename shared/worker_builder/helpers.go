@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -23,6 +24,7 @@ type BuildResult struct {
 	PartitionManager   interface{} // *partitionmanager.PartitionManager
 	DictionaryConfig   *DictionaryManagerConfig
 	CompletionTrackers map[string]interface{} // *shared.CompletionTracker
+	CompletionCleaner  *completioncleaner.CompletionCleaner
 	ResourceTracker    *ResourceTracker
 }
 
@@ -121,6 +123,13 @@ func (wb *WorkerBuilder) Build() (*BuildResult, error) {
 		// For now, store all trackers and let workers access by type assertion
 		// Workers can use GetCompletionTracker() method instead
 		result.CompletionTrackers["completion-tracker"] = resource
+	}
+
+	// Extract CompletionCleaner
+	if cleaner := tracker.Get(ResourceTypeCompletionCleaner, "completion-cleaner"); cleaner != nil {
+		if cc, ok := cleaner.(*completioncleaner.CompletionCleaner); ok {
+			result.CompletionCleaner = cc
+		}
 	}
 
 	// Clear the resource tracker (resources are now owned by the worker)
