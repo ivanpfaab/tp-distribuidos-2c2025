@@ -2,11 +2,14 @@ package filter
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
 // FilterLogic defines the signature for filter logic that processes a chunk
@@ -23,7 +26,7 @@ type Config struct {
 	WorkerName       string
 	InputQueue       string
 	OutputProducers  map[string]*workerqueue.QueueMiddleware // Key: producer name (e.g., "timeFilter", "reply")
-	RoutingRules     []RoutingRule                          // Rules for routing based on query type
+	RoutingRules     []RoutingRule                           // Rules for routing based on query type
 	FilterLogic      FilterLogic
 	StateFilePath    string
 	ConnectionConfig *middleware.ConnectionConfig
@@ -31,9 +34,10 @@ type Config struct {
 
 // BaseFilterWorker is a generic filter worker that can be configured for different filter types
 type BaseFilterWorker struct {
-	config         *Config
-	consumer       *workerqueue.QueueConsumer
-	messageManager *messagemanager.MessageManager
+	config            *Config
+	consumer          *workerqueue.QueueConsumer
+	messageManager    *messagemanager.MessageManager
+	completionCleaner *completioncleaner.CompletionCleaner
 }
 
 // NewBaseFilterWorker creates a new base filter worker with the given configuration
@@ -84,10 +88,51 @@ func NewBaseFilterWorker(config *Config) (*BaseFilterWorker, error) {
 		fmt.Printf("%s: Loaded %d processed IDs\n", config.WorkerName, count)
 	}
 
+	// Create CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		consumer.Close()
+		for _, p := range config.OutputProducers {
+			if p != nil {
+				p.Close()
+			}
+		}
+		return nil, fmt.Errorf("WORKER_ID environment variable is required")
+	}
+	completionCleaner, err := completioncleaner.NewCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{messageManager},
+		config.ConnectionConfig,
+	)
+	if err != nil {
+		consumer.Close()
+		for _, p := range config.OutputProducers {
+			if p != nil {
+				p.Close()
+			}
+		}
+		return nil, fmt.Errorf("failed to create completion cleaner for %s: %w", config.WorkerName, err)
+	}
+
+	// Start CompletionCleaner automatically
+	if err := completionCleaner.Start(); err != 0 {
+		completionCleaner.Close()
+		consumer.Close()
+		for _, p := range config.OutputProducers {
+			if p != nil {
+				p.Close()
+			}
+		}
+		return nil, fmt.Errorf("failed to start completion cleaner for %s: %v", config.WorkerName, err)
+	}
+
 	return &BaseFilterWorker{
-		config:         config,
-		consumer:       consumer,
-		messageManager: messageManager,
+		config:            config,
+		consumer:          consumer,
+		messageManager:    messageManager,
+		completionCleaner: completionCleaner,
 	}, nil
 }
 
@@ -105,6 +150,9 @@ func (bfw *BaseFilterWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (bfw *BaseFilterWorker) Close() {
+	if bfw.completionCleaner != nil {
+		bfw.completionCleaner.Close()
+	}
 	if bfw.messageManager != nil {
 		bfw.messageManager.Close()
 	}
@@ -218,4 +266,3 @@ func (bfw *BaseFilterWorker) routeMessage(chunkMsg *chunk.Chunk, chunkID string)
 
 	return 0
 }
-

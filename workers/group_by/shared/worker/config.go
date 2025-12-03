@@ -45,15 +45,15 @@ func LoadConfig() (*WorkerConfig, error) {
 		return nil, fmt.Errorf("QUERY_TYPE must be 2, 3, or 4")
 	}
 
-	// Load worker ID (1-based from environment)
-	workerIDStr := os.Getenv("WORKER_ID")
+	// Load worker ID (1-based from environment, numeric ID for worker logic)
+	workerIDStr := os.Getenv("WORKER_NUMERIC_ID")
 	if workerIDStr == "" {
-		return nil, fmt.Errorf("WORKER_ID environment variable is required")
+		return nil, fmt.Errorf("WORKER_NUMERIC_ID environment variable is required")
 	}
 
 	workerID, err := strconv.Atoi(workerIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid WORKER_ID: %v", err)
+		return nil, fmt.Errorf("invalid WORKER_NUMERIC_ID: %v", err)
 	}
 
 	// Determine number of workers based on query type

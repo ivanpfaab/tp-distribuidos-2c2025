@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -77,8 +79,17 @@ func NewInMemoryJoinOrchestrator(config *middleware.ConnectionConfig) (*InMemory
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
-	// Generate worker ID
-	workerID := "in-memory-join-orchestrator"
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
 
 	// Create state manager first (completion tracker will be set after creation)
 	stateManager := NewStateManager(metadataDir, nil)

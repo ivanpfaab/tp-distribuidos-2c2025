@@ -54,8 +54,8 @@ func NewClientRequestHandler(config *middleware.ConnectionConfig) *ClientRequest
 		return nil
 	}
 
-	// Declare the fanout exchange (durable, not auto-delete)
-	if err := completionExchange.DeclareExchange("fanout", true, false, false, false); err != 0 {
+	// Declare the fanout exchange (not durable, not auto-delete)
+	if err := completionExchange.DeclareExchange("fanout", false, false, false, false); err != 0 {
 		log.Printf("Client Request Handler: Failed to declare completion exchange: %v", err)
 		completionExchange.Close()
 		return nil

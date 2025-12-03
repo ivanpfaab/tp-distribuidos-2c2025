@@ -180,6 +180,12 @@ func (wb *WorkerBuilder) WithCompletionCleaner(
 		return wb
 	}
 
+	// Start the CompletionCleaner automatically
+	if err := cleaner.Start(); err != 0 {
+		wb.addError(fmt.Errorf("failed to start CompletionCleaner: %v", err))
+		return wb
+	}
+
 	// Register for cleanup
 	wb.resourceTracker.Register(
 		ResourceTypeCompletionCleaner,

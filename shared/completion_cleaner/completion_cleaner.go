@@ -22,7 +22,7 @@ type CompletionCleaner struct {
 }
 
 // NewCompletionCleaner creates a new CompletionCleaner instance
-// exchangeName: Name of the fanout exchange (declared by client request handler)
+// exchangeName: Name of the fanout exchange (will be declared if it doesn't exist)
 // workerID: Unique identifier for this worker (used to generate queue name: {workerID}-cleanup)
 // cleanupHandlers: List of resources that implement CleanupHandler interface
 // config: RabbitMQ connection configuration
@@ -41,6 +41,19 @@ func NewCompletionCleaner(
 	if config == nil {
 		return nil, fmt.Errorf("config is required")
 	}
+
+	// Declare the exchange to ensure it exists (idempotent - safe to call multiple times)
+	// This matches the declaration in client_request_handler: fanout, non-durable, non-auto-delete
+	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(exchangeName, []string{}, config)
+	if exchangeDeclarer == nil {
+		return nil, fmt.Errorf("failed to create exchange declarer for '%s'", exchangeName)
+	}
+	// Declare as fanout, non-durable, non-auto-delete (matching client_request_handler)
+	if err := exchangeDeclarer.DeclareExchange("fanout", false, false, false, false); err != 0 {
+		exchangeDeclarer.Close()
+		return nil, fmt.Errorf("failed to declare exchange '%s': %v", exchangeName, err)
+	}
+	exchangeDeclarer.Close()
 
 	// Create exchange consumer (fanout exchange, no routing keys needed)
 	consumer := exchange.NewExchangeConsumer(exchangeName, []string{}, config)

@@ -9,6 +9,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -120,6 +121,18 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 	if !ok {
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
+
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
 
 	orchestrator.chunkConsumer = chunkConsumer
 	orchestrator.completionProducer = completionProducer

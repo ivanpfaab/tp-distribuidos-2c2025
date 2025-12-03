@@ -10,6 +10,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -91,7 +92,17 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 	}
 
 	// Generate worker ID from reader config
-	workerID := fmt.Sprintf("userid-reader-%d", readerConfig.ReaderID)
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
 
 	// Initialize completion signals persistence (custom logic, not in builder)
 	completionSignals := make(map[string]bool)
