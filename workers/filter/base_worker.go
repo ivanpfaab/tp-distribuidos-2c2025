@@ -150,7 +150,7 @@ func (bfw *BaseFilterWorker) createCallback() func(middleware.ConsumeChannel, ch
 // processMessage processes a single message
 func (bfw *BaseFilterWorker) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if already processed
-	if bfw.messageManager.IsProcessed(chunkMsg.ID) {
+	if bfw.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("%s: Chunk ID %s already processed, skipping\n", bfw.config.WorkerName, chunkMsg.ID)
 		return 0 // Return 0 to ACK (handled by createCallback)
 	}
@@ -211,7 +211,7 @@ func (bfw *BaseFilterWorker) routeMessage(chunkMsg *chunk.Chunk, chunkID string)
 		bfw.config.WorkerName, chunkMsg.ClientID, chunkMsg.ChunkNumber, chunkMsg.QueryType)
 
 	// Mark as processed (must be after successful send)
-	if err := bfw.messageManager.MarkProcessed(chunkID); err != nil {
+	if err := bfw.messageManager.MarkProcessed(chunkMsg.ClientID, chunkID); err != nil {
 		fmt.Printf("%s: Failed to mark chunk as processed: %v\n", bfw.config.WorkerName, err)
 		return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 	}

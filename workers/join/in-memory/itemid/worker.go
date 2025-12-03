@@ -211,7 +211,7 @@ func (w *ItemIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCha
 			}
 
 			// Check if chunk was already processed
-			if w.messageManager.IsProcessed(chunkMsg.ID) {
+			if w.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 				fmt.Printf("ItemID Join Worker: Dictionary chunk %s already processed, skipping\n", chunkMsg.ID)
 				delivery.Ack(false)
 				continue
@@ -224,7 +224,7 @@ func (w *ItemIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCha
 			}
 
 			// Mark chunk as processed after successful processing
-			if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+			if err := w.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 				fmt.Printf("ItemID Join Worker: Failed to mark dictionary chunk as processed: %v\n", err)
 			}
 
@@ -269,7 +269,7 @@ func (w *ItemIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middleware
 	fmt.Printf("ItemID Join Worker: Received chunk message\n")
 
 	// Check if chunk was already processed
-	if w.messageManager.IsProcessed(chunkMsg.ID) {
+	if w.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("ItemID Join Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
 		return 0 // Success - callback will ack
 	}
@@ -281,7 +281,7 @@ func (w *ItemIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middleware
 	}
 
 	// Mark chunk as processed after successful processing
-	if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := w.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("ItemID Join Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}

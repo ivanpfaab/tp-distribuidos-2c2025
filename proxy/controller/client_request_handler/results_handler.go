@@ -54,7 +54,7 @@ func (h *ResultsHandler) HandleCompletionSignal(signal *signals.ClientCompletion
 // HandleChunkData handles chunk data for a client
 func (h *ResultsHandler) HandleChunkData(chunkData *chunk.Chunk) {
 	// Check if chunk was already processed (duplicate detection)
-	if h.messageManager.IsProcessed(chunkData.ID) {
+	if h.messageManager.IsProcessed(chunkData.ClientID, chunkData.ID) {
 		log.Printf("Results Handler: Chunk %s already processed, skipping", chunkData.ID)
 		return
 	}
@@ -77,7 +77,7 @@ func (h *ResultsHandler) HandleChunkData(chunkData *chunk.Chunk) {
 	}
 
 	// Mark chunk as processed after successful send
-	if err := h.messageManager.MarkProcessed(chunkData.ID); err != nil {
+	if err := h.messageManager.MarkProcessed(chunkData.ClientID, chunkData.ID); err != nil {
 		log.Printf("Results Handler: Failed to mark chunk as processed: %v", err)
 	}
 }

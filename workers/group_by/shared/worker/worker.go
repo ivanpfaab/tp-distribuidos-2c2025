@@ -164,7 +164,7 @@ func (w *GroupByWorker) createCallback() func(middleware.ConsumeChannel, chan er
 func (w *GroupByWorker) processMessage(chunkMessage *chunk.Chunk) error {
 
 	// Check if chunk was already processed
-	if w.messageManager.IsProcessed(chunkMessage.ID) {
+	if w.messageManager.IsProcessed(chunkMessage.ClientID, chunkMessage.ID) {
 		testing_utils.LogInfo("GroupBy Worker", "Chunk %s already processed, skipping", chunkMessage.ID)
 		return nil
 	}
@@ -175,7 +175,7 @@ func (w *GroupByWorker) processMessage(chunkMessage *chunk.Chunk) error {
 	}
 
 	// Mark chunk as processed after successful write
-	if err := w.messageManager.MarkProcessed(chunkMessage.ID); err != nil {
+	if err := w.messageManager.MarkProcessed(chunkMessage.ClientID, chunkMessage.ID); err != nil {
 		testing_utils.LogError("GroupBy Worker", "Failed to mark chunk as processed: %v", err)
 		return fmt.Errorf("failed to mark chunk as processed: %w", err)
 	}

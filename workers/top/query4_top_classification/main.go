@@ -263,7 +263,7 @@ func (tw *TopUsersWorker) processMessage(chunkMsg *chunk.Chunk) middleware.Messa
 	msgID := chunkMsg.ID
 
 	// Check for duplicate chunk
-	if tw.messageManager.IsProcessed(msgID) {
+	if tw.messageManager.IsProcessed(clientID, msgID) {
 		log.Printf("Top Users Worker: Chunk %s already processed, skipping", msgID)
 		return 0 // Success - callback will ack
 	}
@@ -281,7 +281,7 @@ func (tw *TopUsersWorker) processMessage(chunkMsg *chunk.Chunk) middleware.Messa
 	}
 
 	// Mark chunk as processed in MessageManager
-	if err := tw.messageManager.MarkProcessed(msgID); err != nil {
+	if err := tw.messageManager.MarkProcessed(clientID, msgID); err != nil {
 		log.Printf("Top Users Worker: Warning - failed to mark chunk as processed: %v", err)
 	}
 

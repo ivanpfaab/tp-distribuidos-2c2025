@@ -141,7 +141,7 @@ func (o *InFileJoinOrchestrator) Start() {
 			}
 
 			// Check for duplicate notification
-			if o.messageManager.IsProcessed(message.ID) {
+			if o.messageManager.IsProcessed(message.ClientID, message.ID) {
 				log.Printf("Notification %s already processed, skipping", message.ID)
 				delivery.Ack(false)
 				continue
@@ -160,7 +160,7 @@ func (o *InFileJoinOrchestrator) Start() {
 			}
 
 			// Mark as processed in MessageManager
-			if err := o.messageManager.MarkProcessed(message.ID); err != nil {
+			if err := o.messageManager.MarkProcessed(message.ClientID, message.ID); err != nil {
 				log.Printf("Warning: failed to mark notification as processed: %v", err)
 			}
 

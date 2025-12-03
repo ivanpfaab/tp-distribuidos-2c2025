@@ -188,13 +188,13 @@ func (imo *InMemoryJoinOrchestrator) processChunkNotification(msg *signals.Chunk
 		msg.ClientID, msg.FileID, msg.MapWorkerID)
 
 	// Check for duplicate notification
-	if imo.messageManager.IsProcessed(msg.ID) {
+	if imo.messageManager.IsProcessed(msg.ClientID, msg.ID) {
 		return 0
 	}
 
 	// Handle ItemID worker notifications immediately (no file tracking needed)
 	if strings.Contains(msg.MapWorkerID, "itemid-join-worker") {
-		if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
+		if err := imo.messageManager.MarkProcessed(msg.ClientID, msg.ID); err != nil {
 			testing.LogError("In-Memory Join Orchestrator", "Failed to mark notification as processed: %v", err)
 			return middleware.MessageMiddlewareMessageError
 		}
@@ -213,7 +213,7 @@ func (imo *InMemoryJoinOrchestrator) processChunkNotification(msg *signals.Chunk
 		testing.LogWarn("In-Memory Join Orchestrator", "Failed to append notification to CSV: %v", err)
 	}
 
-	if err := imo.messageManager.MarkProcessed(msg.ID); err != nil {
+	if err := imo.messageManager.MarkProcessed(msg.ClientID, msg.ID); err != nil {
 		testing.LogWarn("In-Memory Join Orchestrator", "Failed to mark notification as processed: %v", err)
 	}
 

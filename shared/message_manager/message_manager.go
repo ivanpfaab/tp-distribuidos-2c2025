@@ -4,29 +4,57 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
-// MessageManager manages processed message IDs using a persistent file
+// MessageManager manages processed message IDs using per-client persistent files
 type MessageManager struct {
-	filePath     string
-	processedIDs map[string]bool
+	baseDir      string                     // Base directory for client-specific files
+	processedIDs map[string]map[string]bool // clientID -> messageID -> bool
 }
 
 // NewMessageManager creates a new MessageManager instance
+// filePath should be a directory path where per-client files will be stored
+// Files will be named: processed-ids-{clientID}.txt
 func NewMessageManager(filePath string) *MessageManager {
 	return &MessageManager{
-		filePath:     filePath,
-		processedIDs: make(map[string]bool),
+		baseDir:      filePath,
+		processedIDs: make(map[string]map[string]bool),
 	}
 }
 
-// LoadProcessedIDs reads the file and loads all processed IDs into memory
-func (mm *MessageManager) LoadProcessedIDs() error {
-	file, err := os.Open(mm.filePath)
+// getClientFilePath returns the file path for a specific client
+func (mm *MessageManager) getClientFilePath(clientID string) string {
+	// If baseDir ends with .txt, treat it as old format and extract directory
+	// Otherwise, use baseDir as directory
+	dir := mm.baseDir
+	if strings.HasSuffix(mm.baseDir, ".txt") {
+		dir = filepath.Dir(mm.baseDir)
+	}
+
+	// Ensure directory exists
+	os.MkdirAll(dir, 0755)
+
+	return filepath.Join(dir, fmt.Sprintf("processed-ids-%s.txt", clientID))
+}
+
+// loadClientProcessedIDs loads processed IDs for a specific client (lazy loading)
+func (mm *MessageManager) loadClientProcessedIDs(clientID string) error {
+	// Check if already loaded
+	if mm.processedIDs[clientID] != nil {
+		return nil
+	}
+
+	// Initialize map for this client
+	mm.processedIDs[clientID] = make(map[string]bool)
+
+	// Load from file
+	filePath := mm.getClientFilePath(clientID)
+	file, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// File doesn't exist yet (first run), return nil
+			// File doesn't exist yet (first time for this client), return nil
 			return nil
 		}
 		return fmt.Errorf("failed to open file: %w", err)
@@ -37,7 +65,7 @@ func (mm *MessageManager) LoadProcessedIDs() error {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
-			mm.processedIDs[line] = true
+			mm.processedIDs[clientID][line] = true
 		}
 	}
 
@@ -48,18 +76,43 @@ func (mm *MessageManager) LoadProcessedIDs() error {
 	return nil
 }
 
-// IsProcessed checks if an ID has already been processed
-func (mm *MessageManager) IsProcessed(id string) bool {
-	return mm.processedIDs[id]
+// LoadProcessedIDs is kept for backward compatibility but does nothing
+// Per-client files are loaded lazily on first access
+func (mm *MessageManager) LoadProcessedIDs() error {
+	// No-op: files are loaded lazily per client
+	return nil
 }
 
-// MarkProcessed marks an ID as processed and appends it to the file
-func (mm *MessageManager) MarkProcessed(id string) error {
-	// Add to memory
-	mm.processedIDs[id] = true
+// IsProcessed checks if an ID has already been processed for a specific client
+func (mm *MessageManager) IsProcessed(clientID string, id string) bool {
+	// Load client's processed IDs if not already loaded
+	if err := mm.loadClientProcessedIDs(clientID); err != nil {
+		// On error, assume not processed (fail open)
+		return false
+	}
 
-	// Append to file
-	file, err := os.OpenFile(mm.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	clientIDs, exists := mm.processedIDs[clientID]
+	if !exists {
+		return false
+	}
+
+	return clientIDs[id]
+}
+
+// MarkProcessed marks an ID as processed for a specific client and appends it to the client's file
+func (mm *MessageManager) MarkProcessed(clientID string, id string) error {
+	// Load client's processed IDs if not already loaded
+	if err := mm.loadClientProcessedIDs(clientID); err != nil {
+		// Initialize if load failed (new client)
+		mm.processedIDs[clientID] = make(map[string]bool)
+	}
+
+	// Add to memory
+	mm.processedIDs[clientID][id] = true
+
+	// Append to client-specific file
+	filePath := mm.getClientFilePath(clientID)
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file for writing: %w", err)
 	}
@@ -86,13 +139,31 @@ func (mm *MessageManager) MarkProcessed(id string) error {
 	return nil
 }
 
+// CleanClient removes all processed IDs for a specific client (idempotent)
+func (mm *MessageManager) CleanClient(clientID string) error {
+	// Remove from memory
+	delete(mm.processedIDs, clientID)
+
+	// Delete client-specific file (idempotent - no error if file doesn't exist)
+	filePath := mm.getClientFilePath(clientID)
+	err := os.Remove(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete client file: %w", err)
+	}
+
+	return nil
+}
+
 // Close performs cleanup (currently no-op, but kept for future use)
 func (mm *MessageManager) Close() error {
 	return nil
 }
 
-// GetProcessedCount returns the number of processed IDs
+// GetProcessedCount returns the total number of processed IDs across all clients
 func (mm *MessageManager) GetProcessedCount() int {
-	return len(mm.processedIDs)
+	total := 0
+	for _, clientIDs := range mm.processedIDs {
+		total += len(clientIDs)
+	}
+	return total
 }
-

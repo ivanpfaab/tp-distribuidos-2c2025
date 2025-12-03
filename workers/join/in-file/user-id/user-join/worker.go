@@ -226,7 +226,7 @@ func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
 // processTopUsersMessage processes a single top users chunk with NACK/requeue pattern
 func (jw *JoinByUserIdWorker) processTopUsersMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
-	if jw.messageManager.IsProcessed(chunkMsg.ID) {
+	if jw.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("Join by User ID Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
 		return 0
 	}
@@ -264,7 +264,7 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(chunkMsg *chunk.Chunk) midd
 	}
 
 	// Mark chunk as processed after successful processing
-	if err := jw.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := jw.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("Join by User ID Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}

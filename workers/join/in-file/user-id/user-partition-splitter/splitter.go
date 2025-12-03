@@ -128,7 +128,7 @@ func (ups *UserPartitionSplitter) Close() {
 func (ups *UserPartitionSplitter) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 			if err != nil {
 				fmt.Printf("User Partition Splitter: Failed to deserialize chunk: %v\n", err)
@@ -150,7 +150,7 @@ func (ups *UserPartitionSplitter) createCallback() func(middleware.ConsumeChanne
 // processMessage processes a single user chunk
 func (ups *UserPartitionSplitter) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
-	if ups.messageManager.IsProcessed(chunkMsg.ID) {
+	if ups.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("User Partition Splitter: Chunk %s already processed, skipping\n", chunkMsg.ID)
 		return 0
 	}
@@ -171,7 +171,7 @@ func (ups *UserPartitionSplitter) processMessage(chunkMsg *chunk.Chunk) middlewa
 	}
 
 	// Mark chunk as processed after successful distribution
-	if err := ups.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := ups.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("User Partition Splitter: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}

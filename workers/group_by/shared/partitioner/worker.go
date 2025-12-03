@@ -112,7 +112,7 @@ func (w *PartitionerWorker) createCallback() func(middleware.ConsumeChannel, cha
 func (w *PartitionerWorker) processMessage(chunkMessage *chunk.Chunk) error {
 
 	// Check if already processed
-	if w.messageManager.IsProcessed(chunkMessage.ID) {
+	if w.messageManager.IsProcessed(chunkMessage.ClientID, chunkMessage.ID) {
 		testing_utils.LogInfo("Partitioner Worker", "Chunk ID %s already processed, skipping", chunkMessage.ID)
 		return nil
 	}
@@ -123,7 +123,7 @@ func (w *PartitionerWorker) processMessage(chunkMessage *chunk.Chunk) error {
 	}
 
 	// Mark as processed (must be after successful processing)
-	if err := w.messageManager.MarkProcessed(chunkMessage.ID); err != nil {
+	if err := w.messageManager.MarkProcessed(chunkMessage.ClientID, chunkMessage.ID); err != nil {
 		testing_utils.LogError("Partitioner Worker", "Failed to mark chunk as processed: %v", err)
 		return fmt.Errorf("failed to mark chunk as processed: %v", err)
 	}

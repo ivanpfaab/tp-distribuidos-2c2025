@@ -15,7 +15,7 @@ import (
 func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk, queryType int) middleware.MessageMiddlewareError {
 
 	// Check if chunk was already processed (duplicate detection)
-	if rd.messageManager.IsProcessed(chunkData.ID) {
+	if rd.messageManager.IsProcessed(chunkData.ClientID, chunkData.ID) {
 		testing.LogInfo("Results Dispatcher", "Chunk %s already processed, skipping", chunkData.ID)
 		return 0 // Return 0 to ACK (handled by createCallback)
 	}
@@ -45,7 +45,7 @@ func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk, queryT
 	}
 
 	// Mark chunk as processed after successful processing
-	if err := rd.messageManager.MarkProcessed(chunkData.ID); err != nil {
+	if err := rd.messageManager.MarkProcessed(chunkData.ClientID, chunkData.ID); err != nil {
 		testing.LogError("Results Dispatcher", "Failed to mark chunk as processed: %v", err)
 		return middleware.MessageMiddlewareMessageError
 	}

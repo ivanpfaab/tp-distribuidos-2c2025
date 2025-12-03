@@ -260,7 +260,7 @@ func (gbo *GroupByOrchestrator) Start() {
 			}
 
 			// Check for duplicate notification
-			if gbo.messageManager.IsProcessed(notification.ID) {
+			if gbo.messageManager.IsProcessed(notification.ClientID, notification.ID) {
 				delivery.Ack(false)
 				continue
 			}
@@ -278,7 +278,7 @@ func (gbo *GroupByOrchestrator) Start() {
 			}
 
 			// Mark as processed in MessageManager
-			if err := gbo.messageManager.MarkProcessed(notification.ID); err != nil {
+			if err := gbo.messageManager.MarkProcessed(notification.ClientID, notification.ID); err != nil {
 				log.Printf("Warning - failed to mark notification as processed: %v", err)
 			}
 

@@ -208,7 +208,7 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 			}
 
 			// Check if chunk was already processed
-			if w.messageManager.IsProcessed(chunkMsg.ID) {
+			if w.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 				fmt.Printf("StoreID Join Worker: Dictionary chunk %s already processed, skipping\n", chunkMsg.ID)
 				delivery.Ack(false)
 				continue
@@ -221,7 +221,7 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 			}
 
 			// Mark chunk as processed after successful processing
-			if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+			if err := w.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 				fmt.Printf("StoreID Join Worker: Failed to mark dictionary chunk as processed: %v\n", err)
 			}
 
@@ -266,7 +266,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middlewar
 	fmt.Printf("StoreID Join Worker: Received chunk message\n")
 
 	// Check if chunk was already processed
-	if w.messageManager.IsProcessed(chunkMsg.ID) {
+	if w.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("StoreID Join Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
 		return 0 // Success - callback will ack
 	}
@@ -278,7 +278,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middlewar
 	}
 
 	// Mark chunk as processed after successful processing
-	if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := w.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
@@ -366,11 +366,11 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 func (w *StoreIdJoinWorker) createCompletionCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
 			if err != nil {
 				fmt.Printf("StoreID Join Worker: Failed to deserialize completion signal: %v\n", err)
-				delivery.Ack(false) 
+				delivery.Ack(false)
 				continue
 			}
 

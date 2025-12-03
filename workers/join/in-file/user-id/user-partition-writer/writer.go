@@ -208,7 +208,7 @@ func (upw *UserPartitionWriter) createCallback() func(middleware.ConsumeChannel,
 
 func (upw *UserPartitionWriter) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
-	if upw.messageManager.IsProcessed(chunkMsg.ID) {
+	if upw.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("User Partition Writer %d: Chunk %s already processed, skipping\n",
 			upw.writerConfig.WriterID, chunkMsg.ID)
 		return 0
@@ -238,7 +238,7 @@ func (upw *UserPartitionWriter) processMessage(chunkMsg *chunk.Chunk) middleware
 	upw.sendChunkToOrchestrator(chunkMsg)
 
 	// Mark chunk as processed after successful write
-	if err := upw.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := upw.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("User Partition Writer %d: Failed to mark chunk as processed: %v\n",
 			upw.writerConfig.WriterID, err)
 		return middleware.MessageMiddlewareMessageError
