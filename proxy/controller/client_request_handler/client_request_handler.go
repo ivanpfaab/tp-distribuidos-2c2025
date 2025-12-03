@@ -113,7 +113,6 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 	dataHandler.Close()
 }
 
-
 // StartClientResultsConsumer starts consuming formatted results from results dispatcher
 func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	if h.clientResultsConsumer == nil {
@@ -142,5 +141,8 @@ func (h *ClientRequestHandler) Close() {
 	log.Printf("Client Request Handler: Closing handler")
 	if h.clientResultsConsumer != nil {
 		h.clientResultsConsumer.Close()
+	}
+	if h.resultsHandler != nil {
+		h.resultsHandler.Close()
 	}
 }

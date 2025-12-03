@@ -4,155 +4,72 @@ import (
 	"fmt"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
-	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
+	filterbase "github.com/tp-distribuidos-2c2025/workers/filter"
 )
 
-// TimeFilterWorker encapsulates the time filter worker state and dependencies
+// TimeFilterWorker wraps the base filter worker with time filter specific configuration
 type TimeFilterWorker struct {
-	consumer             *workerqueue.QueueConsumer
-	amountFilterProducer *workerqueue.QueueMiddleware
-	replyProducer        *workerqueue.QueueMiddleware
-	config               *middleware.ConnectionConfig
-	messageManager       *messagemanager.MessageManager
+	*filterbase.BaseFilterWorker
 }
 
 // NewTimeFilterWorker creates a new TimeFilterWorker instance
 func NewTimeFilterWorker(config *middleware.ConnectionConfig) (*TimeFilterWorker, error) {
-	// Create time filter consumer
-	consumer := workerqueue.NewQueueConsumer(
-		queues.TimeFilterQueue,
-		config,
-	)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create time filter consumer")
+	// Use builder to create queue producers
+	builder := worker_builder.NewWorkerBuilder("Time Filter Worker").
+		WithConfig(config).
+		WithQueueProducer(queues.AmountFilterQueue, true).  // auto-declare
+		WithQueueProducer(queues.ReplyFilterBusQueue, true)
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
 	}
 
-	// Declare the time filter queue using QueueMiddleware
-	timeFilterConsumer := workerqueue.NewMessageMiddlewareQueue(
-		queues.TimeFilterQueue,
-		config,
-	)
-	if timeFilterConsumer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue declarer")
-	}
-	if err := timeFilterConsumer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		timeFilterConsumer.Close()
-		return nil, fmt.Errorf("failed to declare time filter queue: %v", err)
-	}
-	timeFilterConsumer.Close() // Close the declarer as we don't need it anymore
+	// Extract producers from builder
+	amountFilterProducer := builder.GetQueueProducer(queues.AmountFilterQueue)
+	replyProducer := builder.GetQueueProducer(queues.ReplyFilterBusQueue)
 
-	// Create amount filter producer
-	amountFilterProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.AmountFilterQueue,
-		config,
-	)
-	if amountFilterProducer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create amount filter producer")
+	if amountFilterProducer == nil || replyProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get producers from builder"))
 	}
 
-	// Create reply producer
-	replyProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.ReplyFilterBusQueue,
-		config,
-	)
-	if replyProducer == nil {
-		consumer.Close()
-		amountFilterProducer.Close()
-		return nil, fmt.Errorf("failed to create reply producer")
+	// Configure routing rules
+	routingRules := []filterbase.RoutingRule{
+		{
+			QueryTypes: []byte{chunk.QueryType1},
+			Producer:   amountFilterProducer,
+		},
+		{
+			QueryTypes: []byte{chunk.QueryType3},
+			Producer:   replyProducer,
+		},
 	}
 
-	// Declare producer queues
-
-	if err := amountFilterProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		amountFilterProducer.Close()
-		replyProducer.Close()
-		return nil, fmt.Errorf("failed to declare amount filter queue: %v", err)
+	// Create base filter worker configuration
+	filterConfig := &filterbase.Config{
+		WorkerName:       "Time Filter Worker",
+		InputQueue:       queues.TimeFilterQueue,
+		OutputProducers:  map[string]*workerqueue.QueueMiddleware{"amountFilter": amountFilterProducer, "reply": replyProducer},
+		RoutingRules:     routingRules,
+		FilterLogic:      TimeFilterLogic,
+		StateFilePath:    "/app/worker-data/processed-ids.txt",
+		ConnectionConfig: config,
 	}
 
-	if err := replyProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		amountFilterProducer.Close()
-		replyProducer.Close()
-		return nil, fmt.Errorf("failed to declare reply queue: %v", err)
+	// Create base worker (still creates consumer and MessageManager internally)
+	baseWorker, err := filterbase.NewBaseFilterWorker(filterConfig)
+	if err != nil {
+		// Builder will handle cleanup of producers on error
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to create base filter worker: %w", err))
 	}
 
-	// Initialize MessageManager for fault tolerance
-	messageManager := messagemanager.NewMessageManager("/app/worker-data/processed-ids.txt")
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		fmt.Printf("Time Filter Worker: Warning - failed to load processed IDs: %v (starting with empty state)\n", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("Time Filter Worker: Loaded %d processed IDs\n", count)
-	}
-
+	// Note: Producers are now managed by the worker's lifecycle, not the builder
+	// The builder's cleanup is only called on error during initialization
 	return &TimeFilterWorker{
-		consumer:             consumer,
-		amountFilterProducer: amountFilterProducer,
-		replyProducer:        replyProducer,
-		config:               config,
-		messageManager:       messageManager,
+		BaseFilterWorker: baseWorker,
 	}, nil
-}
-
-// Start starts the time filter worker
-func (tfw *TimeFilterWorker) Start() middleware.MessageMiddlewareError {
-	fmt.Println("Time Filter Worker: Starting to listen for messages...")
-	err := tfw.consumer.StartConsuming(tfw.createCallback())
-	if err != 0 {
-		fmt.Printf("Time Filter Worker: ERROR - StartConsuming failed with error: %v\n", err)
-		return err
-	}
-	fmt.Println("Time Filter Worker: Successfully registered as consumer")
-	return 0
-}
-
-// Close closes all connections
-func (tfw *TimeFilterWorker) Close() {
-	if tfw.messageManager != nil {
-		tfw.messageManager.Close()
-	}
-	if tfw.consumer != nil {
-		tfw.consumer.Close()
-	}
-	if tfw.amountFilterProducer != nil {
-		tfw.amountFilterProducer.Close()
-	}
-	if tfw.replyProducer != nil {
-		tfw.replyProducer.Close()
-	}
-}
-
-// createCallback creates the message processing callback
-func (tfw *TimeFilterWorker) createCallback() func(middleware.ConsumeChannel, chan error) {
-	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
-		fmt.Println("Time Filter Worker: Callback started, waiting for messages...")
-		messageCount := 0
-		for delivery := range *consumeChannel {
-			messageCount++
-			fmt.Printf("Time Filter Worker: Received message #%d\n", messageCount)
-			
-			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
-			if err != nil {
-				fmt.Printf("Time Filter Worker: Failed to deserialize chunk message: %v\n", err)
-				delivery.Nack(false, true) // Reject and requeue
-				continue
-			}
-
-			if err := tfw.processMessage(chunkMsg); err != 0 {
-				fmt.Printf("Time Filter Worker: Failed to process message: %v\n", err)
-				delivery.Nack(false, true) // Reject and requeue
-				continue
-			}
-			delivery.Ack(false)
-		}
-		fmt.Printf("Time Filter Worker: Consume channel closed after processing %d messages\n", messageCount)
-		done <- nil
-	}
 }

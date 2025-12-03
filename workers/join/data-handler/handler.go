@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
 // logWithTimestamp prints a formatted message with timestamp
@@ -28,8 +28,8 @@ type JoinDataHandler struct {
 	storeIdProducer    *exchange.ExchangeMiddleware
 	userIdProducer     *workerqueue.QueueMiddleware
 	config             *middleware.ConnectionConfig
-	itemIdWorkerCount  int       // Number of ItemID worker instances to broadcast to
-	storeIdWorkerCount int       // Number of StoreID worker instances to broadcast to
+	itemIdWorkerCount  int // Number of ItemID worker instances to broadcast to
+	storeIdWorkerCount int // Number of StoreID worker instances to broadcast to
 	messageManager     *messagemanager.MessageManager
 }
 
@@ -56,109 +56,60 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 	logWithTimestamp("Join Data Handler: Initializing with %d ItemID worker instance(s) and %d StoreID worker instance(s)",
 		itemIdWorkerCount, storeIdWorkerCount)
 
-	// Create consumer for fixed join data (consume from queue, not exchange)
-	consumer := workerqueue.NewQueueConsumer(
-		FixedJoinDataQueue,
-		config,
+	// Use builder to create all resources
+	builder := worker_builder.NewWorkerBuilder("Join Data Handler").
+		WithConfig(config).
+		// Queue consumer
+		WithQueueConsumer(FixedJoinDataQueue, true).
+		// Exchange producers (direct type for broadcasting)
+		WithExchangeProducer(JoinItemIdDictionaryExchange, []string{JoinItemIdDictionaryRoutingKey}, true,
+			worker_builder.ExchangeDeclarationOptions{
+				Type:       "direct",
+				Durable:    false,
+				AutoDelete: false,
+				Internal:   false,
+				NoWait:     false,
+			}).
+		WithExchangeProducer(JoinStoreIdDictionaryExchange, []string{JoinStoreIdDictionaryRoutingKey}, true,
+			worker_builder.ExchangeDeclarationOptions{
+				Type:       "direct",
+				Durable:    false,
+				AutoDelete: false,
+				Internal:   false,
+				NoWait:     false,
+			}).
+		// Queue producer
+		WithQueueProducer(JoinUserIdDictionaryQueue, true).
+		// State management
+		WithStandardStateDirectory("/app/worker-data").
+		WithMessageManager("/app/worker-data/processed-ids.txt")
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
+	}
+
+	// Extract resources from builder
+	consumer := builder.GetQueueConsumer(FixedJoinDataQueue)
+	itemIdProducer := builder.GetExchangeProducer(JoinItemIdDictionaryExchange)
+	storeIdProducer := builder.GetExchangeProducer(JoinStoreIdDictionaryExchange)
+	userIdProducer := builder.GetQueueProducer(JoinUserIdDictionaryQueue)
+
+	if consumer == nil || itemIdProducer == nil || storeIdProducer == nil || userIdProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
+	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
 	)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create fixed join data consumer")
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
 	}
-
-	// Declare the queue before consuming
-	queueDeclarer := workerqueue.NewMessageMiddlewareQueue(FixedJoinDataQueue, config)
-	if queueDeclarer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create queue declarer")
-	}
-
-	// Declare the queue
-	if err := queueDeclarer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		queueDeclarer.Close()
-		return nil, fmt.Errorf("failed to declare fixed join data queue: %v", err)
-	}
-	queueDeclarer.Close() // Close the declarer as we don't need it anymore
-
-	// Create producers for dictionaries
-	// ItemID uses exchange for broadcasting to all workers
-	itemIdProducer := exchange.NewMessageMiddlewareExchange(
-		JoinItemIdDictionaryExchange,
-		[]string{JoinItemIdDictionaryRoutingKey},
-		config,
-	)
-	if itemIdProducer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create item ID dictionary producer")
-	}
-
-	// StoreID uses exchange for broadcasting to all workers
-	storeIdProducer := exchange.NewMessageMiddlewareExchange(
-		JoinStoreIdDictionaryExchange,
-		[]string{JoinStoreIdDictionaryRoutingKey},
-		config,
-	)
-	if storeIdProducer == nil {
-		consumer.Close()
-		itemIdProducer.Close()
-		return nil, fmt.Errorf("failed to create store ID dictionary producer")
-	}
-
-	userIdProducer := workerqueue.NewMessageMiddlewareQueue(
-		JoinUserIdDictionaryQueue,
-		config,
-	)
-	if userIdProducer == nil {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		return nil, fmt.Errorf("failed to create user ID dictionary producer")
-	}
-
-	// Declare exchanges and queues
-	// ItemID: Declare exchange as direct (durable)
-	if err := itemIdProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		userIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare item ID dictionary exchange: %v", err)
-	}
-
-	// StoreID: Declare exchange as direct (durable)
-	if err := storeIdProducer.DeclareExchange("direct", false, false, false, false); err != 0 {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		userIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare store ID dictionary exchange: %v", err)
-	}
-
-	if err := userIdProducer.DeclareQueue(false, false, false, false); err != 0 {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		userIdProducer.Close()
-		return nil, fmt.Errorf("failed to declare user ID dictionary queue: %v", err)
-	}
-
-	// Initialize MessageManager for fault tolerance
-	stateDir := "/app/worker-data"
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		consumer.Close()
-		itemIdProducer.Close()
-		storeIdProducer.Close()
-		userIdProducer.Close()
-		return nil, fmt.Errorf("failed to create state directory: %w", err)
-	}
-
-	stateFilePath := filepath.Join(stateDir, "processed-ids.txt")
-	messageManager := messagemanager.NewMessageManager(stateFilePath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		logWithTimestamp("Join Data Handler: Warning - failed to load processed chunks: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		logWithTimestamp("Join Data Handler: Loaded %d processed chunks", count)
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
 	return &JoinDataHandler{
@@ -169,7 +120,7 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		config:             config,
 		itemIdWorkerCount:  itemIdWorkerCount,
 		storeIdWorkerCount: storeIdWorkerCount,
-		messageManager:     messageManager,
+		messageManager:     mm,
 	}, nil
 }
 

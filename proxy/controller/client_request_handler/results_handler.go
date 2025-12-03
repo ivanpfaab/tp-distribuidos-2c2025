@@ -2,22 +2,43 @@ package client_request_handler
 
 import (
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/proxy/network"
+	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 )
 
 // ResultsHandler handles results from the results dispatcher
 type ResultsHandler struct {
 	connectionManager *network.ConnectionManager
+	messageManager    *messagemanager.MessageManager
 }
 
 // NewResultsHandler creates a new results handler
 func NewResultsHandler(connectionManager *network.ConnectionManager) *ResultsHandler {
+	// Ensure worker data directory exists
+	stateDir := "/app/worker-data"
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		log.Printf("Results Handler: Warning - failed to create state directory: %v", err)
+	}
+
+	// Initialize MessageManager for duplicate detection
+	processedChunksPath := filepath.Join(stateDir, "processed-results.txt")
+	messageManager := messagemanager.NewMessageManager(processedChunksPath)
+	if err := messageManager.LoadProcessedIDs(); err != nil {
+		log.Printf("Results Handler: Warning - failed to load processed results: %v (starting with empty state)", err)
+	} else {
+		count := messageManager.GetProcessedCount()
+		log.Printf("Results Handler: Loaded %d processed result chunks", count)
+	}
+
 	return &ResultsHandler{
 		connectionManager: connectionManager,
+		messageManager:    messageManager,
 	}
 }
 
@@ -32,6 +53,12 @@ func (h *ResultsHandler) HandleCompletionSignal(signal *signals.ClientCompletion
 
 // HandleChunkData handles chunk data for a client
 func (h *ResultsHandler) HandleChunkData(chunkData *chunk.Chunk) {
+	// Check if chunk was already processed (duplicate detection)
+	if h.messageManager.IsProcessed(chunkData.ID) {
+		log.Printf("Results Handler: Chunk %s already processed, skipping", chunkData.ID)
+		return
+	}
+
 	// Get connection for this client
 	conn, exists := h.connectionManager.Get(chunkData.ClientID)
 
@@ -46,6 +73,12 @@ func (h *ResultsHandler) HandleChunkData(chunkData *chunk.Chunk) {
 		log.Printf("Results Handler: Failed to send data to client %s: %v", chunkData.ClientID, err)
 		// Remove the connection if it's no longer valid
 		h.connectionManager.RemoveByID(chunkData.ClientID)
+		return // Don't mark as processed if send failed
+	}
+
+	// Mark chunk as processed after successful send
+	if err := h.messageManager.MarkProcessed(chunkData.ID); err != nil {
+		log.Printf("Results Handler: Failed to mark chunk as processed: %v", err)
 	}
 }
 
@@ -69,3 +102,9 @@ func (h *ResultsHandler) ProcessMessage(messageData []byte) {
 	}
 }
 
+// Close performs cleanup for the results handler
+func (h *ResultsHandler) Close() {
+	if h.messageManager != nil {
+		h.messageManager.Close()
+	}
+}

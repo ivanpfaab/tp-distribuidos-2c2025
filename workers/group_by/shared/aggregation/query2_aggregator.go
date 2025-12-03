@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tp-distribuidos-2c2025/shared/utils"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/grouping"
-	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
 
 // Query2AggregatedData represents aggregated data for Query 2
@@ -16,7 +16,7 @@ type Query2AggregatedData = grouping.Query2AggregatedData
 // Query2Aggregator aggregates Query 2 partition files
 type Query2Aggregator struct {
 	grouper *grouping.Query2Grouper
-	reader  *storage.CSVReader
+	handler *utils.CSVHandler
 }
 
 // NewQuery2Aggregator creates a new Query 2 aggregator
@@ -25,7 +25,7 @@ func NewQuery2Aggregator() (*Query2Aggregator, error) {
 
 	return &Query2Aggregator{
 		grouper: grouper,
-		reader:  storage.NewCSVReader(),
+		handler: utils.NewCSVHandler(""), // baseDir not needed for ReadFileStreaming
 	}, nil
 }
 
@@ -41,7 +41,7 @@ func (a *Query2Aggregator) InitializeDataMap() map[string]interface{} {
 
 // AggregatePartitionFile aggregates records from a Query 2 partition file
 func (a *Query2Aggregator) AggregatePartitionFile(filePath string, aggregatedData map[string]interface{}) error {
-	return a.reader.ReadFileStreaming(filePath, func(record []string) error {
+	return a.handler.ReadFileStreaming(filePath, func(record []string) error {
 		if len(record) < a.grouper.GetMinFieldCount() {
 			log.Printf("Skipping malformed record in %s: %v", filePath, record)
 			return nil // Continue processing
@@ -75,4 +75,3 @@ func (a *Query2Aggregator) AggregatePartitionFile(filePath string, aggregatedDat
 		return nil
 	})
 }
-

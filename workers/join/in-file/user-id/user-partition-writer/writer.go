@@ -19,6 +19,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
 // UserPartitionWriter writes users to partition files
@@ -39,96 +40,79 @@ type UserPartitionWriter struct {
 
 // NewUserPartitionWriter creates a new writer instance
 func NewUserPartitionWriter(connConfig *middleware.ConnectionConfig, writerConfig *Config) (*UserPartitionWriter, error) {
-	// Create consumer for this writer's queue
+	// Get dynamic queue name
 	queueName := GetWriterQueueName(writerConfig.WriterID)
-	consumer := workerqueue.NewQueueConsumer(queueName, connConfig)
-	if consumer == nil {
-		return nil, fmt.Errorf("failed to create consumer for queue %s", queueName)
+
+	// Use builder to create all resources
+	stateDir := filepath.Join(SharedDataDir, "state")
+	stateFilePath := filepath.Join(stateDir, "processed-chunks.txt")
+
+	builder := worker_builder.NewWorkerBuilder(fmt.Sprintf("User Partition Writer %d", writerConfig.WriterID)).
+		WithConfig(connConfig).
+		// Queue consumer (dynamic queue name)
+		WithQueueConsumer(queueName, true).
+		// Exchange consumer for cleanup signals
+		WithExchangeConsumer("userid-cleanup-exchange", []string{fmt.Sprintf("userid-cleanup-writer-%d", writerConfig.WriterID)}, false).
+		// Queue producers
+		WithQueueProducer(queueName, true). // Self-requeuing producer (same queue)
+		WithQueueProducer(queues.UserPartitionCompletionQueue, true).
+		// State management
+		WithDirectory(SharedDataDir, 0755). // Will chmod to 0777 after
+		WithDirectory(stateDir, 0755).      // Will chmod to 0777 after
+		WithMessageManager(stateFilePath).
+		// PartitionManager
+		WithPartitionManager(worker_builder.PartitionManagerConfig{
+			PartitionsDir:           SharedDataDir,
+			NumPartitions:           NumPartitions,
+			RecoverIncompleteWrites: true,
+		})
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
 	}
 
-	// Ensure shared data directory exists with 0777 permissions
-	// This allows both writer and reader containers to create/delete files
-	if err := os.MkdirAll(SharedDataDir, 0777); err != nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create shared data directory: %w", err)
-	}
-	// Ensure directory has correct permissions (in case it already existed)
+	// Set special permissions for shared directory (allows writer and reader to access)
 	if err := os.Chmod(SharedDataDir, 0777); err != nil {
-		// Log but don't fail - this is best effort
 		fmt.Printf("User Partition Writer %d: Warning - failed to set directory permissions on %s: %v\n",
 			writerConfig.WriterID, SharedDataDir, err)
 	}
-
-	// Ensure state directory exists
-	stateDir := filepath.Join(SharedDataDir, "state")
-	if err := os.MkdirAll(stateDir, 0777); err != nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create state directory: %w", err)
-	}
-
-	// Initialize MessageManager for chunk deduplication
-	stateFilePath := filepath.Join(stateDir, "processed-chunks.txt")
-	messageManager := messagemanager.NewMessageManager(stateFilePath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		fmt.Printf("User Partition Writer %d: Warning - failed to load processed chunks: %v (starting with empty state)\n",
+	if err := os.Chmod(stateDir, 0777); err != nil {
+		fmt.Printf("User Partition Writer %d: Warning - failed to set state directory permissions: %v\n",
 			writerConfig.WriterID, err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("User Partition Writer %d: Loaded %d processed chunks\n", writerConfig.WriterID, count)
 	}
 
-	// Initialize PartitionManager for fault-tolerant partition writing
-	partitionManager, err := partitionmanager.NewPartitionManager(SharedDataDir, NumPartitions)
-	if err != nil {
-		consumer.Close()
-		messageManager.Close()
-		return nil, fmt.Errorf("failed to create partition manager: %w", err)
+	// Extract resources from builder
+	consumer := builder.GetQueueConsumer(queueName)
+	cleanupConsumer := builder.GetExchangeConsumer("userid-cleanup-exchange")
+	queueProducer := builder.GetQueueProducer(queueName)
+	completionProducer := builder.GetQueueProducer(queues.UserPartitionCompletionQueue)
+
+	if consumer == nil || cleanupConsumer == nil || queueProducer == nil || completionProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
 	}
+
+	// Extract MessageManager from builder
+	messageManager := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
+	}
+	mm, ok := messageManager.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
+	}
+
+	// Extract PartitionManager from builder
+	partitionManager := builder.GetPartitionManager()
+	if partitionManager == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get partition manager from builder"))
+	}
+
 	fmt.Printf("User Partition Writer %d: PartitionManager initialized with %d partitions\n",
 		writerConfig.WriterID, NumPartitions)
-
-	// Recover incomplete writes on startup
-	fixedCount, err := partitionManager.DeleteIncompleteLines()
-	if err != nil {
-		consumer.Close()
-		messageManager.Close()
-		return nil, fmt.Errorf("failed to recover incomplete writes: %w", err)
-	}
-	if fixedCount > 0 {
-		fmt.Printf("User Partition Writer %d: Fixed %d incomplete last lines on startup\n",
-			writerConfig.WriterID, fixedCount)
-	}
-
-	// Create cleanup consumer for userid cleanup signals
-	cleanupConsumer := exchange.NewExchangeConsumer(
-		"userid-cleanup-exchange",
-		[]string{fmt.Sprintf("userid-cleanup-writer-%d", writerConfig.WriterID)}, // Writer-specific routing key
-		connConfig,
-	)
-	if cleanupConsumer == nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create cleanup consumer")
-	}
-
-	// Create queue producer for self-requeuing cleanup messages
-	queueProducer := workerqueue.NewMessageMiddlewareQueue(queueName, connConfig)
-	if queueProducer == nil {
-		consumer.Close()
-		cleanupConsumer.Close()
-		return nil, fmt.Errorf("failed to create queue producer for queue %s", queueName)
-	}
-
-	// Create completion producer for notifying orchestrator
-	completionProducer := workerqueue.NewMessageMiddlewareQueue(
-		queues.UserPartitionCompletionQueue,
-		connConfig,
-	)
-	if completionProducer == nil {
-		consumer.Close()
-		cleanupConsumer.Close()
-		queueProducer.Close()
-		return nil, fmt.Errorf("failed to create completion producer")
-	}
 
 	return &UserPartitionWriter{
 		consumer:            consumer,
@@ -139,7 +123,7 @@ func NewUserPartitionWriter(connConfig *middleware.ConnectionConfig, writerConfi
 		writerConfig:        writerConfig,
 		partitionsWritten:   make(map[int]int),
 		stoppedClients:      make(map[string]bool),
-		messageManager:      messageManager,
+		messageManager:      mm,
 		partitionManager:    partitionManager,
 		firstChunkProcessed: false,
 	}, nil

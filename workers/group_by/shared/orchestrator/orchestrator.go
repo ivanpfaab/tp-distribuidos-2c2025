@@ -14,6 +14,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
@@ -71,10 +72,58 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 
 	// Initialize StateManager
 	stateManager := NewStateManager(metadataDir, orchestrator.completionTracker)
-	orchestrator.messageManager = messageManager
 	orchestrator.stateManager = stateManager
 
-	orchestrator.initializeQueues()
+	// Use builder to create all resources
+	exchangeName := queues.GetOrchestratorChunksExchangeName(config.QueryType)
+	if exchangeName == "" {
+		return nil, fmt.Errorf("no orchestrator chunks exchange found for query type %d", config.QueryType)
+	}
+
+	completionQueueName := getCompletionQueueName(config.QueryType)
+
+	builder := worker_builder.NewWorkerBuilder(fmt.Sprintf("Group By Orchestrator (Query %d, Worker %d)", config.QueryType, config.WorkerID)).
+		WithConfig(config.RabbitMQConfig).
+		// Exchange consumer (fanout exchange for chunk notifications)
+		WithExchangeConsumer(exchangeName, []string{}, true, worker_builder.ExchangeDeclarationOptions{
+			Type: "fanout",
+		}).
+		// Queue producer (for completion chunks)
+		WithQueueProducer(completionQueueName, true).
+		// State management
+		WithDirectory(stateDir, 0755).
+		WithDirectory(metadataDir, 0755).
+		WithMessageManager(processedNotificationsPath)
+
+	// Validate builder
+	if err := builder.Validate(); err != nil {
+		return nil, builder.CleanupOnError(err)
+	}
+
+	// Extract resources from builder
+	chunkConsumer := builder.GetExchangeConsumer(exchangeName)
+	completionProducer := builder.GetQueueProducer(completionQueueName)
+
+	if chunkConsumer == nil || completionProducer == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get resources from builder"))
+	}
+
+	// Extract MessageManager from builder
+	messageManagerResource := builder.GetResourceTracker().Get(
+		worker_builder.ResourceTypeMessageManager,
+		"message-manager",
+	)
+	if messageManagerResource == nil {
+		return nil, builder.CleanupOnError(fmt.Errorf("failed to get message manager from builder"))
+	}
+	mm, ok := messageManagerResource.(*messagemanager.MessageManager)
+	if !ok {
+		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
+	}
+
+	orchestrator.chunkConsumer = chunkConsumer
+	orchestrator.completionProducer = completionProducer
+	orchestrator.messageManager = mm
 
 	// Rebuild state from CSV metadata on startup
 	log.Println("Group By Orchestrator: Rebuilding state from metadata...")
@@ -84,47 +133,12 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 		log.Println("Group By Orchestrator: State rebuilt successfully")
 	}
 
-	return orchestrator, nil
-}
-
-// initializeQueues sets up all necessary queues and exchanges
-func (gbo *GroupByOrchestrator) initializeQueues() {
-	// Create consumer for chunk notifications from map workers (fanout exchange)
-	exchangeName := queues.GetOrchestratorChunksExchangeName(gbo.config.QueryType)
-	if exchangeName == "" {
-		log.Fatalf("No orchestrator chunks exchange found for query type %d", gbo.config.QueryType)
-	}
-
-	gbo.chunkConsumer = exchange.NewExchangeConsumer(exchangeName, []string{}, gbo.config.RabbitMQConfig)
-	if gbo.chunkConsumer == nil {
-		log.Fatalf("Failed to create chunk notification consumer for exchange: %s", exchangeName)
-	}
-
-	// Declare the fanout exchange (workers will also declare it, but we ensure it exists)
-	exchangeDeclarer := exchange.NewMessageMiddlewareExchange(exchangeName, []string{}, gbo.config.RabbitMQConfig)
-	if exchangeDeclarer == nil {
-		gbo.chunkConsumer.Close()
-		log.Fatalf("Failed to create exchange declarer for exchange: %s", exchangeName)
-	}
-	if err := exchangeDeclarer.DeclareExchange("fanout", false, false, false, false); err != 0 {
-		gbo.chunkConsumer.Close()
-		exchangeDeclarer.Close()
-		log.Fatalf("Failed to declare fanout exchange %s: %v", exchangeName, err)
-	}
-	exchangeDeclarer.Close()
-
-	// Create completion chunk producer for next step
-	completionQueueName := getCompletionQueueName(gbo.config.QueryType)
-	gbo.completionProducer = workerqueue.NewMessageMiddlewareQueue(completionQueueName, gbo.config.RabbitMQConfig)
-	if gbo.completionProducer == nil {
-		gbo.chunkConsumer.Close()
-		log.Fatalf("Failed to create completion chunk producer for queue: %s", completionQueueName)
-	}
-
 	log.Printf("Orchestrator initialized for Query %d, Worker %d (expected files will be inferred dynamically)",
-		gbo.config.QueryType, gbo.config.WorkerID)
+		config.QueryType, config.WorkerID)
 	log.Printf("Completion chunks will be sent to queue: %s", completionQueueName)
 	log.Printf("Consuming chunk notifications from fanout exchange: %s", exchangeName)
+
+	return orchestrator, nil
 }
 
 // onClientCompleted is called when all files for a client are completed

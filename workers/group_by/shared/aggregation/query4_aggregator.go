@@ -3,14 +3,14 @@ package aggregation
 import (
 	"log"
 
+	"github.com/tp-distribuidos-2c2025/shared/utils"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/grouping"
-	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
 
 // Query4Aggregator aggregates Query 4 partition files
 type Query4Aggregator struct {
 	grouper *grouping.Query4Grouper
-	reader  *storage.CSVReader
+	handler *utils.CSVHandler
 }
 
 // NewQuery4Aggregator creates a new Query 4 aggregator
@@ -19,7 +19,7 @@ func NewQuery4Aggregator() (*Query4Aggregator, error) {
 
 	return &Query4Aggregator{
 		grouper: grouper,
-		reader:  storage.NewCSVReader(),
+		handler: utils.NewCSVHandler(""), // baseDir not needed for ReadFileStreaming
 	}, nil
 }
 
@@ -35,7 +35,7 @@ func (a *Query4Aggregator) InitializeDataMap() map[string]interface{} {
 
 // AggregatePartitionFile aggregates records from a Query 4 partition file
 func (a *Query4Aggregator) AggregatePartitionFile(filePath string, aggregatedData map[string]interface{}) error {
-	return a.reader.ReadFileStreaming(filePath, func(record []string) error {
+	return a.handler.ReadFileStreaming(filePath, func(record []string) error {
 		if len(record) < a.grouper.GetMinFieldCount() {
 			log.Printf("Skipping malformed record in %s: %v", filePath, record)
 			return nil // Continue processing
@@ -62,4 +62,3 @@ func (a *Query4Aggregator) AggregatePartitionFile(filePath string, aggregatedDat
 		return nil
 	})
 }
-
