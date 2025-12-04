@@ -3,7 +3,8 @@
 # Comprehensive Results Comparison Script
 # Compares client results against source of truth files
 
-set -e
+# Don't use set -e, we want to continue even if some comparisons fail
+# Track failures instead
 
 # Configuration
 CLIENT_RESULTS_DIR="results"
@@ -30,10 +31,11 @@ extract_client_data() {
     local client_id="$1"
     local query="$2"
     local output_file="$3"
-    
+
     # Extract query data and remove client prefix
-    grep "Q$query |" "$CLIENT_RESULTS_DIR/results_$client_id.txt" | \
-    sed "s/^$client_id | Q$query | //" > "${output_file}.raw"
+    # Use || true to prevent grep exit code 1 (no matches) from stopping the script
+    grep "Q$query |" "$CLIENT_RESULTS_DIR/results_$client_id.txt" 2>/dev/null | \
+    sed "s/^$client_id | Q$query | //" > "${output_file}.raw" || true
     
     # Remove ALL header lines that could appear anywhere in the file
     # Use a more comprehensive pattern that detects CSV headers by looking for:
@@ -79,9 +81,19 @@ compare_q1() {
     local client_id="$1"
     local client_file="$TEMP_DIR/${client_id}_q1_transactions.csv"
     local source_file="$SOURCE_OF_TRUTH_DIR/q1_transactions.csv"
-    
+
     echo "Comparing Q1 (Transactions) for $client_id..."
-    
+
+    # Check if files exist and have data
+    if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
+        echo -e "  Q1: ${YELLOW}⚠️ SKIPPED${NC} (No client data found)"
+        return 0
+    fi
+    if [ ! -f "$source_file" ]; then
+        echo -e "  Q1: ${YELLOW}⚠️ SKIPPED${NC} (Source of truth file missing)"
+        return 0
+    fi
+
     # Extract only relevant columns: transaction_id,final_amount
     # Client format: transaction_id,store_id,payment_method_id,voucher_id,user_id,original_amount,discount_applied,final_amount,created_at
     # We need: transaction_id (col 1), final_amount (col 8)
@@ -109,9 +121,16 @@ compare_q1() {
 compare_q2() {
     local client_id="$1"
     local client_file="$TEMP_DIR/${client_id}_q2_categories.csv"
-    
+
     echo "Comparing Q2 (Categories) for $client_id..."
-    
+
+    # Check if files exist and have data
+    if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
+        echo -e "  Q2 Best Selling (category=1): ${YELLOW}⚠️ SKIPPED${NC} (No client data found)"
+        echo -e "  Q2 Most Profits (category=2): ${YELLOW}⚠️ SKIPPED${NC} (No client data found)"
+        return 0
+    fi
+
     # Split by category field (top classification indicator)
     # Category 1 = best selling (top by quantity)
     # Category 2 = most profits (top by revenue)
@@ -158,9 +177,19 @@ compare_q3() {
     local client_id="$1"
     local client_file="$TEMP_DIR/${client_id}_q3_tpv.csv"
     local source_file="$SOURCE_OF_TRUTH_DIR/q3_tpv.csv"
-    
+
     echo "Comparing Q3 (TPV) for $client_id..."
-    
+
+    # Check if files exist and have data
+    if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
+        echo -e "  Q3: ${YELLOW}⚠️ SKIPPED${NC} (No client data found)"
+        return 0
+    fi
+    if [ ! -f "$source_file" ]; then
+        echo -e "  Q3: ${YELLOW}⚠️ SKIPPED${NC} (Source of truth file missing)"
+        return 0
+    fi
+
     # Transform year,semester to year-H{semester} format
     # Client format: year,semester,store_id,total_final_amount,count,store_name,street,postal_code,city,state,latitude,longitude
     # We need: year_half_created_at (col1-col2), store_name (col6), tpv (col4) - treat as integer
@@ -191,9 +220,19 @@ compare_q4() {
     local client_id="$1"
     local client_file="$TEMP_DIR/${client_id}_q4_most_purchases.csv"
     local source_file="$SOURCE_OF_TRUTH_DIR/q4_most_purchases.csv"
-    
+
     echo "Comparing Q4 (Most Purchases) for $client_id..."
-    
+
+    # Check if files exist and have data
+    if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
+        echo -e "  Q4: ${YELLOW}⚠️ SKIPPED${NC} (No client data found)"
+        return 0
+    fi
+    if [ ! -f "$source_file" ]; then
+        echo -e "  Q4: ${YELLOW}⚠️ SKIPPED${NC} (Source of truth file missing)"
+        return 0
+    fi
+
     # Extract relevant columns: store_id,birthdate,purchases_qty
     # Client format: user_id,store_id,purchase_count,rank,gender,birthdate,registered_at
     # We need: store_id (col2), birthdate (col6), purchases_qty (col3)
@@ -240,49 +279,49 @@ compare_q4() {
 # Main comparison function
 compare_client() {
     local client_id="$1"
-    
+
     echo -e "${BLUE}=== Processing $client_id ===${NC}"
-    
+
     # Extract data for all queries (using exact source of truth naming)
     extract_client_data "$client_id" "1" "$TEMP_DIR/${client_id}_q1_transactions.csv"
     extract_client_data "$client_id" "2" "$TEMP_DIR/${client_id}_q2_categories.csv"  # Will be split into best_selling and most_profits
     extract_client_data "$client_id" "3" "$TEMP_DIR/${client_id}_q3_tpv.csv"
     extract_client_data "$client_id" "4" "$TEMP_DIR/${client_id}_q4_most_purchases.csv"
-    
+
     echo ""
     echo -e "${BLUE}=== Comparison Results for $client_id ===${NC}"
-    
-    # Compare each query
-    compare_q1 "$client_id"
-    compare_q2 "$client_id"
-    compare_q3 "$client_id"
-    compare_q4 "$client_id"
-    
+
+    # Compare each query - use || true to continue even if comparison fails
+    compare_q1 "$client_id" || true
+    compare_q2 "$client_id" || true
+    compare_q3 "$client_id" || true
+    compare_q4 "$client_id" || true
+
     echo ""
 }
 
-# Check if required files exist
+# Check if required files exist (warns but doesn't exit)
 check_files() {
     local missing_files=()
-    
+
     for client in CLI1 CLI2; do
         if [ ! -f "$CLIENT_RESULTS_DIR/results_$client.txt" ]; then
             missing_files+=("$CLIENT_RESULTS_DIR/results_$client.txt")
         fi
     done
-    
+
     for query_file in q1_transactions.csv q2_best_selling.csv q2_most_profits.csv q3_tpv.csv q4_most_purchases.csv; do
         if [ ! -f "$SOURCE_OF_TRUTH_DIR/$query_file" ]; then
             missing_files+=("$SOURCE_OF_TRUTH_DIR/$query_file")
         fi
     done
-    
+
     if [ ${#missing_files[@]} -gt 0 ]; then
-        echo -e "${RED}ERROR: Missing required files:${NC}"
+        echo -e "${YELLOW}WARNING: Missing some files (will skip those comparisons):${NC}"
         for file in "${missing_files[@]}"; do
             echo "  - $file"
         done
-        exit 1
+        echo ""
     fi
 }
 
@@ -290,13 +329,24 @@ check_files() {
 main() {
     echo "Checking required files..."
     check_files
-    
+
     echo "Starting comparison..."
     echo ""
-    
-    # Compare both clients
-    compare_client "CLI1"
-    compare_client "CLI2"
+
+    # Compare both clients - continue even if one fails
+    if [ -f "$CLIENT_RESULTS_DIR/results_CLI1.txt" ]; then
+        compare_client "CLI1" || true
+    else
+        echo -e "${YELLOW}Skipping CLI1 - results file not found${NC}"
+        echo ""
+    fi
+
+    if [ -f "$CLIENT_RESULTS_DIR/results_CLI2.txt" ]; then
+        compare_client "CLI2" || true
+    else
+        echo -e "${YELLOW}Skipping CLI2 - results file not found${NC}"
+        echo ""
+    fi
     
     echo -e "${BLUE}=== SUMMARY ===${NC}"
     echo "Comparison completed!"

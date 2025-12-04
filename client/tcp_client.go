@@ -15,6 +15,7 @@ import (
 	"time"
 
 	batchpkg "github.com/tp-distribuidos-2c2025/protocol/batch"
+	"github.com/tp-distribuidos-2c2025/shared/netio"
 )
 
 // TCPClient handles direct connection to the server
@@ -45,8 +46,8 @@ func (c *TCPClient) SendBatchMessage(batchData *batchpkg.Batch) error {
 		return fmt.Errorf("failed to serialize batch message: %w", err)
 	}
 
-	// Send data to server
-	_, err = c.conn.Write(serializedData)
+	// Send data to server (using WriteAll to handle short writes)
+	err = netio.WriteAll(c.conn, serializedData)
 	if err != nil {
 		return fmt.Errorf("failed to send data to server: %w", err)
 	}

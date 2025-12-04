@@ -108,20 +108,10 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
-	// Add CompletionCleaner with MessageManager as cleanup handler
-	// Use WORKER_ID from environment (service name) for cleanup queue name
-	workerID := os.Getenv("WORKER_ID")
-	if workerID == "" {
-		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
-	}
-	builder.WithCompletionCleaner(
-		queues.ClientCompletionCleanupExchange,
-		workerID,
-		[]completioncleaner.CleanupHandler{mm},
-	)
-
 	// Initialize DictionaryManager (worker-specific, created separately)
+	// Must be created before WithCompletionCleaner so it can be registered as cleanup handler
 	dictManager := dictionary.NewManager[*MenuItem]()
+	dictManager.SetDictDir(dictDir) // Set dictDir for cleanup
 	dictConfig := builder.GetDictionaryManagerConfig()
 
 	parseFunc := func(csvData string, clientID string) (map[string]*MenuItem, error) {
@@ -137,6 +127,18 @@ func NewItemIdJoinWorker(config *middleware.ConnectionConfig) (*ItemIdJoinWorker
 			fmt.Printf("ItemID Join Worker: Rebuilt %d dictionaries on startup\n", rebuiltCount)
 		}
 	}
+
+	// Add CompletionCleaner with MessageManager and DictionaryManager as cleanup handlers
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm, dictManager},
+	)
 
 	dictHandler := handler.NewDictionaryHandler(dictManager, parseFunc, dictDir, "ItemID Join Worker")
 	completionHandler := handler.NewCompletionHandler(dictManager, dictDir, "ItemID Join Worker")

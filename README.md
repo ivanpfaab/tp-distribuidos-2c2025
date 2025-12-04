@@ -1,199 +1,212 @@
-# Go Echo Server and Client with Docker
+# Distributed Data Processing System
 
-This project contains a simple echo server and client application written in Go, containerized with Docker for easy deployment and testing.
+A distributed system for processing CSV transaction data through multiple query pipelines using RabbitMQ message queues, Docker containers, and fault-tolerant worker architecture.
+
+## System Overview
+
+This system processes transaction data from CSV files through 4 different query pipelines:
+
+- **Query 1**: Filters transactions by year (2024-2025)
+- **Query 2**: Groups transaction items by year, month, and item_id (best-selling items)
+- **Query 3**: Groups transactions by year, semester, and store_id (total payment volume per store)
+- **Query 4**: Groups transactions by user_id and store_id (most purchases per user-store combination)
+
+### Architecture
+
+- **Proxy**: TCP server that receives batch data from clients and routes it to workers
+- **Workers**: Specialized workers for filtering, joining, grouping, and aggregating data
+- **Query Gateway**: Routes processed data to appropriate query pipelines
+- **Results Dispatcher**: Collects and formats results from all queries, sends to clients
+- **Supervisor**: Monitors worker health and manages fault tolerance (Bully election algorithm)
+- **RabbitMQ**: Message broker for inter-service communication
+- **Clients**: Send CSV data batches to the proxy via TCP
+
+### Key Features
+
+- **Fault Tolerance**: State persistence, automatic worker recovery, supervisor-based health monitoring
+- **Message Deduplication**: Prevents duplicate processing using persistent message tracking
+- **Partitioned Processing**: Data is partitioned across multiple workers for parallel processing
+- **State Recovery**: Workers can recover state after restarts from persisted metadata
+
+## Prerequisites
+
+- Docker and Docker Compose installed
+- Go 1.21+ (for local development)
+- At least 4GB of available RAM (recommended)
+
+## Quick Start
+
+### 1. Start the System
+
+```bash
+make cleanup
+
+make volume-cleanup
+
+# Start all services in proper 
+make docker-compose-up
+```
+
+This will:
+1. Start RabbitMQ and wait for it to be healthy
+2. Start all orchestration services (workers, gateways, supervisors)
+3. Start the proxy
+4. Start clients that will process data from the `data/` directory
+
+### 2. Monitor the System
+
+```bash
+# View all logs
+make docker-compose-logs
+
+# View logs for specific service
+make docker-compose-logs SERVICE=proxy-1
+```
+
+### 3. Monitor Node Status
+
+Use the monitoring script to see real-time status of all nodes:
+
+```bash
+./monitor-nodes.sh
+```
+
+This script displays:
+- Node status (running/stopped)
+- Health status
+- Supervisor leader election
+- Real-time updates
+
+### 4. Stop the System
+
+```bash
+# Stop all services
+make docker-compose-down
+```
+
+## Testing
+
+### Test with Fault Injection
+
+Test the system's fault tolerance with Chaos Monkey:
+
+```bash
+# Start system with Chaos Monkey enabled
+make docker-compose-up-chaos
+
+# Monitor Chaos Monkey and supervisors
+make docker-compose-logs-chaos
+```
+
+Chaos Monkey will randomly kill/pause/stop containers to test recovery mechanisms.
+
+### Compare Results
+
+After processing, compare results with source of truth:
+
+```bash
+./compare_results.sh
+```
+
+This compares the generated results in `results/` with expected results in `results_source_of_truth/`.
+
+## Makefile Commands
+
+### Basic Operations
+
+- `make docker-compose-up` - Start all services in orchestrated order
+- `make docker-compose-up-chaos` - Start with Chaos Monkey for fault injection testing
+- `make docker-compose-down` - Stop all services
+- `make docker-compose-build` - Build all Docker images
+
+### Logging
+
+- `make docker-compose-logs` - Show logs from all services (use `SERVICE=name` for specific service)
+- `make docker-compose-logs-chaos` - Show logs for Chaos Monkey and supervisors
+
+### Testing & Development
+
+- `make docker-rebuild` - Full Docker cleanup and rebuild
+
+### Cleanup
+
+- `make cleanup` - Cleanup services, images, and volumes
+- `make cleanup-excluding-chaos` - Cleanup preserving chaos-monkey image
+- `make volume-cleanup` - Clean up all Docker volumes and system resources
+
+### Configuration
+
+- `./generate-compose.sh` - Interactive script to configure the system by generating a custom `docker-compose.yaml` with:
+  - Custom worker scaling (number of filter workers, join workers, groupby workers, etc.)
+  - Chunk size configuration (rows per chunk)
+  - Gateway and client scaling
+
+### Help
+
+- `make help` - Show all available commands
+
+## Data Directory Structure
+
+The `data/` directory contains CSV files organized by type:
+
+```
+data/
+├── transactions/          # Transaction files (TR*.csv)
+├── transaction_items/     # Transaction item files (TI*.csv)
+├── stores/               # Store reference data (ST*.csv)
+├── menu_items/           # Menu item reference data (MN*.csv)
+├── users/               # User files (US*.csv)
+├── payment_methods/     # Payment method reference data
+└── vouchers/           # Voucher reference data
+```
+
+## Results
+
+Processed results are saved in:
+- `results/results_CLI1.txt` - Results for client 1
+- `results/results_CLI2.txt` - Results for client 2
+
+Expected results (source of truth) are in:
+- `results_source_of_truth/` - Contains expected CSV outputs for each query
+
+## Troubleshooting
+
+### Services won't start
+- Check if RabbitMQ is healthy: `docker compose ps rabbitmq`
+- Check logs: `make docker-compose-logs SERVICE=rabbitmq`
+- Ensure ports are not in use
+
+### Workers not processing
+- Check worker logs: `make docker-compose-logs SERVICE=year-filter-worker-1`
+- Verify RabbitMQ queues are created
+- Check supervisor status: `make docker-compose-logs SERVICE=supervisor-1`
+
+### Results are incorrect
+- Compare with source of truth: `./compare_results.sh`
+- Verify data files are in correct format
+
+### Clean restart
+```bash
+make cleanup
+make volume-cleanup
+make docker-compose-up
+```
 
 ## Project Structure
 
 ```
 tp-distribuidos-2c2025/
-├── proxy/
-│   ├── main.go          # Proxy server implementation
-│   ├── go.mod           # Go module file
-│   ├── Dockerfile       # Proxy container configuration
-│   └── .dockerignore    # Docker ignore file
-├── client/
-│   ├── main.go          # Client implementation
-│   ├── go.mod           # Go module file
-│   ├── Dockerfile       # Client container configuration
-│   └── .dockerignore    # Docker ignore file
-├── docker-compose.yml   # Docker Compose configuration
-└── README.md           # This file
+├── proxy/              # TCP proxy server
+├── client/             # Client applications
+├── workers/           # Processing workers (filter, join, group_by, top)
+├── dispatcher/        # Results dispatcher
+├── query-gateway/     # Query routing gateway
+├── supervisor/        # Fault tolerance supervisor
+├── chaos-monkey/      # Fault injection tool
+├── shared/            # Shared utilities and middleware
+├── protocol/          # Message protocol definitions
+├── data/              # Input CSV data files
+├── results/           # Generated results
+└── tests/             # Test suites
 ```
 
-## Features
-
-- **RabbitMQ-Based Server**: Server that consumes batch messages from RabbitMQ and processes CSV data
-- **CSV Batch Client**: Client that reads CSV files and sends batches via RabbitMQ message queues
-- **Data Processing Pipeline**: Year filter, time filter, amount filter, join workers, and aggregation
-- **Multiple Client Support**: Supports concurrent clients with unique client IDs
-- **Docker Support**: All applications are containerized for easy deployment
-- **Docker Compose**: Orchestrates all services with proper networking and dependencies
-- **Message Queue Architecture**: All inter-service communication via RabbitMQ
-
-## Prerequisites
-
-- Docker and Docker Compose installed on your system
-- Go 1.21+ (for local development)
-
-## Quick Start
-
-### Using Makefile (Recommended)
-
-The project includes a comprehensive Makefile with convenient commands:
-
-1. **Start both services:**
-   ```bash
-   make up
-   # or
-   make start
-   ```
-
-2. **Watch the client process:**
-   - The client will automatically connect to the server
-   - It will read messages from `input.txt` and send them to the server
-   - You'll see both the sent messages and server responses
-   - The client will stop when it reaches the end of the file or encounters "exit"
-
-3. **Stop the services:**
-   ```bash
-   make down
-   # or
-   make stop
-   ```
-
-4. **View available commands:**
-   ```bash
-   make help
-   ```
-
-### Using Docker Compose
-
-1. **Start both services:**
-   ```bash
-   docker-compose up --build
-   ```
-
-2. **Interact with the client:**
-   - The client will automatically connect to the server
-   - Type messages and press Enter to send them
-   - Type `exit` to quit the client
-
-3. **Stop the services:**
-   ```bash
-   docker-compose down
-   ```
-
-### Manual Docker Commands
-
-1. **Build and run the proxy:**
-   ```bash
-   # Build proxy image
-   docker build -t proxy ./proxy
-   
-   # Run proxy container
-   docker run -p 8080:8080 --name proxy proxy
-   ```
-
-2. **Build and run the client (in another terminal):**
-   ```bash
-   # Build client image
-   docker build -t client ./client
-   
-   # Run client container (connect to server)
-   docker run -it --rm --network host client
-   ```
-
-### Local Development
-
-1. **Run the server locally:**
-   ```bash
-   cd server
-   go run main.go
-   ```
-
-2. **Run the client locally (in another terminal):**
-   ```bash
-   cd client
-   # Update server address in main.go to "localhost:8080"
-   go run main.go
-   ```
-
-## Usage
-
-1. Start the echo server (it will listen on port 8080)
-2. The client will automatically connect and read from `input.txt`
-3. Each line in the file will be sent as a message to the server
-4. The server will echo back each message with "Echo: " prefix
-5. The client stops when it reaches the end of the file or encounters "exit"
-
-### Custom Input Files
-
-To use your own input file:
-
-```bash
-# Using docker-compose with custom file
-docker-compose run --rm -v $(pwd)/yourfile.txt:/app/input.txt client ./main /app/input.txt
-
-# Using make with custom file
-make run-client-file FILE=yourfile.txt
-```
-
-## Network Configuration
-
-- **Server Port**: 8080
-- **Protocol**: TCP
-- **Docker Network**: `echo-network` (bridge driver)
-
-## Docker Images
-
-- **server**: Contains the TCP echo server
-- **client**: Contains the interactive client
-
-## Troubleshooting
-
-- **Connection refused**: Make sure the server is running before starting the client
-- **Port already in use**: Change the port mapping in docker-compose.yml if 8080 is occupied
-- **Client can't connect**: Ensure both containers are on the same Docker network
-
-## Makefile Commands
-
-The project includes a comprehensive Makefile with the following commands:
-
-### Basic Commands
-- `make help` - Show all available commands
-- `make docker-compose-up` / `make start` - Start both services with docker-compose
-- `make docker-compose-down` / `make stop` - Stop all services
-- `make docker-compose-logs` - Show logs from all services
-- `make status` - Show container and image status
-
-### Individual Service Commands
-- `make build-server` - Build server Docker image
-- `make build-client` - Build client Docker image
-- `make build-all` - Build both images
-- `make run-server` - Run server container only
-- `make run-client` - Run client container only (interactive)
-- `make logs-server` - Show server logs only
-- `make logs-client` - Show client logs only
-
-### Development Commands
-- `make dev-server` - Run server locally (without Docker)
-- `make dev-client` - Run client locally (without Docker)
-- `make test-connection` - Test server connection with netcat
-
-### Cleanup Commands
-- `make clean` - Remove containers and images
-- `make clean-all` - Remove everything including volumes
-- `make restart` - Restart all services
-- `make rebuild` - Rebuild and recreate services
-
-## Development
-
-To modify the applications:
-
-1. Edit the Go source files in `server/` or `client/`
-2. Rebuild the Docker images: `make rebuild`
-3. Test your changes
-
-## License
-
-This project is for educational purposes.

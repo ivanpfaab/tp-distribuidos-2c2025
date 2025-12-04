@@ -6,6 +6,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/tp-distribuidos-2c2025/shared/netio"
 )
 
 type HealthServer struct {
@@ -70,13 +72,16 @@ func (hs *HealthServer) handleConnection(conn net.Conn) {
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 
 	buf := make([]byte, 4)
-	n, err := conn.Read(buf)
+	err := netio.ReadFull(conn, buf)
 	if err != nil {
 		return
 	}
 
-	if n == 4 && string(buf[:4]) == "PING" {
-		conn.Write([]byte("PONG"))
+	if string(buf) == "PING" {
+		conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		if writeErr := netio.WriteAll(conn, []byte("PONG")); writeErr != nil {
+			log.Printf("[HealthServer] Failed to send PONG: %v", writeErr)
+		}
 	}
 }
 

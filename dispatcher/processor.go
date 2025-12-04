@@ -22,7 +22,8 @@ func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk) middle
 	rd.sendFormattedDataToClient(chunkData)
 
 	// Persist metadata through StatefulWorkerManager
-	// Note: This also calls UpdateState which triggers ProcessChunkNotification on the appropriate tracker
+	// Note: ProcessMessage internally calls UpdateState() which processes chunk notifications
+	// through the CompletionTracker, so we don't need to call processChunkNotification() separately
 	if err := rd.statefulWorkerManager.ProcessMessage(chunkData); err != nil {
 		testing.LogError("Results Dispatcher", "Failed to process message through StatefulWorkerManager: %v", err)
 		return middleware.MessageMiddlewareMessageError

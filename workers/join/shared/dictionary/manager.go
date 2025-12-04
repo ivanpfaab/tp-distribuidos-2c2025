@@ -18,6 +18,8 @@ type Manager[T any] struct {
 	ready map[string]bool
 	// mutex protects concurrent access
 	mutex sync.RWMutex
+	// dictDir is the directory where dictionary files are stored (for cleanup)
+	dictDir string
 }
 
 // NewManager creates a new dictionary manager
@@ -86,13 +88,39 @@ func (m *Manager[T]) SetReady(clientID string) {
 	m.ready[clientID] = true
 }
 
-// CleanupClient removes all data for a client
+// CleanupClient removes all data for a client (in-memory only)
 func (m *Manager[T]) CleanupClient(clientID string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	delete(m.dictionaries, clientID)
 	delete(m.ready, clientID)
+}
+
+// SetDictDir sets the directory where dictionary files are stored
+func (m *Manager[T]) SetDictDir(dictDir string) {
+	m.dictDir = dictDir
+}
+
+// CleanClient removes all data for a client (memory + disk)
+// Implements the CleanupHandler interface for CompletionCleaner
+func (m *Manager[T]) CleanClient(clientID string) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// Clean in-memory data
+	delete(m.dictionaries, clientID)
+	delete(m.ready, clientID)
+
+	// Clean dictionary file from disk if dictDir is set
+	if m.dictDir != "" {
+		filePath := filepath.Join(m.dictDir, fmt.Sprintf("%s.csv", clientID))
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete dictionary file: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // HasClient checks if a client has dictionary data

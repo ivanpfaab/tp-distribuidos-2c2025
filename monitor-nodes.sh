@@ -78,7 +78,45 @@ extract_monitored_workers() {
 }
 
 extract_all_containers() {
-    docker ps --format "{{.Names}}" 2>/dev/null | sort
+    local compose_file="${1:-docker-compose.yaml}"
+
+    # Get all container names from docker-compose.yaml (not just running ones)
+    # This ensures we monitor all nodes even if they're not alive when script starts
+    if [ -f "$compose_file" ]; then
+        # Parse services and their container_name (if set) from docker-compose.yaml
+        # If container_name is set, use it; otherwise use service name
+        awk '
+            /^services:/ { in_services=1; next }
+            in_services && /^[a-zA-Z]/ { in_services=0 }
+            in_services && /^  [a-zA-Z0-9_-]+:/ {
+                # New service found - print previous service if no container_name was found
+                if (current_service != "" && container_name == "") {
+                    print current_service
+                }
+                # Extract new service name
+                current_service = $0
+                sub(/:.*/, "", current_service)
+                sub(/^  /, "", current_service)
+                container_name = ""
+            }
+            in_services && /^    container_name:/ {
+                # Found container_name - extract and print it
+                container_name = $0
+                sub(/.*container_name: */, "", container_name)
+                gsub(/["'\'']/, "", container_name)  # Remove quotes
+                print container_name
+            }
+            END {
+                # Print last service if no container_name was found
+                if (current_service != "" && container_name == "") {
+                    print current_service
+                }
+            }
+        ' "$compose_file" | sort
+    else
+        # Fallback to running containers if compose file not found
+        docker ps --format "{{.Names}}" 2>/dev/null | sort
+    fi
 }
 
 categorize_nodes() {

@@ -5,6 +5,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/tp-distribuidos-2c2025/shared/netio"
 )
 
 // RestartCallback is called when a worker needs to be restarted.
@@ -163,15 +165,15 @@ func (hm *HealthMonitor) probeWorker(address string) bool {
 	defer conn.Close()
 
 	conn.SetWriteDeadline(time.Now().Add(hm.config.ProbeTimeout))
-	_, err = conn.Write([]byte("PING"))
+	err = netio.WriteAll(conn, []byte("PING"))
 	if err != nil {
 		return false
 	}
 
 	conn.SetReadDeadline(time.Now().Add(hm.config.ProbeTimeout))
 	buf := make([]byte, 4)
-	n, err := conn.Read(buf)
-	if err != nil || n != 4 || string(buf[:4]) != "PONG" {
+	err = netio.ReadFull(conn, buf)
+	if err != nil || string(buf) != "PONG" {
 		return false
 	}
 
