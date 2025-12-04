@@ -12,7 +12,7 @@ import (
 func (qg *QueryGateway) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 
 	// Check if already processed
-	if qg.messageManager.IsProcessed(chunkMsg.ID) {
+	if qg.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("Query Gateway: Chunk ID %s already processed, skipping\n", chunkMsg.ID)
 		return 0 // Return 0 to ACK (handled by createCallback)
 	}
@@ -65,7 +65,7 @@ func (qg *QueryGateway) processMessage(chunkMsg *chunk.Chunk) middleware.Message
 
 	// Mark as processed (must be after successful routing)
 	if routeErr == 0 {
-		if err := qg.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+		if err := qg.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 			fmt.Printf("Query Gateway: Failed to mark chunk as processed: %v\n", err)
 			return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 		}

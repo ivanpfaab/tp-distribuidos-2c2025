@@ -132,6 +132,11 @@ const (
 	ItemIdCompletionRoutingKey  = "itemid.completion"
 	StoreIdCompletionExchange   = "storeid-completion-exchange"
 	StoreIdCompletionRoutingKey = "storeid.completion"
+
+	// ============================================================================
+	// Client Completion Cleanup Exchange
+	// ============================================================================
+	ClientCompletionCleanupExchange = "client-completion-cleanup-exchange"
 )
 
 // GetQuery2RoutingKey returns the routing key for a specific semester in Query 2

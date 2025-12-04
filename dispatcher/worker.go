@@ -9,6 +9,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
@@ -43,6 +44,7 @@ type ResultsDispatcherWorker struct {
 	// Fault tolerance
 	messageManager        *messagemanager.MessageManager
 	statefulWorkerManager *statefulworker.StatefulWorkerManager
+	completionCleaner     *completioncleaner.CompletionCleaner
 }
 
 // ClientQueryStatus tracks completion status for all queries per client
@@ -184,6 +186,11 @@ func (rd *ResultsDispatcherWorker) Start() middleware.MessageMiddlewareError {
 
 // Close closes all connections
 func (rd *ResultsDispatcherWorker) Close() {
+	// Close completion cleaner
+	if rd.completionCleaner != nil {
+		rd.completionCleaner.Close()
+	}
+
 	// Close all query consumers
 	for _, consumer := range rd.queryConsumers {
 		if consumer != nil {
@@ -307,12 +314,6 @@ func (rd *ResultsDispatcherWorker) initializeFaultTolerance() error {
 	// Initialize MessageManager for duplicate detection
 	processedChunksPath := filepath.Join(stateDir, "processed-chunks.txt")
 	rd.messageManager = messagemanager.NewMessageManager(processedChunksPath)
-	if err := rd.messageManager.LoadProcessedIDs(); err != nil {
-		testing_utils.LogInfo("Results Dispatcher", "Warning - failed to load processed chunks: %v (starting with empty state)", err)
-	} else {
-		count := rd.messageManager.GetProcessedCount()
-		testing_utils.LogInfo("Results Dispatcher", "Loaded %d processed chunks", count)
-	}
 
 	// Initialize StatefulWorkerManager
 	metadataDir := filepath.Join(stateDir, "metadata")
@@ -335,6 +336,31 @@ func (rd *ResultsDispatcherWorker) initializeFaultTolerance() error {
 
 	// Sync clientQueryCompletion with CompletionTracker state after rebuild
 	rd.syncClientQueryCompletionFromTrackers()
+
+	// Create CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return fmt.Errorf("WORKER_ID environment variable is required")
+	}
+	completionCleaner, err := completioncleaner.NewCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{rd.messageManager},
+		rd.config,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create completion cleaner: %w", err)
+	}
+
+	// Start CompletionCleaner automatically
+	if err := completionCleaner.Start(); err != 0 {
+		completionCleaner.Close()
+		return fmt.Errorf("failed to start completion cleaner: %v", err)
+	}
+
+	rd.completionCleaner = completionCleaner
+	testing_utils.LogInfo("Results Dispatcher", "Completion cleaner started")
 
 	return nil
 }

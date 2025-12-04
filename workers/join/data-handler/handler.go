@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
@@ -112,6 +114,18 @@ func NewJoinDataHandler(config *middleware.ConnectionConfig) (*JoinDataHandler, 
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, fmt.Errorf("WORKER_ID environment variable is required")
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
+
 	return &JoinDataHandler{
 		consumer:           consumer,
 		itemIdProducer:     itemIdProducer,
@@ -178,7 +192,7 @@ func (jdh *JoinDataHandler) createCallback() func(middleware.ConsumeChannel, cha
 // processMessage processes a single message and routes it to the appropriate dictionary queue/exchange
 func (jdh *JoinDataHandler) processMessage(chunkMsg *chunk.Chunk, messageData []byte) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
-	if jdh.messageManager.IsProcessed(chunkMsg.ID) {
+	if jdh.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		logWithTimestamp("Join Data Handler: Chunk %s already processed, skipping", chunkMsg.ID)
 		return 0
 	}
@@ -191,7 +205,7 @@ func (jdh *JoinDataHandler) processMessage(chunkMsg *chunk.Chunk, messageData []
 	}
 
 	// Mark chunk as processed after successful routing
-	if err := jdh.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := jdh.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		logWithTimestamp("Join Data Handler: Failed to mark chunk as processed: %v", err)
 		return middleware.MessageMiddlewareMessageError
 	}

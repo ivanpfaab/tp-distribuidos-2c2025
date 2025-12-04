@@ -13,6 +13,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/common"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -104,6 +105,18 @@ func NewUserPartitionWriter(connConfig *middleware.ConnectionConfig, writerConfi
 	if !ok {
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
+
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
 
 	// Extract PartitionManager from builder
 	partitionManager := builder.GetPartitionManager()
@@ -208,7 +221,7 @@ func (upw *UserPartitionWriter) createCallback() func(middleware.ConsumeChannel,
 
 func (upw *UserPartitionWriter) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
-	if upw.messageManager.IsProcessed(chunkMsg.ID) {
+	if upw.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("User Partition Writer %d: Chunk %s already processed, skipping\n",
 			upw.writerConfig.WriterID, chunkMsg.ID)
 		return 0
@@ -238,7 +251,7 @@ func (upw *UserPartitionWriter) processMessage(chunkMsg *chunk.Chunk) middleware
 	upw.sendChunkToOrchestrator(chunkMsg)
 
 	// Mark chunk as processed after successful write
-	if err := upw.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := upw.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("User Partition Writer %d: Failed to mark chunk as processed: %v\n",
 			upw.writerConfig.WriterID, err)
 		return middleware.MessageMiddlewareMessageError

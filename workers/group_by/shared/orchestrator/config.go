@@ -19,15 +19,15 @@ type OrchestratorConfig struct {
 
 // NewOrchestratorConfig creates a new orchestrator configuration
 func NewOrchestratorConfig(queryType int) (*OrchestratorConfig, error) {
-	// Load worker ID from environment variable
-	workerIDStr := os.Getenv("WORKER_ID")
+	// Load worker ID from environment variable (numeric ID for orchestrator logic)
+	workerIDStr := os.Getenv("WORKER_NUMERIC_ID")
 	if workerIDStr == "" {
-		return nil, fmt.Errorf("WORKER_ID environment variable is required")
+		return nil, fmt.Errorf("WORKER_NUMERIC_ID environment variable is required")
 	}
 
 	workerID, err := strconv.Atoi(workerIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid WORKER_ID: %v", err)
+		return nil, fmt.Errorf("invalid WORKER_NUMERIC_ID: %v", err)
 	}
 
 	if workerID < 1 {

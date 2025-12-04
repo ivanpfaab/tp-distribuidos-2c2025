@@ -2,15 +2,18 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
@@ -88,6 +91,18 @@ func NewGroupByWorker(config *WorkerConfig) (*GroupByWorker, error) {
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
+
 	// Extract PartitionManager from builder
 	partitionManager := builder.GetPartitionManager()
 	if partitionManager == nil {
@@ -164,7 +179,7 @@ func (w *GroupByWorker) createCallback() func(middleware.ConsumeChannel, chan er
 func (w *GroupByWorker) processMessage(chunkMessage *chunk.Chunk) error {
 
 	// Check if chunk was already processed
-	if w.messageManager.IsProcessed(chunkMessage.ID) {
+	if w.messageManager.IsProcessed(chunkMessage.ClientID, chunkMessage.ID) {
 		testing_utils.LogInfo("GroupBy Worker", "Chunk %s already processed, skipping", chunkMessage.ID)
 		return nil
 	}
@@ -175,7 +190,7 @@ func (w *GroupByWorker) processMessage(chunkMessage *chunk.Chunk) error {
 	}
 
 	// Mark chunk as processed after successful write
-	if err := w.messageManager.MarkProcessed(chunkMessage.ID); err != nil {
+	if err := w.messageManager.MarkProcessed(chunkMessage.ClientID, chunkMessage.ID); err != nil {
 		testing_utils.LogError("GroupBy Worker", "Failed to mark chunk as processed: %v", err)
 		return fmt.Errorf("failed to mark chunk as processed: %w", err)
 	}

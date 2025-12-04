@@ -7,6 +7,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -107,7 +108,17 @@ func NewStoreIdJoinWorker(config *StoreIdConfig) (*StoreIdJoinWorker, error) {
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
-	workerID := fmt.Sprintf("storeid-worker-%s", instanceID)
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
 
 	// Initialize DictionaryManager (worker-specific, created separately)
 	dictManager := dictionary.NewManager[*Store]()
@@ -208,7 +219,7 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 			}
 
 			// Check if chunk was already processed
-			if w.messageManager.IsProcessed(chunkMsg.ID) {
+			if w.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 				fmt.Printf("StoreID Join Worker: Dictionary chunk %s already processed, skipping\n", chunkMsg.ID)
 				delivery.Ack(false)
 				continue
@@ -221,7 +232,7 @@ func (w *StoreIdJoinWorker) createDictionaryCallback() func(middleware.ConsumeCh
 			}
 
 			// Mark chunk as processed after successful processing
-			if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+			if err := w.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 				fmt.Printf("StoreID Join Worker: Failed to mark dictionary chunk as processed: %v\n", err)
 			}
 
@@ -266,7 +277,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middlewar
 	fmt.Printf("StoreID Join Worker: Received chunk message\n")
 
 	// Check if chunk was already processed
-	if w.messageManager.IsProcessed(chunkMsg.ID) {
+	if w.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("StoreID Join Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
 		return 0 // Success - callback will ack
 	}
@@ -278,7 +289,7 @@ func (w *StoreIdJoinWorker) processChunkMessage(chunkMsg *chunk.Chunk) middlewar
 	}
 
 	// Mark chunk as processed after successful processing
-	if err := w.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := w.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("StoreID Join Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}
@@ -366,11 +377,11 @@ func (w *StoreIdJoinWorker) performJoin(chunkMsg *chunk.Chunk) (*chunk.Chunk, er
 func (w *StoreIdJoinWorker) createCompletionCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			completionSignal, err := signals.DeserializeJoinCompletionSignal(delivery.Body)
 			if err != nil {
 				fmt.Printf("StoreID Join Worker: Failed to deserialize completion signal: %v\n", err)
-				delivery.Ack(false) 
+				delivery.Ack(false)
 				continue
 			}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 )
 
 const (
@@ -74,7 +75,7 @@ func LoadConfig() (*PartitionerConfig, error) {
 
 	// Load number of workers
 	numWorkersStr := os.Getenv("NUM_WORKERS")
-	numWorkers := getNumWorkersForQuery(queryType)
+	numWorkers := common.GetNumWorkersForQuery(queryType)
 	if numWorkersStr != "" {
 		if parsed, err := strconv.Atoi(numWorkersStr); err == nil && parsed > 0 {
 			numWorkers = parsed
@@ -110,20 +111,6 @@ func LoadConfig() (*PartitionerConfig, error) {
 		NumWorkers:       numWorkers,
 		MaxBufferSize:    maxBufferSize,
 	}, nil
-}
-
-// getNumWorkersForQuery returns the default number of workers for a specific query type
-func getNumWorkersForQuery(queryType int) int {
-	switch queryType {
-	case 2:
-		return 3
-	case 3:
-		return 3
-	case 4:
-		return 3 // configurable
-	default:
-		return 1
-	}
 }
 
 // getEnv gets an environment variable with a default value

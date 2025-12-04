@@ -9,6 +9,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -61,15 +62,6 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	// Initialize MessageManager for duplicate detection
-	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		log.Printf("Group By Orchestrator: Warning - failed to load processed notifications: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		log.Printf("Group By Orchestrator: Loaded %d processed notification IDs", count)
-	}
-
 	// Initialize StateManager
 	stateManager := NewStateManager(metadataDir, orchestrator.completionTracker)
 	orchestrator.stateManager = stateManager
@@ -120,6 +112,18 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 	if !ok {
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
+
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
 
 	orchestrator.chunkConsumer = chunkConsumer
 	orchestrator.completionProducer = completionProducer
@@ -260,7 +264,7 @@ func (gbo *GroupByOrchestrator) Start() {
 			}
 
 			// Check for duplicate notification
-			if gbo.messageManager.IsProcessed(notification.ID) {
+			if gbo.messageManager.IsProcessed(notification.ClientID, notification.ID) {
 				delivery.Ack(false)
 				continue
 			}
@@ -278,7 +282,7 @@ func (gbo *GroupByOrchestrator) Start() {
 			}
 
 			// Mark as processed in MessageManager
-			if err := gbo.messageManager.MarkProcessed(notification.ID); err != nil {
+			if err := gbo.messageManager.MarkProcessed(notification.ClientID, notification.ID); err != nil {
 				log.Printf("Warning - failed to mark notification as processed: %v", err)
 			}
 

@@ -8,6 +8,7 @@ import (
 	datahandler "github.com/tp-distribuidos-2c2025/proxy/controller/data-handler"
 	"github.com/tp-distribuidos-2c2025/proxy/network"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
@@ -16,6 +17,7 @@ import (
 type ClientRequestHandler struct {
 	config                *middleware.ConnectionConfig
 	clientResultsConsumer *workerqueue.QueueConsumer
+	completionExchange    *exchange.ExchangeMiddleware
 	connectionManager     *network.ConnectionManager
 	messageReader         *network.MessageReader
 	processor             *BatchMessageProcessor
@@ -41,15 +43,34 @@ func NewClientRequestHandler(config *middleware.ConnectionConfig) *ClientRequest
 	}
 	clientResultsQueueDeclarer.Close()
 
+	// Create and declare the client completion cleanup fanout exchange
+	completionExchange := exchange.NewMessageMiddlewareExchange(
+		queues.ClientCompletionCleanupExchange,
+		[]string{}, // No routing keys needed for fanout
+		config,
+	)
+	if completionExchange == nil {
+		log.Printf("Client Request Handler: Failed to create completion exchange producer")
+		return nil
+	}
+
+	// Declare the fanout exchange (not durable, not auto-delete)
+	if err := completionExchange.DeclareExchange("fanout", false, false, false, false); err != 0 {
+		log.Printf("Client Request Handler: Failed to declare completion exchange: %v", err)
+		completionExchange.Close()
+		return nil
+	}
+
 	connectionManager := network.NewConnectionManager()
 	return &ClientRequestHandler{
 		config:                config,
 		clientResultsConsumer: clientResultsConsumer,
+		completionExchange:    completionExchange,
 		connectionManager:     connectionManager,
 		messageReader:         network.NewMessageReader(),
 		processor:             NewBatchMessageProcessor(),
 		responseFormatter:     NewResponseFormatter(),
-		resultsHandler:        NewResultsHandler(connectionManager),
+		resultsHandler:        NewResultsHandler(connectionManager, completionExchange),
 	}
 }
 
@@ -113,7 +134,6 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 	dataHandler.Close()
 }
 
-
 // StartClientResultsConsumer starts consuming formatted results from results dispatcher
 func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	if h.clientResultsConsumer == nil {
@@ -142,5 +162,11 @@ func (h *ClientRequestHandler) Close() {
 	log.Printf("Client Request Handler: Closing handler")
 	if h.clientResultsConsumer != nil {
 		h.clientResultsConsumer.Close()
+	}
+	if h.completionExchange != nil {
+		h.completionExchange.Close()
+	}
+	if h.resultsHandler != nil {
+		h.resultsHandler.Close()
 	}
 }

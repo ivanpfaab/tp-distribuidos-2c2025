@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
-	"github.com/tp-distribuidos-2c2025/shared/utils"
+	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
@@ -15,17 +15,14 @@ import (
 type FileManager struct {
 	storageManager   *storage.FileManager
 	queryType        int
-	csvHandler       *utils.CSVHandler
 	partitionManager *partitionmanager.PartitionManager
 }
 
 // NewFileManager creates a new file manager for a specific query type and worker
 func NewFileManager(queryType int, workerID int) *FileManager {
-	baseDir := storage.NewFileManager(queryType, workerID).GetBaseDir()
 	return &FileManager{
 		storageManager: storage.NewFileManager(queryType, workerID),
 		queryType:      queryType,
-		csvHandler:     utils.NewCSVHandler(baseDir),
 	}
 }
 
@@ -39,34 +36,13 @@ func (fm *FileManager) GetFilePath(clientID string, partition int) string {
 	return fm.storageManager.GetPartitionFilePath(clientID, partition)
 }
 
-// AppendToPartitionCSV appends a user_id,store_id record to a Query 4 partition CSV file
-// This follows the in-file join pattern: each worker writes to its owned partitions
-func (fm *FileManager) AppendToPartitionCSV(clientID string, partition int, userID string, storeID string) error {
-	// Only for Query 4
-	if fm.queryType != 4 {
-		return fmt.Errorf("AppendToPartitionCSV only supports Query 4")
-	}
-
-	filePath := fm.GetFilePath(clientID, partition)
-
-	// Ensure base directory exists
-	if err := fm.storageManager.EnsureBaseDir(); err != nil {
-		return err
-	}
-
-	// Append record using CSV handler
-	header := []string{"user_id", "store_id"}
-	record := []string{userID, storeID}
-	return fm.csvHandler.AppendRow(filePath, record, header)
-}
-
 // CSVRecord defines the interface for records that can be written to CSV
 type CSVRecord interface {
 	ToCSVRow() []string
 }
 
 // AppendRecordsToPartitionCSV appends multiple user_id,store_id records to a Query 4 partition CSV file
-// More efficient than calling AppendToPartitionCSV multiple times
+// Uses batch writing for efficiency
 func (fm *FileManager) AppendRecordsToPartitionCSV(clientID string, partition int, records []shared.Query4Record, chunkID string, isFirstChunk bool) error {
 	// Only for Query 4
 	if fm.queryType != 4 {
@@ -109,12 +85,13 @@ func (fm *FileManager) writePartitionWithFaultTolerance(partition int, lines []s
 	if isFirstChunk {
 		// First chunk after restart - check for duplicates/incomplete writes
 		filePath := fm.partitionManager.GetPartitionFilePath(opts, partition)
-		linesCount := len(lines) + 1 // TODO CHECK
+		linesCount := len(lines) * 2 // To avoid duplicates we leave some space for the last lines
 		lastLines, err := fm.partitionManager.GetLastLines(filePath, linesCount)
 		if err != nil {
 			return fmt.Errorf("failed to get last lines for partition %d: %w", partition, err)
 		}
 
+		testing_utils.LogInfo("File Manager", "Partition %d", partition)
 		if err := fm.partitionManager.WriteOnlyMissingLines(filePath, lastLines, lines, opts); err != nil {
 			return fmt.Errorf("failed to write missing lines to partition %d: %w", partition, err)
 		}
