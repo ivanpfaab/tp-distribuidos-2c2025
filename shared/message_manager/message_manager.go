@@ -8,19 +8,32 @@ import (
 	"strings"
 )
 
+const (
+	completedClientsFile = "/app/worker-data/completed-clients.txt"
+)
+
 // MessageManager manages processed message IDs using per-client persistent files
 type MessageManager struct {
-	baseDir      string                     // Base directory for client-specific files
-	processedIDs map[string]map[string]bool // clientID -> messageID -> bool
+	baseDir          string                     // Base directory for client-specific files
+	processedIDs     map[string]map[string]bool // clientID -> messageID -> bool
+	completedClients map[string]bool            // clientID -> completed (loaded from disk)
 }
 
 // NewMessageManager creates a new MessageManager instance
 // filePath should be a directory path where per-client files will be stored
 // Files will be named: processed-ids-{clientID}.txt
 func NewMessageManager(filePath string) *MessageManager {
+	// Load completed clients from disk
+	completedClients := make(map[string]bool)
+	if err := loadCompletedClients(completedClients); err != nil {
+		// On error, start with empty map (fail open)
+		completedClients = make(map[string]bool)
+	}
+
 	return &MessageManager{
-		baseDir:      filePath,
-		processedIDs: make(map[string]map[string]bool),
+		baseDir:          filePath,
+		processedIDs:     make(map[string]map[string]bool),
+		completedClients: completedClients,
 	}
 }
 
@@ -76,7 +89,13 @@ func (mm *MessageManager) loadClientProcessedIDs(clientID string) error {
 	return nil
 }
 // IsProcessed checks if an ID has already been processed for a specific client
+// Returns true if the client is completed OR if the specific ID was processed
 func (mm *MessageManager) IsProcessed(clientID string, id string) bool {
+	// First check if client is completed - if so, treat all messages as processed
+	if mm.completedClients[clientID] {
+		return true
+	}
+
 	// Load client's processed IDs if not already loaded
 	if err := mm.loadClientProcessedIDs(clientID); err != nil {
 		// On error, assume not processed (fail open)
@@ -148,6 +167,33 @@ func (mm *MessageManager) CleanClient(clientID string) error {
 
 // Close performs cleanup (currently no-op, but kept for future use)
 func (mm *MessageManager) Close() error {
+	return nil
+}
+
+// loadCompletedClients loads completed client IDs from disk
+func loadCompletedClients(completedClients map[string]bool) error {
+	file, err := os.Open(completedClientsFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist (first startup), return nil
+			return nil
+		}
+		return fmt.Errorf("failed to open completed clients file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			completedClients[line] = true
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read completed clients file: %w", err)
+	}
+
 	return nil
 }
 

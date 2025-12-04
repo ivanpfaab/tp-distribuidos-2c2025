@@ -3,8 +3,11 @@ package client_request_handler
 import (
 	"log"
 	"net"
+	"sync"
 	"time"
 
+	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
+	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	datahandler "github.com/tp-distribuidos-2c2025/proxy/controller/data-handler"
 	"github.com/tp-distribuidos-2c2025/proxy/network"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -23,6 +26,8 @@ type ClientRequestHandler struct {
 	processor             *BatchMessageProcessor
 	responseFormatter     *ResponseFormatter
 	resultsHandler        *ResultsHandler
+	completedClients      map[string]bool // clientID -> completed (tracks if completion signal was received)
+	completedMutex        sync.RWMutex    // Mutex for thread-safe access
 }
 
 // NewClientRequestHandler creates a new instance of ClientRequestHandler
@@ -71,6 +76,7 @@ func NewClientRequestHandler(config *middleware.ConnectionConfig) *ClientRequest
 		processor:             NewBatchMessageProcessor(),
 		responseFormatter:     NewResponseFormatter(),
 		resultsHandler:        NewResultsHandler(connectionManager, completionExchange),
+		completedClients:      make(map[string]bool),
 	}
 }
 
@@ -97,6 +103,9 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 
 	log.Printf("Client Request Handler: Data handler ready for connection %s", conn.RemoteAddr())
 
+	// Track client ID for this connection
+	var currentClientID string
+
 	// Keep the connection alive and process messages
 	for {
 		// Read complete message using message reader
@@ -114,6 +123,7 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 		} else {
 			// Store connection for this client if it's a batch message
 			if batchMsg, ok := h.processor.ExtractClientID(completeMessage); ok {
+				currentClientID = batchMsg.ClientID
 				h.connectionManager.Store(batchMsg.ClientID, conn)
 			}
 		}
@@ -132,6 +142,47 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 	// Clean up the data handler when connection closes
 	log.Printf("Client Request Handler: Cleaning up data handler for connection %s", conn.RemoteAddr())
 	dataHandler.Close()
+
+	// Check if client disconnected prematurely (before completion signal)
+	if currentClientID != "" {
+		h.handleClientDisconnect(currentClientID)
+	}
+}
+
+// markClientCompleted marks a client as having received a completion signal
+func (h *ClientRequestHandler) markClientCompleted(clientID string) {
+	h.completedMutex.Lock()
+	defer h.completedMutex.Unlock()
+	h.completedClients[clientID] = true
+	log.Printf("Client Request Handler: Marked client %s as completed (received completion signal)", clientID)
+}
+
+// isClientCompleted checks if a client has received a completion signal
+func (h *ClientRequestHandler) isClientCompleted(clientID string) bool {
+	h.completedMutex.RLock()
+	defer h.completedMutex.RUnlock()
+	return h.completedClients[clientID]
+}
+
+// handleClientDisconnect handles client disconnection before completion
+func (h *ClientRequestHandler) handleClientDisconnect(clientID string) {
+	// Check if client already completed successfully
+	if h.isClientCompleted(clientID) {
+		log.Printf("Client Request Handler: Client %s disconnected after completion (normal)", clientID)
+		return
+	}
+
+	// Client disconnected prematurely - trigger completion signal
+	log.Printf("Client Request Handler: Client %s disconnected before completion, triggering cleanup", clientID)
+
+	// Create completion signal for premature disconnect
+	completionSignal := signals.NewClientCompletionSignal(
+		clientID,
+		"Client disconnected before query completion - cleaning up resources",
+	)
+
+	// Send to results handler to process (this will mark as completed and send to exchange)
+	h.resultsHandler.HandleCompletionSignal(completionSignal)
 }
 
 // StartClientResultsConsumer starts consuming formatted results from results dispatcher
@@ -146,7 +197,22 @@ func (h *ClientRequestHandler) StartClientResultsConsumer() {
 	// Start consuming
 	err := h.clientResultsConsumer.StartConsuming(func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
+			// Deserialize once to check message type
+			message, err := deserializer.Deserialize(delivery.Body)
+			if err != nil {
+				log.Printf("Client Request Handler: Failed to deserialize message in consumer: %v", err)
+				delivery.Ack(false)
+				continue
+			}
+
+			// Track completion signals before processing
+			if signal, ok := message.(*signals.ClientCompletionSignal); ok {
+				h.markClientCompleted(signal.ClientID)
+			}
+
+			// Process message
 			h.resultsHandler.ProcessMessage(delivery.Body)
+
 			delivery.Ack(false)
 		}
 		done <- nil
