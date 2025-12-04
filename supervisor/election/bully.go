@@ -122,7 +122,7 @@ func (be *BullyElection) handleConnection(conn net.Conn) {
 
 	switch msg.EventType {
 	case election.ElectionStart:
-		be.handleElectionStart(msg)
+		be.handleElectionStart(msg, conn)
 	case election.ElectionOk:
 		be.handleElectionOk(msg)
 	case election.ElectionLeader:
@@ -132,13 +132,22 @@ func (be *BullyElection) handleConnection(conn net.Conn) {
 	}
 }
 
-func (be *BullyElection) handleElectionStart(msg *election.ElectionMessage) {
+func (be *BullyElection) handleElectionStart(msg *election.ElectionMessage, conn net.Conn) {
 	log.Printf("[BullyElection] Node %d: Received ELECTION from %d", be.myID, msg.SupervisorID)
 
 	if msg.SupervisorID < be.myID {
-		log.Printf("[BullyElection] Node %d: Responding to lower-ID node %d with OK and starting own election", be.myID, msg.SupervisorID)
-		be.sendOkMessage(msg.SupervisorID)
+		log.Printf("[BullyElection] Node %d: Responding to lower-ID node %d with OK on same connection", be.myID, msg.SupervisorID)
 
+		// Send OK response on the SAME connection (critical for Bully algorithm)
+		timestamp := time.Now().Unix()
+		okMsg := election.NewElectionMessage(election.ElectionOk, be.myID, timestamp)
+		data, err := election.SerializeElectionMessage(okMsg)
+		if err == nil {
+			conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+			conn.Write(data)
+		}
+
+		// Start our own election (we have higher ID, so we should win)
 		be.mutex.RLock()
 		alreadyElecting := be.electionInProgress
 		be.mutex.RUnlock()
@@ -160,6 +169,14 @@ func (be *BullyElection) handleElectionOk(msg *election.ElectionMessage) {
 func (be *BullyElection) handleElectionLeader(msg *election.ElectionMessage) {
 	log.Printf("[BullyElection] Node %d: Received LEADER announcement from %d", be.myID, msg.SupervisorID)
 
+	// Reject leader announcements from nodes with lower ID than us
+	// In Bully algorithm, the highest ID should always win
+	if msg.SupervisorID < be.myID {
+		log.Printf("[BullyElection] Node %d: Rejecting LEADER from lower-ID node %d, starting election", be.myID, msg.SupervisorID)
+		go be.StartElection()
+		return
+	}
+
 	be.mutex.Lock()
 	wasLeader := be.isLeader
 	oldLeaderID := be.leaderID
@@ -176,8 +193,10 @@ func (be *BullyElection) handleElectionLeader(msg *election.ElectionMessage) {
 }
 
 func (be *BullyElection) StartElectionWithDelay() {
-	staggerDelay := time.Duration(be.myID) * 500 * time.Millisecond
-	log.Printf("[BullyElection] Node %d: Will start election in %v (stagger to avoid simultaneous elections)", be.myID, staggerDelay)
+	// Inverse stagger: higher IDs start first (they'll win anyway in Bully)
+	maxID := be.getMaxPeerID()
+	staggerDelay := time.Duration(maxID-be.myID) * 300 * time.Millisecond
+	log.Printf("[BullyElection] Node %d: Will start election in %v (inverse stagger: higher IDs first)", be.myID, staggerDelay)
 
 	time.Sleep(staggerDelay)
 	go be.StartElection()
@@ -242,16 +261,27 @@ func (be *BullyElection) StartElection() {
 	mu.Unlock()
 
 	if !gotOK {
+		// No higher node responded - we are the highest alive, become leader
 		be.becomeLeader()
 	} else {
+		// A higher node responded with OK - wait for them to announce leadership
+		log.Printf("[BullyElection] Node %d: Received OK from higher node, waiting for leader announcement", be.myID)
 		time.Sleep(5 * time.Second)
 
 		be.mutex.RLock()
-		stillNoLeader := be.leaderID == -1 || be.leaderID == be.myID
+		currentLeaderID := be.leaderID
 		be.mutex.RUnlock()
 
-		if stillNoLeader {
+		// If no leader was announced (leaderID is still -1 or unchanged from before),
+		// the higher node may have crashed - try becoming leader
+		if currentLeaderID == -1 {
+			log.Printf("[BullyElection] Node %d: No leader announced after waiting, becoming leader", be.myID)
 			be.becomeLeader()
+		} else {
+			log.Printf("[BullyElection] Node %d: Leader %d was announced, election complete", be.myID, currentLeaderID)
+			be.mutex.Lock()
+			be.electionInProgress = false
+			be.mutex.Unlock()
 		}
 	}
 }
@@ -328,29 +358,6 @@ func (be *BullyElection) sendElectionMessage(targetID int) bool {
 	return false
 }
 
-func (be *BullyElection) sendOkMessage(targetID int) {
-	addr, exists := be.peers[targetID]
-	if !exists {
-		return
-	}
-
-	timestamp := time.Now().Unix()
-	msg := election.NewElectionMessage(election.ElectionOk, be.myID, timestamp)
-
-	data, err := election.SerializeElectionMessage(msg)
-	if err != nil {
-		return
-	}
-
-	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-
-	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	conn.Write(data)
-}
 
 func (be *BullyElection) sendLeaderMessage(targetID int) {
 	addr, exists := be.peers[targetID]
