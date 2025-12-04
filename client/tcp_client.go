@@ -456,12 +456,8 @@ func runClient(dataFolder string, serverAddr string, clientID string) error {
 
 		// Read lines from file and send to server
 		r := csv.NewReader(f)
-<<<<<<< HEAD
-		sentRecords, sentBatches, err := client.sendBatches(r, 1000, fileID, isLastFromTable) // BATCH_SIZE constant
-=======
 		chunkSize := getChunkSize()
 		sentRecords, sentBatches, err := client.sendBatches(r, chunkSize, fileID, isLastFromTable)
->>>>>>> main
 		if err != nil {
 			log.Printf("Error sending batches for file %s: %v", filePath, err)
 			f.Close()
