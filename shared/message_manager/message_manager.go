@@ -75,14 +75,6 @@ func (mm *MessageManager) loadClientProcessedIDs(clientID string) error {
 
 	return nil
 }
-
-// LoadProcessedIDs is kept for backward compatibility but does nothing
-// Per-client files are loaded lazily on first access
-func (mm *MessageManager) LoadProcessedIDs() error {
-	// No-op: files are loaded lazily per client
-	return nil
-}
-
 // IsProcessed checks if an ID has already been processed for a specific client
 func (mm *MessageManager) IsProcessed(clientID string, id string) bool {
 	// Load client's processed IDs if not already loaded

@@ -169,7 +169,7 @@ func (ct *CompletionTracker) ProcessChunkNotification(notification *signals.Chun
 		// Start a goroutine to delay the callback, allowing any pending chunk notifications to be processed
 		go func() {
 			// Wait a short time to allow any pending chunk notifications to be processed
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 			ct.onCompletion(notification.ClientID, clientStatusCopy)
 		}()
 	}

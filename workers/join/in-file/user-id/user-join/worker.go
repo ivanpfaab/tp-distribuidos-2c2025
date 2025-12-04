@@ -146,7 +146,7 @@ func (jw *JoinByUserIdWorker) Start() middleware.MessageMiddlewareError {
 	jw.completionConsumer.SetQueueName(completionQueueName)
 
 	// Start completion signal consumer
-	go jw.startCompletionSignalConsumer()
+	jw.startCompletionSignalConsumer()
 
 	// Start consuming top users messages
 	fmt.Println("Join by User ID Worker: Starting to listen for top users chunks...")

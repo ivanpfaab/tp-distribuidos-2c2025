@@ -62,9 +62,6 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 		return nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	// Initialize MessageManager for duplicate detection
-	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
-
 	// Initialize StateManager
 	stateManager := NewStateManager(metadataDir, orchestrator.completionTracker)
 	orchestrator.stateManager = stateManager

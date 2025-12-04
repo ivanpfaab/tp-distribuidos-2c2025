@@ -142,7 +142,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	}
 
 	// Check if chunk was fully processed
-	if w.processedChunks.IsProcessed(chunkMsg.ID) {
+	if w.processedChunks.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		log.Printf("Worker 2: Chunk %s already processed, skipping", chunkMsg.ID)
 		return 0
 	}
@@ -216,7 +216,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	}
 
 	// Mark chunk as fully processed
-	if err := w.processedChunks.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := w.processedChunks.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		log.Printf("Worker 2: Failed to mark chunk as processed: %v", err)
 		return middleware.MessageMiddlewareMessageError
 	}
@@ -239,7 +239,7 @@ func parseCSV(chunkID string, csvData string) ([][]string, error) {
 		if len(record) == 0 {
 			continue
 		}
-		
+
 		formattedRecord := []string{chunkID}
 		formattedRecord = append(formattedRecord, record...)
 

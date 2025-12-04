@@ -114,7 +114,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	}
 
 	// Check if already processed
-	if w.messageManager.IsProcessed(chunkMsg.ID) {
+	if w.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		log.Printf("Worker %d: Chunk ID %s already processed, skipping", w.config.WorkerID, chunkMsg.ID)
 		return 0 // Return 0 to ACK (handled by Start method)
 	}
@@ -167,7 +167,7 @@ func (w *Worker) processMessage(delivery amqp.Delivery) middleware.MessageMiddle
 	w.duplicateSender.StoreChunk(chunkMsg, serialized)
 
 	// Mark as processed (must be after successful send)
-	if markErr := w.messageManager.MarkProcessed(chunkMsg.ID); markErr != nil {
+	if markErr := w.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); markErr != nil {
 		log.Printf("Worker %d: Failed to mark chunk as processed: %v", w.config.WorkerID, markErr)
 		return middleware.MessageMiddlewareMessageError // Will NACK and requeue
 	}
