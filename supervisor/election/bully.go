@@ -9,6 +9,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/deserializer"
 	"github.com/tp-distribuidos-2c2025/protocol/election"
+	"github.com/tp-distribuidos-2c2025/shared/netio"
 )
 
 type BullyElection struct {
@@ -103,6 +104,8 @@ func (be *BullyElection) handleConnection(conn net.Conn) {
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
 	buf := make([]byte, 1024)
+	// Note: Election messages are small and fit in a single read.
+	// For larger messages, a length-prefixed protocol would be needed.
 	n, err := conn.Read(buf)
 	if err != nil {
 		return
@@ -144,7 +147,9 @@ func (be *BullyElection) handleElectionStart(msg *election.ElectionMessage, conn
 		data, err := election.SerializeElectionMessage(okMsg)
 		if err == nil {
 			conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			conn.Write(data)
+			if writeErr := netio.WriteAll(conn, data); writeErr != nil {
+				log.Printf("[BullyElection] Node %d: Failed to send OK response to %d: %v", be.myID, msg.SupervisorID, writeErr)
+			}
 		}
 
 		// Start our own election (we have higher ID, so we should win)
@@ -338,13 +343,15 @@ func (be *BullyElection) sendElectionMessage(targetID int) bool {
 	defer conn.Close()
 
 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	_, err = conn.Write(data)
+	err = netio.WriteAll(conn, data)
 	if err != nil {
 		return false
 	}
 
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1024)
+	// Note: Election messages are small and fit in a single read.
+	// For larger messages, a length-prefixed protocol would be needed.
 	n, err := conn.Read(buf)
 	if err == nil && n > 0 {
 		rawMsg, err := deserializer.Deserialize(buf[:n])
@@ -380,7 +387,9 @@ func (be *BullyElection) sendLeaderMessage(targetID int) {
 	defer conn.Close()
 
 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	conn.Write(data)
+	if writeErr := netio.WriteAll(conn, data); writeErr != nil {
+		log.Printf("[BullyElection] Node %d: Failed to send leader message to %d: %v", be.myID, targetID, writeErr)
+	}
 }
 
 func (be *BullyElection) getHigherNodes() []int {

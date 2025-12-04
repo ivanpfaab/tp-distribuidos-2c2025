@@ -13,6 +13,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/netio"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
 )
 
@@ -128,8 +129,8 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 			}
 		}
 
-		// Send response back to client
-		_, err = conn.Write(response)
+		// Send response back to client (using WriteAll to handle short writes)
+		err = netio.WriteAll(conn, response)
 		if err != nil {
 			// For any error (connection closed, network issue, etc.), break the loop
 			log.Printf("Client Request Handler: Failed to send response to %s: %v", conn.RemoteAddr(), err)

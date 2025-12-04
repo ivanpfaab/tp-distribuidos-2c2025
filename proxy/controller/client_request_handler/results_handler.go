@@ -14,6 +14,7 @@ import (
 	"github.com/tp-distribuidos-2c2025/proxy/network"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
+	"github.com/tp-distribuidos-2c2025/shared/netio"
 )
 
 const (
@@ -121,8 +122,8 @@ func (h *ResultsHandler) HandleChunkData(chunkData *chunk.Chunk) {
 		return
 	}
 
-	// Send formatted data to the client
-	_, err := conn.Write([]byte(chunkData.ChunkData))
+	// Send formatted data to the client (using WriteAll to handle short writes)
+	err := netio.WriteAll(conn, []byte(chunkData.ChunkData))
 	if err != nil {
 		log.Printf("Results Handler: Failed to send data to client %s: %v", chunkData.ClientID, err)
 		// Remove the connection if it's no longer valid
