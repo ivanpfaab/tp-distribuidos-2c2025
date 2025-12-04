@@ -3,13 +3,16 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/workerqueue"
+	"github.com/tp-distribuidos-2c2025/shared/queues"
 	worker_builder "github.com/tp-distribuidos-2c2025/shared/worker_builder"
 )
 
@@ -87,6 +90,18 @@ func NewUserPartitionSplitter(connConfig *middleware.ConnectionConfig, splitterC
 		return nil, builder.CleanupOnError(fmt.Errorf("message manager has wrong type"))
 	}
 
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, fmt.Errorf("WORKER_ID environment variable is required")
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
+
 	// Initialize buffers
 	buffers := make([][]UserRecord, splitterConfig.NumWriters)
 	for i := range buffers {
@@ -128,7 +143,7 @@ func (ups *UserPartitionSplitter) Close() {
 func (ups *UserPartitionSplitter) createCallback() func(middleware.ConsumeChannel, chan error) {
 	return func(consumeChannel middleware.ConsumeChannel, done chan error) {
 		for delivery := range *consumeChannel {
-			
+
 			chunkMsg, err := chunk.DeserializeChunk(delivery.Body)
 			if err != nil {
 				fmt.Printf("User Partition Splitter: Failed to deserialize chunk: %v\n", err)
@@ -150,7 +165,7 @@ func (ups *UserPartitionSplitter) createCallback() func(middleware.ConsumeChanne
 // processMessage processes a single user chunk
 func (ups *UserPartitionSplitter) processMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
-	if ups.messageManager.IsProcessed(chunkMsg.ID) {
+	if ups.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("User Partition Splitter: Chunk %s already processed, skipping\n", chunkMsg.ID)
 		return 0
 	}
@@ -171,7 +186,7 @@ func (ups *UserPartitionSplitter) processMessage(chunkMsg *chunk.Chunk) middlewa
 	}
 
 	// Mark chunk as processed after successful distribution
-	if err := ups.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := ups.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("User Partition Splitter: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}

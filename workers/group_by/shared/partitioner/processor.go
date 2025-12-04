@@ -164,28 +164,6 @@ func (p *PartitionerProcessor) ParseChunkData(chunkData string) ([]Record, error
 	return result, nil
 }
 
-// getTimeBasedPartition calculates partition based on semester from created_at field
-// Uses common partition calculation utility
-func (p *PartitionerProcessor) getTimeBasedPartition(record Record, createdAtIndex int) (int, error) {
-	if createdAtIndex >= len(record.Fields) {
-		return 0, fmt.Errorf("record does not have created_at field at index %d", createdAtIndex)
-	}
-
-	createdAtStr := record.Fields[createdAtIndex]
-	if createdAtStr == "" {
-		return 0, fmt.Errorf("created_at field is empty")
-	}
-
-	// Parse date using common utility
-	createdAt, err := common.ParseDate(createdAtStr)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse created_at '%s': %v", createdAtStr, err)
-	}
-
-	// Calculate partition using common utility
-	return common.CalculateTimeBasedPartition(createdAt), nil
-}
-
 // getPartition calculates the partition for a record based on query type
 func (p *PartitionerProcessor) GetPartition(record Record) (int, error) {
 	switch p.QueryType {
@@ -377,10 +355,4 @@ func (p *PartitionerProcessor) recordsToCSV(records []Record) string {
 	}
 
 	return result.String()
-}
-
-// GetUserPartition calculates the partition for a given ID (user_id or item_id)
-// Deprecated: Use common.CalculateUserBasedPartition instead
-func GetUserPartition(id string, NumPartitions int) (int, error) {
-	return common.CalculateUserBasedPartition(id, NumPartitions)
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 )
@@ -53,15 +54,6 @@ func (wb *WorkerBuilder) WithMessageManager(stateFilePath string) *WorkerBuilder
 
 	// Create MessageManager
 	messageManager := messagemanager.NewMessageManager(stateFilePath)
-
-	// Try to load processed IDs (non-fatal if file doesn't exist)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		// Log warning but continue - starting with empty state is acceptable
-		fmt.Printf("%s: Warning - failed to load processed IDs: %v (starting with empty state)\n", wb.workerName, err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("%s: Loaded %d processed IDs\n", wb.workerName, count)
-	}
 
 	// Register for cleanup
 	wb.resourceTracker.Register(
@@ -145,3 +137,68 @@ func (wb *WorkerBuilder) GetLastResourceIndex() int {
 	return wb.resourceTracker.GetLastIndex()
 }
 
+// WithCompletionCleaner initializes a CompletionCleaner for handling client completion signals
+// exchangeName: Name of the fanout exchange (declared by client request handler)
+// workerID: Unique identifier for this worker (used to generate queue name: {workerID}-cleanup)
+// cleanupHandlers: List of resources that implement CleanupHandler interface (e.g., MessageManager)
+func (wb *WorkerBuilder) WithCompletionCleaner(
+	exchangeName string,
+	workerID string,
+	cleanupHandlers []completioncleaner.CleanupHandler,
+) *WorkerBuilder {
+	if wb.config == nil {
+		wb.addError(fmt.Errorf("config must be set before adding CompletionCleaner"))
+		return wb
+	}
+	if exchangeName == "" {
+		wb.addError(fmt.Errorf("exchangeName is required for CompletionCleaner"))
+		return wb
+	}
+	if workerID == "" {
+		wb.addError(fmt.Errorf("workerID is required for CompletionCleaner"))
+		return wb
+	}
+
+	// Create CompletionCleaner
+	cleaner, err := completioncleaner.NewCompletionCleaner(
+		exchangeName,
+		workerID,
+		cleanupHandlers,
+		wb.config,
+	)
+	if err != nil {
+		wb.addError(fmt.Errorf("failed to create CompletionCleaner: %w", err))
+		return wb
+	}
+
+	// Start the CompletionCleaner automatically
+	if err := cleaner.Start(); err != 0 {
+		wb.addError(fmt.Errorf("failed to start CompletionCleaner: %v", err))
+		return wb
+	}
+
+	// Register for cleanup
+	wb.resourceTracker.Register(
+		ResourceTypeCompletionCleaner,
+		"completion-cleaner",
+		cleaner,
+		func() error {
+			return cleaner.Close()
+		},
+	)
+
+	return wb
+}
+
+// GetCompletionCleaner retrieves the CompletionCleaner
+func (wb *WorkerBuilder) GetCompletionCleaner() *completioncleaner.CompletionCleaner {
+	resource := wb.resourceTracker.Get(ResourceTypeCompletionCleaner, "completion-cleaner")
+	if resource == nil {
+		return nil
+	}
+	cleaner, ok := resource.(*completioncleaner.CompletionCleaner)
+	if !ok {
+		return nil
+	}
+	return cleaner
+}

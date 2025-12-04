@@ -144,3 +144,19 @@ func ParseDate(dateStr string) (time.Time, error) {
 
 	return time.Time{}, fmt.Errorf("unable to parse date: %s", dateStr)
 }
+
+// ValidateHeader validates that a CSV header matches the expected schema
+func ValidateHeader(header []string, expectedSchema []string) error {
+	if len(header) != len(expectedSchema) {
+		return fmt.Errorf("schema field count mismatch: expected %d, got %d", len(expectedSchema), len(header))
+	}
+
+	for i, expectedField := range expectedSchema {
+		actualField := strings.TrimSpace(header[i])
+		if actualField != expectedField {
+			return fmt.Errorf("schema field mismatch at position %d: expected '%s', got '%s'", i, expectedField, actualField)
+		}
+	}
+
+	return nil
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	"github.com/tp-distribuidos-2c2025/shared/health_server"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
@@ -117,6 +118,18 @@ func NewTopItemsWorker() *TopItemsWorker {
 		log.Fatal("Top Items Worker: Message manager has wrong type")
 	}
 
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		log.Fatal("Top Items Worker: WORKER_ID environment variable is required")
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
+
 	// Initialize custom StateManager (worker-specific, not part of builder)
 	stateManager := NewTopItemsStateManager(metadataDir, numPartitions)
 
@@ -160,7 +173,7 @@ func (tw *TopItemsWorker) processMessage(chunkMsg *chunk.Chunk) middleware.Messa
 	msgID := chunkMsg.ID
 
 	// Check for duplicate chunk
-	if tw.messageManager.IsProcessed(msgID) {
+	if tw.messageManager.IsProcessed(clientID, msgID) {
 		log.Printf("Top Items Worker: Chunk %s already processed, skipping", msgID)
 		return 0 // Success - callback will ack
 	}
@@ -178,7 +191,7 @@ func (tw *TopItemsWorker) processMessage(chunkMsg *chunk.Chunk) middleware.Messa
 	}
 
 	// Mark chunk as processed in MessageManager
-	if err := tw.messageManager.MarkProcessed(msgID); err != nil {
+	if err := tw.messageManager.MarkProcessed(clientID, msgID); err != nil {
 		log.Printf("Top Items Worker: Warning - failed to mark chunk as processed: %v", err)
 	}
 

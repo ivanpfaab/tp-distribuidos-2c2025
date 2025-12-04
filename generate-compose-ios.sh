@@ -287,6 +287,7 @@ generate_year_filter_workers() {
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "year-filter-worker-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -315,6 +316,7 @@ generate_time_filter_workers() {
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "time-filter-worker-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -343,6 +345,7 @@ generate_amount_filter_workers() {
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "amount-filter-worker-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -379,6 +382,7 @@ generate_itemid_join_workers() {
       join-data-handler-1:
         condition: service_started
     environment:
+      WORKER_ID: "itemid-join-worker-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -426,6 +430,7 @@ generate_storeid_join_workers() {
         condition: service_started
 $(echo -e "${orchestrator_deps}")
     environment:
+      WORKER_ID: "storeid-join-worker-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -458,6 +463,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "results-dispatcher-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -477,6 +483,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "in-memory-join-orchestrator-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -495,6 +502,7 @@ cat >> docker-compose.yaml << 'EOF_REMAINING'
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "in-file-join-orchestrator-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -533,6 +541,7 @@ generate_partitioner() {
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query${query_type}-partitioner$([ $count -gt 1 ] && echo "-${i}" || echo "")"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -568,12 +577,13 @@ generate_orchestrators() {
       query${query_type}-groupby-worker-${i}:
         condition: service_started
     environment:
+      WORKER_ID: "query${query_type}-orchestrator-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "${query_type}"
-      WORKER_ID: "${i}"
+      WORKER_NUMERIC_ID: "${i}"
       HEALTH_PORT: "8888"
     volumes:
       - query${query_type}-groupby-worker-${i}-data:/app/groupby-data
@@ -617,12 +627,13 @@ generate_groupby_workers() {
         condition: service_healthy
 $(echo -e "${partitioner_deps}")
     environment:
+      WORKER_ID: "query${query_type}-groupby-worker-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "${query_type}"
-      WORKER_ID: "${i}"
+      WORKER_NUMERIC_ID: "${i}"
       NUM_WORKERS: "${count}"
       NUM_PARTITIONS: "${num_partitions}"
       HEALTH_PORT: "8888"
@@ -664,6 +675,7 @@ generate_top_worker() {
         condition: service_healthy
 $(echo -e "${deps}")
     environment:
+      WORKER_ID: "query${query_type}-top-${worker_name}-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -691,6 +703,7 @@ generate_user_partition_splitter() {
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "user-partition-splitter-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -721,6 +734,7 @@ generate_user_partition_writers() {
       user-partition-splitter-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-partition-writer-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -758,6 +772,7 @@ generate_user_join_readers() {
       query4-top-users-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-join-reader-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -791,6 +806,7 @@ generate_join_data_handler() {
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "join-data-handler-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -821,6 +837,7 @@ generate_query_gateway() {
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query-gateway-${i}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -1161,13 +1178,13 @@ echo -e "${BLUE}Generating TARGET_CONTAINERS for Chaos Monkey...${NC}"
 TARGET_CONTAINERS=$(echo "${MONITORED_WORKERS}" | sed 's/:8888//g')
 
 # Now update the supervisor services with the MONITORED_WORKERS variable
-# Use sed to replace the MONITORED_WORKERS placeholder
-sed -i "s|SUPERVISOR_PEERS: \"supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
-sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000\"|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
-sed -i "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+# Use perl for cross-platform compatibility (works the same on macOS and Linux)
+perl -i -pe "s|SUPERVISOR_PEERS: \"supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000\"|\$&\\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+perl -i -pe "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000\"|\$&\\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+perl -i -pe "s|SUPERVISOR_PEERS: \"supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000\"|\$&\\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
 
 # Update chaos-monkey with TARGET_CONTAINERS
-sed -i "s|KILL_PROBABILITY: \"0.5\"|KILL_PROBABILITY: \"0.5\"\n      TARGET_CONTAINERS: \"${TARGET_CONTAINERS}\"|" docker-compose.yaml
+perl -i -pe "s|KILL_PROBABILITY: \"0.5\"|\$&\\n      TARGET_CONTAINERS: \"${TARGET_CONTAINERS}\"|" docker-compose.yaml
 
 # Add test runner and volumes
 cat >> docker-compose.yaml << 'EOF_FOOTER'

@@ -10,16 +10,18 @@ import (
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/proxy/network"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
+	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
 )
 
 // ResultsHandler handles results from the results dispatcher
 type ResultsHandler struct {
-	connectionManager *network.ConnectionManager
-	messageManager    *messagemanager.MessageManager
+	connectionManager  *network.ConnectionManager
+	messageManager     *messagemanager.MessageManager
+	completionExchange *exchange.ExchangeMiddleware
 }
 
 // NewResultsHandler creates a new results handler
-func NewResultsHandler(connectionManager *network.ConnectionManager) *ResultsHandler {
+func NewResultsHandler(connectionManager *network.ConnectionManager, completionExchange *exchange.ExchangeMiddleware) *ResultsHandler {
 	// Ensure worker data directory exists
 	stateDir := "/app/worker-data"
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
@@ -29,16 +31,11 @@ func NewResultsHandler(connectionManager *network.ConnectionManager) *ResultsHan
 	// Initialize MessageManager for duplicate detection
 	processedChunksPath := filepath.Join(stateDir, "processed-results.txt")
 	messageManager := messagemanager.NewMessageManager(processedChunksPath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		log.Printf("Results Handler: Warning - failed to load processed results: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		log.Printf("Results Handler: Loaded %d processed result chunks", count)
-	}
 
 	return &ResultsHandler{
-		connectionManager: connectionManager,
-		messageManager:    messageManager,
+		connectionManager:  connectionManager,
+		messageManager:     messageManager,
+		completionExchange: completionExchange,
 	}
 }
 
@@ -49,12 +46,36 @@ func (h *ResultsHandler) HandleCompletionSignal(signal *signals.ClientCompletion
 
 	// Close the connection for this client
 	h.connectionManager.Close(signal.ClientID)
+
+	// Publish the completion signal to the fanout exchange to notify all workers
+	if h.completionExchange != nil {
+		// Serialize the signal
+		serializedSignal, err := signals.SerializeClientCompletionSignal(signal)
+		if err != nil {
+			log.Printf("Results Handler: Failed to serialize completion signal for client %s: %v", signal.ClientID, err)
+			return
+		}
+
+		// Publish to fanout exchange (empty routing keys for fanout)
+		if err := h.completionExchange.Send(serializedSignal, []string{}); err != 0 {
+			log.Printf("Results Handler: Failed to publish completion signal to exchange for client %s: %v", signal.ClientID, err)
+			return
+		}
+
+		if err := h.messageManager.CleanClient(signal.ClientID); err != nil {
+			log.Printf("Results Handler: Failed to clean up processed messages for client %s: %v", signal.ClientID, err)
+		}
+
+		log.Printf("Results Handler: Published completion signal to cleanup exchange for client %s", signal.ClientID)
+	} else {
+		log.Printf("Results Handler: Warning - completion exchange not initialized, skipping signal broadcast")
+	}
 }
 
 // HandleChunkData handles chunk data for a client
 func (h *ResultsHandler) HandleChunkData(chunkData *chunk.Chunk) {
 	// Check if chunk was already processed (duplicate detection)
-	if h.messageManager.IsProcessed(chunkData.ID) {
+	if h.messageManager.IsProcessed(chunkData.ClientID, chunkData.ID) {
 		log.Printf("Results Handler: Chunk %s already processed, skipping", chunkData.ID)
 		return
 	}
@@ -77,7 +98,7 @@ func (h *ResultsHandler) HandleChunkData(chunkData *chunk.Chunk) {
 	}
 
 	// Mark chunk as processed after successful send
-	if err := h.messageManager.MarkProcessed(chunkData.ID); err != nil {
+	if err := h.messageManager.MarkProcessed(chunkData.ClientID, chunkData.ID); err != nil {
 		log.Printf("Results Handler: Failed to mark chunk as processed: %v", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
 	"github.com/tp-distribuidos-2c2025/protocol/signals"
+	completioncleaner "github.com/tp-distribuidos-2c2025/shared/completion_cleaner"
 	messagemanager "github.com/tp-distribuidos-2c2025/shared/message_manager"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/middleware/exchange"
@@ -91,7 +92,17 @@ func NewJoinByUserIdWorker(config *middleware.ConnectionConfig, readerConfig *Co
 	}
 
 	// Generate worker ID from reader config
-	workerID := fmt.Sprintf("userid-reader-%d", readerConfig.ReaderID)
+	// Add CompletionCleaner with MessageManager as cleanup handler
+	// Use WORKER_ID from environment (service name) for cleanup queue name
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		return nil, builder.CleanupOnError(fmt.Errorf("WORKER_ID environment variable is required"))
+	}
+	builder.WithCompletionCleaner(
+		queues.ClientCompletionCleanupExchange,
+		workerID,
+		[]completioncleaner.CleanupHandler{mm},
+	)
 
 	// Initialize completion signals persistence (custom logic, not in builder)
 	completionSignals := make(map[string]bool)
@@ -135,7 +146,7 @@ func (jw *JoinByUserIdWorker) Start() middleware.MessageMiddlewareError {
 	jw.completionConsumer.SetQueueName(completionQueueName)
 
 	// Start completion signal consumer
-	go jw.startCompletionSignalConsumer()
+	jw.startCompletionSignalConsumer()
 
 	// Start consuming top users messages
 	fmt.Println("Join by User ID Worker: Starting to listen for top users chunks...")
@@ -226,7 +237,7 @@ func (jw *JoinByUserIdWorker) startCompletionSignalConsumer() {
 // processTopUsersMessage processes a single top users chunk with NACK/requeue pattern
 func (jw *JoinByUserIdWorker) processTopUsersMessage(chunkMsg *chunk.Chunk) middleware.MessageMiddlewareError {
 	// Check if chunk was already processed
-	if jw.messageManager.IsProcessed(chunkMsg.ID) {
+	if jw.messageManager.IsProcessed(chunkMsg.ClientID, chunkMsg.ID) {
 		fmt.Printf("Join by User ID Worker: Chunk %s already processed, skipping\n", chunkMsg.ID)
 		return 0
 	}
@@ -264,7 +275,7 @@ func (jw *JoinByUserIdWorker) processTopUsersMessage(chunkMsg *chunk.Chunk) midd
 	}
 
 	// Mark chunk as processed after successful processing
-	if err := jw.messageManager.MarkProcessed(chunkMsg.ID); err != nil {
+	if err := jw.messageManager.MarkProcessed(chunkMsg.ClientID, chunkMsg.ID); err != nil {
 		fmt.Printf("Join by User ID Worker: Failed to mark chunk as processed: %v\n", err)
 		return middleware.MessageMiddlewareMessageError
 	}

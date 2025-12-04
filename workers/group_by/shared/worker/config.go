@@ -7,16 +7,13 @@ import (
 
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/queues"
+	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/common"
 )
 
 const (
 	// Default configuration
 	DefaultRabbitMQURL = "amqp://guest:guest@localhost:5672/"
 	DefaultNumPartitions = 10
-
-	// Worker count per query
-	Query2NumWorkers = 3
-	Query3NumWorkers = 3
 )
 
 // WorkerConfig holds configuration for the group by worker
@@ -48,19 +45,19 @@ func LoadConfig() (*WorkerConfig, error) {
 		return nil, fmt.Errorf("QUERY_TYPE must be 2, 3, or 4")
 	}
 
-	// Load worker ID (1-based from environment)
-	workerIDStr := os.Getenv("WORKER_ID")
+	// Load worker ID (1-based from environment, numeric ID for worker logic)
+	workerIDStr := os.Getenv("WORKER_NUMERIC_ID")
 	if workerIDStr == "" {
-		return nil, fmt.Errorf("WORKER_ID environment variable is required")
+		return nil, fmt.Errorf("WORKER_NUMERIC_ID environment variable is required")
 	}
 
 	workerID, err := strconv.Atoi(workerIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid WORKER_ID: %v", err)
+		return nil, fmt.Errorf("invalid WORKER_NUMERIC_ID: %v", err)
 	}
 
 	// Determine number of workers based on query type
-	numWorkers := getNumWorkersForQuery(queryType)
+	numWorkers := common.GetNumWorkersForQuery(queryType)
 
 	// Load NUM_WORKERS from environment (configurable for all queries)
 	numWorkersStr := os.Getenv("NUM_WORKERS")
@@ -135,22 +132,6 @@ func LoadConfig() (*WorkerConfig, error) {
 		ConnectionConfig:    connectionConfig,
 	}, nil
 }
-
-// getNumWorkersForQuery returns the number of workers for a specific query type
-func getNumWorkersForQuery(queryType int) int {
-	switch queryType {
-	case 2:
-		return Query2NumWorkers
-	case 3:
-		return Query3NumWorkers
-	case 4:
-		// Query 4 is configurable, default to 3
-		return 3
-	default:
-		return 1
-	}
-}
-
 
 // getEnv gets an environment variable with a default value
 func getEnv(key, defaultValue string) string {
