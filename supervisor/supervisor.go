@@ -104,13 +104,17 @@ func (s *Supervisor) onLeaderChange(newLeaderID int) {
 	}
 }
 
-func (s *Supervisor) restartWorker(containerName string) {
+func (s *Supervisor) restartWorker(containerName string) bool {
 	log.Printf("[Supervisor] Restarting worker: %s", containerName)
 
 	err := s.dockerManager.RestartContainer(containerName)
 	if err != nil {
 		log.Printf("[Supervisor] Failed to restart %s: %v", containerName, err)
+		return false
 	}
+
+	log.Printf("[Supervisor] Successfully restarted worker: %s", containerName)
+	return true
 }
 
 func (s *Supervisor) Stop() {
