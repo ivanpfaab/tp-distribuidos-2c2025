@@ -24,24 +24,11 @@ func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk, queryT
 	rd.sendFormattedDataToClient(chunkData)
 
 	// Persist metadata through StatefulWorkerManager
+	// Note: ProcessMessage internally calls UpdateState() which processes chunk notifications
+	// through the CompletionTracker, so we don't need to call processChunkNotification() separately
 	if err := rd.statefulWorkerManager.ProcessMessage(chunkData); err != nil {
 		testing.LogError("Results Dispatcher", "Failed to process message through StatefulWorkerManager: %v", err)
 		return middleware.MessageMiddlewareMessageError
-	}
-
-	chunkNotification := signals.NewChunkNotification(
-		chunkData.ClientID,
-		chunkData.FileID,
-		"query-results",
-		chunkData.TableID,
-		chunkData.ChunkNumber,
-		chunkData.IsLastChunk,
-		chunkData.IsLastFromTable,
-	)
-
-	if err := rd.processChunkNotification(chunkNotification, queryType); err != 0 {
-		testing.LogError("Results Dispatcher", "Failed to process Query%d chunk notification: %v", queryType, err)
-		return err
 	}
 
 	// Mark chunk as processed after successful processing
@@ -53,32 +40,6 @@ func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk, queryT
 	return middleware.MessageMiddlewareError(0)
 }
 
-// processChunkNotification processes chunk notifications for completion tracking (all queries)
-func (rd *ResultsDispatcherWorker) processChunkNotification(notification *signals.ChunkNotification, queryType int) middleware.MessageMiddlewareError {
-	// Get the appropriate CompletionTracker
-	var tracker *shared.CompletionTracker
-	switch queryType {
-	case QueryType1:
-		tracker = rd.query1Tracker
-	case QueryType2:
-		tracker = rd.query2Tracker
-	case QueryType3:
-		tracker = rd.query3Tracker
-	case QueryType4:
-		tracker = rd.query4Tracker
-	default:
-		testing.LogError("Results Dispatcher", "processChunkNotification called for unsupported query type: %d", queryType)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	// Process notification through CompletionTracker
-	if err := tracker.ProcessChunkNotification(notification); err != nil {
-		testing.LogError("Results Dispatcher", "Failed to process Query%d chunk notification: %v", queryType, err)
-		return middleware.MessageMiddlewareMessageError
-	}
-
-	return middleware.MessageMiddlewareError(0)
-}
 
 // sendFormattedDataToClient formats the chunk data and sends it to client request handler
 func (rd *ResultsDispatcherWorker) sendFormattedDataToClient(chunkData *chunk.Chunk) middleware.MessageMiddlewareError {
