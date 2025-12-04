@@ -31,12 +31,6 @@ func NewResultsHandler(connectionManager *network.ConnectionManager, completionE
 	// Initialize MessageManager for duplicate detection
 	processedChunksPath := filepath.Join(stateDir, "processed-results.txt")
 	messageManager := messagemanager.NewMessageManager(processedChunksPath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		log.Printf("Results Handler: Warning - failed to load processed results: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		log.Printf("Results Handler: Loaded %d processed result chunks", count)
-	}
 
 	return &ResultsHandler{
 		connectionManager:  connectionManager,
@@ -66,6 +60,10 @@ func (h *ResultsHandler) HandleCompletionSignal(signal *signals.ClientCompletion
 		if err := h.completionExchange.Send(serializedSignal, []string{}); err != 0 {
 			log.Printf("Results Handler: Failed to publish completion signal to exchange for client %s: %v", signal.ClientID, err)
 			return
+		}
+
+		if err := h.messageManager.CleanClient(signal.ClientID); err != nil {
+			log.Printf("Results Handler: Failed to clean up processed messages for client %s: %v", signal.ClientID, err)
 		}
 
 		log.Printf("Results Handler: Published completion signal to cleanup exchange for client %s", signal.ClientID)

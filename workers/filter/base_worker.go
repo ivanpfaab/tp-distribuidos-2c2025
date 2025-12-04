@@ -81,12 +81,6 @@ func NewBaseFilterWorker(config *Config) (*BaseFilterWorker, error) {
 
 	// Initialize MessageManager for fault tolerance
 	messageManager := messagemanager.NewMessageManager(config.StateFilePath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		fmt.Printf("%s: Warning - failed to load processed IDs: %v (starting with empty state)\n", config.WorkerName, err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("%s: Loaded %d processed IDs\n", config.WorkerName, count)
-	}
 
 	// Create CompletionCleaner with MessageManager as cleanup handler
 	// Use WORKER_ID from environment (service name) for cleanup queue name

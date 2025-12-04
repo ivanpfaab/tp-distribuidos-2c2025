@@ -64,12 +64,6 @@ func NewGroupByOrchestrator(queryType int) (*GroupByOrchestrator, error) {
 
 	// Initialize MessageManager for duplicate detection
 	messageManager := messagemanager.NewMessageManager(processedNotificationsPath)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		log.Printf("Group By Orchestrator: Warning - failed to load processed notifications: %v (starting with empty state)", err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		log.Printf("Group By Orchestrator: Loaded %d processed notification IDs", count)
-	}
 
 	// Initialize StateManager
 	stateManager := NewStateManager(metadataDir, orchestrator.completionTracker)

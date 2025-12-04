@@ -55,15 +55,6 @@ func (wb *WorkerBuilder) WithMessageManager(stateFilePath string) *WorkerBuilder
 	// Create MessageManager
 	messageManager := messagemanager.NewMessageManager(stateFilePath)
 
-	// Try to load processed IDs (non-fatal if file doesn't exist)
-	if err := messageManager.LoadProcessedIDs(); err != nil {
-		// Log warning but continue - starting with empty state is acceptable
-		fmt.Printf("%s: Warning - failed to load processed IDs: %v (starting with empty state)\n", wb.workerName, err)
-	} else {
-		count := messageManager.GetProcessedCount()
-		fmt.Printf("%s: Loaded %d processed IDs\n", wb.workerName, count)
-	}
-
 	// Register for cleanup
 	wb.resourceTracker.Register(
 		ResourceTypeMessageManager,

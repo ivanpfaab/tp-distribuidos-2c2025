@@ -314,12 +314,6 @@ func (rd *ResultsDispatcherWorker) initializeFaultTolerance() error {
 	// Initialize MessageManager for duplicate detection
 	processedChunksPath := filepath.Join(stateDir, "processed-chunks.txt")
 	rd.messageManager = messagemanager.NewMessageManager(processedChunksPath)
-	if err := rd.messageManager.LoadProcessedIDs(); err != nil {
-		testing_utils.LogInfo("Results Dispatcher", "Warning - failed to load processed chunks: %v (starting with empty state)", err)
-	} else {
-		count := rd.messageManager.GetProcessedCount()
-		testing_utils.LogInfo("Results Dispatcher", "Loaded %d processed chunks", count)
-	}
 
 	// Initialize StatefulWorkerManager
 	metadataDir := filepath.Join(stateDir, "metadata")
