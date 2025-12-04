@@ -422,6 +422,11 @@ func saveCompletionSignal(filePath string, clientID string) error {
 		return fmt.Errorf("failed to write to file: %w", err)
 	}
 
+	// Sync to ensure data is persisted to disk before returning
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
+	}
+
 	return nil
 }
 
@@ -461,6 +466,11 @@ func removeCompletionSignal(filePath string, clientID string) error {
 		if _, err := file.WriteString(line + "\n"); err != nil {
 			return fmt.Errorf("failed to write to file: %w", err)
 		}
+	}
+
+	// Sync to ensure data is persisted to disk before returning
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
 	}
 
 	return nil
