@@ -96,6 +96,14 @@ func (tsm *TopItemsStateManager) RebuildState(clientStates map[string]*ClientSta
 				return nil // Skip invalid rows
 			}
 
+			// Mark chunk as received before checking for marker rows
+			state.receivedChunks[chunkNumber] = true
+
+			// Skip metadata marker rows (year=0, month=0) - they are only for fault tolerance tracking
+			if year == 0 && month == 0 {
+				return nil
+			}
+
 			itemID := row[4]
 			totalQuantity, err := strconv.Atoi(row[5])
 			if err != nil {
@@ -106,8 +114,6 @@ func (tsm *TopItemsStateManager) RebuildState(clientStates map[string]*ClientSta
 			if err != nil {
 				return nil // Skip invalid rows
 			}
-
-			state.receivedChunks[chunkNumber] = true
 
 			// Update top items by month
 			monthKey := fmt.Sprintf("%04d-%02d", year, month)

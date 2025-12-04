@@ -179,6 +179,11 @@ func (tsm *TopUsersStateManager) ProcessChunk(chunkMsg *chunk.Chunk, clientState
 				continue
 			}
 
+			// Skip metadata marker rows (empty userID/storeID) - they are only for fault tolerance
+			if userID == "" || storeID == "" {
+				continue
+			}
+
 			// Update state
 			if clientState.topUsersByStore[storeID] == nil {
 				clientState.topUsersByStore[storeID] = NewStoreTopUsers(storeID)

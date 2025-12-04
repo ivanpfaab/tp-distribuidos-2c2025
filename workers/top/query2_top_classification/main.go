@@ -239,6 +239,10 @@ func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState
 	for _, monthTop := range clientState.topItemsByMonth {
 		// Add top by quantity
 		if monthTop.TopByQuantity != nil {
+			// Skip metadata marker rows (year=0, month=0) - they are only for fault tolerance
+			if monthTop.TopByQuantity.Year == 0 && monthTop.TopByQuantity.Month == 0 {
+				continue
+			}
 			csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
 				monthTop.TopByQuantity.Year,
 				monthTop.TopByQuantity.Month,
@@ -251,6 +255,10 @@ func (tw *TopItemsWorker) sendTopItems(clientID string, clientState *ClientState
 
 		// Add top by revenue (if different from top by quantity)
 		if monthTop.TopByRevenue != nil {
+			// Skip metadata marker rows (year=0, month=0) - they are only for fault tolerance
+			if monthTop.TopByRevenue.Year == 0 && monthTop.TopByRevenue.Month == 0 {
+				continue
+			}
 			if monthTop.TopByQuantity == nil || monthTop.TopByRevenue.ItemID != monthTop.TopByQuantity.ItemID {
 				csvBuilder.WriteString(fmt.Sprintf("%d,%d,%s,%d,%.2f,%d\n",
 					monthTop.TopByRevenue.Year,
