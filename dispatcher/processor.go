@@ -5,14 +5,12 @@ import (
 	"strings"
 
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
-	"github.com/tp-distribuidos-2c2025/protocol/signals"
 	"github.com/tp-distribuidos-2c2025/shared/middleware"
 	"github.com/tp-distribuidos-2c2025/shared/testing"
-	"github.com/tp-distribuidos-2c2025/workers/shared"
 )
 
 // processMessage processes incoming messages and sends formatted data to client
-func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk, queryType int) middleware.MessageMiddlewareError {
+func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk) middleware.MessageMiddlewareError {
 
 	// Check if chunk was already processed (duplicate detection)
 	if rd.messageManager.IsProcessed(chunkData.ClientID, chunkData.ID) {
@@ -39,7 +37,6 @@ func (rd *ResultsDispatcherWorker) processMessage(chunkData *chunk.Chunk, queryT
 
 	return middleware.MessageMiddlewareError(0)
 }
-
 
 // sendFormattedDataToClient formats the chunk data and sends it to client request handler
 func (rd *ResultsDispatcherWorker) sendFormattedDataToClient(chunkData *chunk.Chunk) middleware.MessageMiddlewareError {

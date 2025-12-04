@@ -73,12 +73,20 @@ func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []strin
 	defer file.Close()
 
 	writer := csv.NewWriter(file)
-	defer writer.Flush()
 
 	// Write header if this is a new file
 	if !fileExists && len(opts.Header) > 0 {
 		if err := writer.Write(opts.Header); err != nil {
 			return fmt.Errorf("failed to write header: %w", err)
+		}
+	}
+
+	// If this is a new file, sync the directory to ensure the file entry is persisted
+	if !fileExists {
+		dir, dirErr := os.Open(filepath.Dir(filePath))
+		if dirErr == nil {
+			dir.Sync()
+			dir.Close()
 		}
 	}
 
@@ -97,7 +105,14 @@ func (pm *PartitionManager) appendToPartitionFile(filePath string, lines []strin
 		//testing_utils.LogInfo("Partition Manager", "Writing record: %v", record)
 	}
 
-	// Sync to ensure data is written to disk
+	// Flush writer buffer to file BEFORE syncing
+	// (writer.Write only writes to an internal buffer, not the file)
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return fmt.Errorf("failed to flush writer: %w", err)
+	}
+
+	// Now sync to disk - data is actually in the file at this point
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("failed to sync file: %w", err)
 	}

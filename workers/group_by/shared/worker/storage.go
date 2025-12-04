@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	partitionmanager "github.com/tp-distribuidos-2c2025/shared/partition_manager"
+	testing_utils "github.com/tp-distribuidos-2c2025/shared/testing"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared"
 	"github.com/tp-distribuidos-2c2025/workers/group_by/shared/storage"
 )
@@ -85,7 +85,7 @@ func (fm *FileManager) writePartitionWithFaultTolerance(partition int, lines []s
 	if isFirstChunk {
 		// First chunk after restart - check for duplicates/incomplete writes
 		filePath := fm.partitionManager.GetPartitionFilePath(opts, partition)
-		linesCount := len(lines)*2 // To avoid duplicates we leave some space for the last lines
+		linesCount := len(lines) * 2 // To avoid duplicates we leave some space for the last lines
 		lastLines, err := fm.partitionManager.GetLastLines(filePath, linesCount)
 		if err != nil {
 			return fmt.Errorf("failed to get last lines for partition %d: %w", partition, err)

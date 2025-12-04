@@ -176,7 +176,11 @@ func (m *Manager[T]) SaveDictionaryChunkToFile(clientID string, filePath string,
 					return fmt.Errorf("failed to write row: %w", err)
 				}
 			}
+			// Flush writer buffer to file and check for errors
 			writer.Flush()
+			if err := writer.Error(); err != nil {
+				return fmt.Errorf("failed to flush writer: %w", err)
+			}
 		}
 	} else {
 		// New file - write CSV data as-is (includes header)
@@ -185,7 +189,7 @@ func (m *Manager[T]) SaveDictionaryChunkToFile(clientID string, filePath string,
 		}
 	}
 
-	// Sync to ensure data is written
+	// Sync to ensure data is written to disk
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("failed to sync file: %w", err)
 	}

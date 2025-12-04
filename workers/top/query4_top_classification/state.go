@@ -135,20 +135,10 @@ func (tsm *TopUsersStateManager) RebuildState(clientStates map[string]*ClientSta
 }
 
 // ProcessChunk processes a chunk message: persists CSV data and updates state
+// IMPORTANT: Always writes at least a marker row to ensure chunk is recorded for recovery
 func (tsm *TopUsersStateManager) ProcessChunk(chunkMsg *chunk.Chunk, clientState *ClientState) error {
 	chunkNumber := int(chunkMsg.ChunkNumber)
 	clientState.receivedChunks[chunkNumber] = true
-
-	if chunkMsg.ChunkSize == 0 || len(chunkMsg.ChunkData) == 0 {
-		return nil
-	}
-
-	// Parse CSV data
-	reader := csv.NewReader(strings.NewReader(chunkMsg.ChunkData))
-	records, err := reader.ReadAll()
-	if err != nil {
-		return fmt.Errorf("failed to parse CSV: %w", err)
-	}
 
 	csvPath := filepath.Join(tsm.metadataDir, chunkMsg.ClientID+".csv")
 	columns := []string{"msg_id", "chunk_number", "user_id", "store_id", "purchase_count"}
@@ -156,52 +146,79 @@ func (tsm *TopUsersStateManager) ProcessChunk(chunkMsg *chunk.Chunk, clientState
 	// Collect all rows to write in batch
 	var rowsToWrite [][]string
 
-	// Process each row (skip header if present)
-	startIdx := 1
-	if len(records) > 0 && len(records[0]) > 0 {
-		// Check if first row looks like header
-		if records[0][0] == "msg_id" || records[0][0] == "user_id" {
-			startIdx = 1
-		} else {
-			startIdx = 0
+	// If chunk has data, parse and process it
+	if chunkMsg.ChunkSize > 0 && len(chunkMsg.ChunkData) > 0 {
+		// Parse CSV data
+		reader := csv.NewReader(strings.NewReader(chunkMsg.ChunkData))
+		records, err := reader.ReadAll()
+		if err != nil {
+			return fmt.Errorf("failed to parse CSV: %w", err)
+		}
+
+		// Process each row (skip header if present)
+		startIdx := 1
+		if len(records) > 0 && len(records[0]) > 0 {
+			// Check if first row looks like header
+			if records[0][0] == "msg_id" || records[0][0] == "user_id" {
+				startIdx = 1
+			} else {
+				startIdx = 0
+			}
+		}
+
+		for i := startIdx; i < len(records); i++ {
+			record := records[i]
+			if len(record) < 3 {
+				continue
+			}
+
+			userID := record[0]
+			storeID := record[1]
+			purchaseCount, err := strconv.Atoi(record[2])
+			if err != nil {
+				continue
+			}
+
+			// Skip metadata marker rows (empty userID/storeID) - they are only for fault tolerance
+			if userID == "" || storeID == "" {
+				continue
+			}
+
+			// Update state
+			if clientState.topUsersByStore[storeID] == nil {
+				clientState.topUsersByStore[storeID] = NewStoreTopUsers(storeID)
+			}
+			clientState.topUsersByStore[storeID].Add(userID, purchaseCount)
+
+			// Collect row for batch write
+			row := []string{
+				chunkMsg.ID,
+				strconv.Itoa(chunkNumber),
+				userID,
+				storeID,
+				strconv.Itoa(purchaseCount),
+			}
+			rowsToWrite = append(rowsToWrite, row)
 		}
 	}
 
-	for i := startIdx; i < len(records); i++ {
-		record := records[i]
-		if len(record) < 3 {
-			continue
-		}
-
-		userID := record[0]
-		storeID := record[1]
-		purchaseCount, err := strconv.Atoi(record[2])
-		if err != nil {
-			continue
-		}
-
-		// Update state
-		if clientState.topUsersByStore[storeID] == nil {
-			clientState.topUsersByStore[storeID] = NewStoreTopUsers(storeID)
-		}
-		clientState.topUsersByStore[storeID].Add(userID, purchaseCount)
-
-		// Collect row for batch write
-		row := []string{
+	// CRITICAL: Always write at least a marker row to record that this chunk was received
+	// This ensures the chunk can be recovered after a crash, even if it had no data
+	if len(rowsToWrite) == 0 {
+		// Write a marker row with empty values - will be recognized during rebuild
+		markerRow := []string{
 			chunkMsg.ID,
 			strconv.Itoa(chunkNumber),
-			userID,
-			storeID,
-			strconv.Itoa(purchaseCount),
+			"",  // empty user_id indicates marker
+			"",  // empty store_id
+			"0", // purchase_count = 0
 		}
-		rowsToWrite = append(rowsToWrite, row)
+		rowsToWrite = append(rowsToWrite, markerRow)
 	}
 
-	// Write all rows in a single batch (file opened once, synced once)
-	if len(rowsToWrite) > 0 {
-		if err := tsm.csvHandler.AppendRows(csvPath, rowsToWrite, columns); err != nil {
-			return fmt.Errorf("failed to append rows: %w", err)
-		}
+	// Write all rows (always at least one marker row)
+	if err := tsm.csvHandler.AppendRows(csvPath, rowsToWrite, columns); err != nil {
+		return fmt.Errorf("failed to append rows: %w", err)
 	}
 
 	return nil

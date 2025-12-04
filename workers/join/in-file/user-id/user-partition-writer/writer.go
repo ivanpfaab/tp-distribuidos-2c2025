@@ -339,7 +339,7 @@ func (upw *UserPartitionWriter) writeUsersToPartitions(csvData string, clientID 
 		if !upw.firstChunkProcessed {
 			// First chunk after restart - check for duplicates/incomplete writes
 			filePath := upw.partitionManager.GetPartitionFilePath(opts, partition)
-			linesCount := len(lines)
+			linesCount := len(lines) * 2 // To avoid duplicates we leave some space for the last lines
 			lastLines, err := upw.partitionManager.GetLastLines(filePath, linesCount)
 			if err != nil {
 				return fmt.Errorf("failed to get last lines for partition %d: %w", partition, err)

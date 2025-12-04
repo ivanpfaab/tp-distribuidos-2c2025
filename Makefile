@@ -1,6 +1,6 @@
 # Simple Makefile for Docker Compose Management
 
-.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-up-chaos docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-logs-chaos docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore docker-compose-cleanup volume-cleanup
+.PHONY: help docker-compose-up docker-compose-up-quick docker-compose-up-chaos docker-compose-down docker-compose-down-force docker-compose-logs docker-compose-logs-orchestration docker-compose-logs-data-flow docker-compose-logs-chaos docker-compose-build docker-compose-test docker-compose-rebuild docker-rebuild docker-compose-generate docker-compose-restore cleanup cleanup-excluding-chaos volume-cleanup
 
 # Default target
 help: ## Show this help message
@@ -16,12 +16,13 @@ help: ## Show this help message
 	@echo "  docker-compose-logs-chaos        - Show logs for Chaos Monkey and supervisors only"
 	@echo "  docker-compose-build             - Build all Docker images"
 	@echo "  docker-compose-rebuild           - Rebuild everything from scratch (no cache)"
-	@echo "  docker-compose-cleanup           - Cleanup services, images, and volumes"
+	@echo "  cleanup                          - Cleanup services, images, and volumes"
+	@echo "  cleanup-excluding-chaos          - Cleanup services, images, and volumes (preserving chaos-monkey image)"
 	@echo "  docker-rebuild                   - Full Docker cleanup and rebuild (stops all containers, prunes images)"
 	@echo "  docker-compose-test              - Run tests"
 	@echo "  docker-compose-generate          - Generate docker-compose.yaml (scale: filters, gateways, join workers, clients)"
 	@echo "  docker-compose-restore           - Restore original docker-compose.yaml from backup"
-	@echo "  volume-cleanup                   - Clean up all Docker volumes and system resources"
+	@echo "  volume-cleanup                   - Clean up all Docker volumes and system resources (preserving chaos-monkey image)"
 	@echo "  help                             - Show this help message"
 
 # Start all services in proper order
@@ -76,7 +77,9 @@ docker-compose-up-chaos: ## Start all services WITH Chaos Monkey for fault injec
 	docker compose --profile orchestration --profile data-flow up -d proxy-1
 	@echo "5. Starting Clients..."
 	docker compose --profile orchestration --profile data-flow up -d
-	@echo "6. Starting Chaos Monkey..."
+	@echo "6. Pre-pulling Chaos Monkey base image..."
+	@docker pull docker:cli > /dev/null 2>&1 || true
+	@echo "7. Starting Chaos Monkey..."
 	docker compose --profile orchestration --profile data-flow --profile chaos up -d chaos-monkey
 	@echo ""
 	@echo "All services started with Chaos Monkey!"
@@ -99,6 +102,24 @@ cleanup: ## Cleanup services, images, and volumes
 	@echo "4. Pruning Docker images and volumes..."
 	docker image prune -a -f || true
 	docker volume prune -f || true
+	@echo "Cleanup complete!"
+
+# Cleanup services, images, and volumes (preserving chaos-monkey image)
+cleanup-excluding-chaos: ## Cleanup services, images, and volumes (preserving chaos-monkey image)
+	@echo "Starting cleanup (preserving chaos-monkey image)..."
+	@echo "0. Preserving chaos-monkey image..."
+	@docker image save tp-distribuidos-2c2025-chaos-monkey:latest -o /tmp/chaos-monkey-image.tar 2>/dev/null || echo "  (chaos-monkey image not found, skipping save)"
+	@echo "1. Stopping docker-compose services and removing project volumes..."
+	docker compose down -v --remove-orphans || true
+	@echo "2. Stopping all Docker containers..."
+	docker stop $$(docker ps -aq) 2>/dev/null || true
+	@echo "3. Removing all Docker containers..."
+	docker rm $$(docker ps -aq) 2>/dev/null || true
+	@echo "4. Pruning Docker images and volumes..."
+	docker image prune -a -f || true
+	docker volume prune -f || true
+	@echo "5. Restoring chaos-monkey image..."
+	@docker image load -i /tmp/chaos-monkey-image.tar 2>/dev/null && rm /tmp/chaos-monkey-image.tar || echo "  (chaos-monkey image not found, skipping restore)"
 	@echo "Cleanup complete!"
 
 # Force stop all services (stops containers with restart policies)
@@ -192,5 +213,9 @@ docker-compose-restore: ## Restore original docker-compose.yaml from backup
 
 # Clean up all Docker volumes and system resources
 volume-cleanup: ## Clean up all Docker volumes and system resources
+	@echo "Preserving chaos-monkey image..."
+	@docker image save tp-distribuidos-2c2025-chaos-monkey:latest -o /tmp/chaos-monkey-image.tar 2>/dev/null || echo "  (chaos-monkey image not found, skipping save)"
 	docker system prune -a --volumes
 	docker volume rm $$(docker volume ls -q) 2>/dev/null || true
+	@echo "Restoring chaos-monkey image..."
+	@docker image load -i /tmp/chaos-monkey-image.tar 2>/dev/null && rm /tmp/chaos-monkey-image.tar || echo "  (chaos-monkey image not found, skipping restore)"
