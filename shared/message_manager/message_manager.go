@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const (
@@ -17,6 +18,7 @@ type MessageManager struct {
 	baseDir          string                     // Base directory for client-specific files
 	processedIDs     map[string]map[string]bool // clientID -> messageID -> bool
 	completedClients map[string]bool            // clientID -> completed (loaded from disk)
+	mutex            sync.Mutex                 // Protects concurrent access to maps
 }
 
 // NewMessageManager creates a new MessageManager instance
@@ -88,9 +90,13 @@ func (mm *MessageManager) loadClientProcessedIDs(clientID string) error {
 
 	return nil
 }
+
 // IsProcessed checks if an ID has already been processed for a specific client
 // Returns true if the client is completed OR if the specific ID was processed
 func (mm *MessageManager) IsProcessed(clientID string, id string) bool {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
 	// First check if client is completed - if so, treat all messages as processed
 	if mm.completedClients[clientID] {
 		return true
@@ -112,6 +118,15 @@ func (mm *MessageManager) IsProcessed(clientID string, id string) bool {
 
 // MarkProcessed marks an ID as processed for a specific client and appends it to the client's file
 func (mm *MessageManager) MarkProcessed(clientID string, id string) error {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
+	// If client is already completed, don't write anything
+	// This handles the race condition where CleanClient runs between IsProcessed and MarkProcessed
+	if mm.completedClients[clientID] {
+		return nil
+	}
+
 	// Load client's processed IDs if not already loaded
 	if err := mm.loadClientProcessedIDs(clientID); err != nil {
 		// Initialize if load failed (new client)
@@ -150,8 +165,21 @@ func (mm *MessageManager) MarkProcessed(clientID string, id string) error {
 	return nil
 }
 
-// CleanClient removes all processed IDs for a specific client (idempotent)
+// CleanClient removes all processed IDs for a specific client and marks it as completed
+// This ensures that any future messages for this client will be skipped (idempotent)
 func (mm *MessageManager) CleanClient(clientID string) error {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
+	// Mark client as completed in memory
+	mm.completedClients[clientID] = true
+
+	// Persist completed client to disk BEFORE deleting processed IDs
+	// This ensures that even if we crash, the client will be marked as completed on restart
+	if err := mm.persistCompletedClient(clientID); err != nil {
+		return fmt.Errorf("failed to persist completed client: %w", err)
+	}
+
 	// Remove from memory
 	delete(mm.processedIDs, clientID)
 
@@ -160,6 +188,40 @@ func (mm *MessageManager) CleanClient(clientID string) error {
 	err := os.Remove(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete client file: %w", err)
+	}
+
+	return nil
+}
+
+// persistCompletedClient appends a client ID to the completed clients file
+func (mm *MessageManager) persistCompletedClient(clientID string) error {
+	// Ensure directory exists
+	dir := filepath.Dir(completedClientsFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Open file for appending
+	file, err := os.OpenFile(completedClientsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open completed clients file: %w", err)
+	}
+	defer file.Close()
+
+	// Write client ID
+	data := []byte(clientID + "\n")
+	totalWritten := 0
+	for totalWritten < len(data) {
+		n, err := file.Write(data[totalWritten:])
+		if err != nil {
+			return fmt.Errorf("failed to write to file: %w", err)
+		}
+		totalWritten += n
+	}
+
+	// Sync to ensure data is written to disk before ACK
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
 	}
 
 	return nil
@@ -199,6 +261,9 @@ func loadCompletedClients(completedClients map[string]bool) error {
 
 // GetProcessedCount returns the total number of processed IDs across all clients
 func (mm *MessageManager) GetProcessedCount() int {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
 	total := 0
 	for _, clientIDs := range mm.processedIDs {
 		total += len(clientIDs)
