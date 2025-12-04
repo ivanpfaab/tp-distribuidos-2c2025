@@ -167,20 +167,10 @@ func (tsm *TopItemsStateManager) RebuildState(clientStates map[string]*ClientSta
 }
 
 // ProcessChunk processes a chunk message: persists CSV data and updates state
+// IMPORTANT: Always writes at least a marker row to ensure chunk is recorded for recovery
 func (tsm *TopItemsStateManager) ProcessChunk(chunkMsg *chunk.Chunk, clientState *ClientState) error {
 	chunkNumber := int(chunkMsg.ChunkNumber)
 	clientState.receivedChunks[chunkNumber] = true
-
-	if chunkMsg.ChunkSize == 0 || len(chunkMsg.ChunkData) == 0 {
-		return nil
-	}
-
-	// Parse CSV data
-	reader := csv.NewReader(strings.NewReader(chunkMsg.ChunkData))
-	records, err := reader.ReadAll()
-	if err != nil {
-		return fmt.Errorf("failed to parse CSV: %w", err)
-	}
 
 	csvPath := filepath.Join(tsm.metadataDir, chunkMsg.ClientID+".csv")
 	columns := []string{"msg_id", "chunk_number", "year", "month", "item_id", "total_quantity", "total_subtotal"}
@@ -188,82 +178,106 @@ func (tsm *TopItemsStateManager) ProcessChunk(chunkMsg *chunk.Chunk, clientState
 	// Collect all rows to write in batch
 	var rowsToWrite [][]string
 
-	// Process each row (skip header rows)
-	for i := 0; i < len(records); i++ {
-		record := records[i]
-		// Skip header rows
-		if len(record) > 0 && strings.Contains(record[0], "year") {
-			continue
-		}
-
-		if len(record) < 6 {
-			continue
-		}
-
-		year, err := strconv.Atoi(record[0])
+	// If chunk has data, parse and process it
+	if chunkMsg.ChunkSize > 0 && len(chunkMsg.ChunkData) > 0 {
+		// Parse CSV data
+		reader := csv.NewReader(strings.NewReader(chunkMsg.ChunkData))
+		records, err := reader.ReadAll()
 		if err != nil {
-			continue
+			return fmt.Errorf("failed to parse CSV: %w", err)
 		}
 
-		month, err := strconv.Atoi(record[1])
-		if err != nil {
-			continue
-		}
+		// Process each row (skip header rows)
+		for i := 0; i < len(records); i++ {
+			record := records[i]
+			// Skip header rows
+			if len(record) > 0 && strings.Contains(record[0], "year") {
+				continue
+			}
 
-		itemID := record[2]
-		totalQuantity, err := strconv.Atoi(record[3])
-		if err != nil {
-			continue
-		}
+			if len(record) < 6 {
+				continue
+			}
 
-		totalSubtotal, err := strconv.ParseFloat(record[4], 64)
-		if err != nil {
-			continue
-		}
+			year, err := strconv.Atoi(record[0])
+			if err != nil {
+				continue
+			}
 
-		// Update state
-		monthKey := fmt.Sprintf("%04d-%02d", year, month)
-		if clientState.topItemsByMonth[monthKey] == nil {
-			clientState.topItemsByMonth[monthKey] = &MonthTopItems{}
-		}
+			month, err := strconv.Atoi(record[1])
+			if err != nil {
+				continue
+			}
 
-		monthTop := clientState.topItemsByMonth[monthKey]
-		currentItem := &ItemRecord{
-			ItemID:        itemID,
-			Year:          year,
-			Month:         month,
-			TotalQuantity: totalQuantity,
-			TotalSubtotal: totalSubtotal,
-		}
+			itemID := record[2]
+			totalQuantity, err := strconv.Atoi(record[3])
+			if err != nil {
+				continue
+			}
 
-		// Update top by quantity
-		if monthTop.TopByQuantity == nil || currentItem.TotalQuantity > monthTop.TopByQuantity.TotalQuantity {
-			monthTop.TopByQuantity = currentItem
-		}
+			totalSubtotal, err := strconv.ParseFloat(record[4], 64)
+			if err != nil {
+				continue
+			}
 
-		// Update top by revenue
-		if monthTop.TopByRevenue == nil || currentItem.TotalSubtotal > monthTop.TopByRevenue.TotalSubtotal {
-			monthTop.TopByRevenue = currentItem
-		}
+			// Update state
+			monthKey := fmt.Sprintf("%04d-%02d", year, month)
+			if clientState.topItemsByMonth[monthKey] == nil {
+				clientState.topItemsByMonth[monthKey] = &MonthTopItems{}
+			}
 
-		// Collect row for batch write
-		row := []string{
-			chunkMsg.ID,
-			strconv.Itoa(chunkNumber),
-			strconv.Itoa(year),
-			strconv.Itoa(month),
-			itemID,
-			strconv.Itoa(totalQuantity),
-			strconv.FormatFloat(totalSubtotal, 'f', 2, 64),
+			monthTop := clientState.topItemsByMonth[monthKey]
+			currentItem := &ItemRecord{
+				ItemID:        itemID,
+				Year:          year,
+				Month:         month,
+				TotalQuantity: totalQuantity,
+				TotalSubtotal: totalSubtotal,
+			}
+
+			// Update top by quantity
+			if monthTop.TopByQuantity == nil || currentItem.TotalQuantity > monthTop.TopByQuantity.TotalQuantity {
+				monthTop.TopByQuantity = currentItem
+			}
+
+			// Update top by revenue
+			if monthTop.TopByRevenue == nil || currentItem.TotalSubtotal > monthTop.TopByRevenue.TotalSubtotal {
+				monthTop.TopByRevenue = currentItem
+			}
+
+			// Collect row for batch write
+			row := []string{
+				chunkMsg.ID,
+				strconv.Itoa(chunkNumber),
+				strconv.Itoa(year),
+				strconv.Itoa(month),
+				itemID,
+				strconv.Itoa(totalQuantity),
+				strconv.FormatFloat(totalSubtotal, 'f', 2, 64),
+			}
+			rowsToWrite = append(rowsToWrite, row)
 		}
-		rowsToWrite = append(rowsToWrite, row)
 	}
 
-	// Write all rows in a single batch (file opened once, synced once)
-	if len(rowsToWrite) > 0 {
-		if err := tsm.csvHandler.AppendRows(csvPath, rowsToWrite, columns); err != nil {
-			return fmt.Errorf("failed to append rows: %w", err)
+	// CRITICAL: Always write at least a marker row to record that this chunk was received
+	// This ensures the chunk can be recovered after a crash, even if it had no data
+	if len(rowsToWrite) == 0 {
+		// Write a marker row with zeros - will be recognized during rebuild
+		markerRow := []string{
+			chunkMsg.ID,
+			strconv.Itoa(chunkNumber),
+			"0",  // year = 0 indicates marker
+			"0",  // month = 0
+			"",   // empty item_id
+			"0",  // quantity = 0
+			"0",  // subtotal = 0
 		}
+		rowsToWrite = append(rowsToWrite, markerRow)
+	}
+
+	// Write all rows (always at least one marker row)
+	if err := tsm.csvHandler.AppendRows(csvPath, rowsToWrite, columns); err != nil {
+		return fmt.Errorf("failed to append rows: %w", err)
 	}
 
 	return nil

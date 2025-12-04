@@ -38,6 +38,10 @@ func (h *CSVHandler) AppendRows(filePath string, rows [][]string, columns []stri
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
+	// Check if file exists before opening (to know if we need to sync directory)
+	_, statErr := os.Stat(filePath)
+	isNewFile := os.IsNotExist(statErr)
+
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
@@ -45,7 +49,6 @@ func (h *CSVHandler) AppendRows(filePath string, rows [][]string, columns []stri
 	defer file.Close()
 
 	writer := csv.NewWriter(file)
-	defer writer.Flush()
 
 	// Write header if file is new
 	stat, err := file.Stat()
@@ -59,6 +62,15 @@ func (h *CSVHandler) AppendRows(filePath string, rows [][]string, columns []stri
 		}
 	}
 
+	// If this is a new file, sync the directory to ensure the file entry is persisted
+	if isNewFile {
+		dir, err := os.Open(filepath.Dir(filePath))
+		if err == nil {
+			dir.Sync()
+			dir.Close()
+		}
+	}
+
 	// Write all data rows
 	for _, row := range rows {
 		if err := writer.Write(row); err != nil {
@@ -66,10 +78,23 @@ func (h *CSVHandler) AppendRows(filePath string, rows [][]string, columns []stri
 		}
 	}
 
-	// Sync once after all rows written
+	fmt.Printf("CSVHandler: Wrote rows (BEFORE FLUSH): %s", filePath)
+
+	// Flush writer buffer to file BEFORE syncing
+	// (writer.Write only writes to an internal buffer, not the file)
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return fmt.Errorf("failed to flush writer: %w", err)
+	}
+
+	fmt.Printf("CSVHandler: Wrote rows (AFTER FLUSH): %s", filePath)
+
+	// Now sync to disk - data is actually in the file at this point
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("failed to sync file: %w", err)
 	}
+
+	fmt.Printf("CSVHandler: Wrote rows (AFTER SYNC): %s", filePath)
 
 	return nil
 }
