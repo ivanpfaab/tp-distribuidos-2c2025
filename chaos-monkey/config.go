@@ -8,11 +8,22 @@ import (
 	"time"
 )
 
+// KillStrategy defines the strategy for timing container kills
+type KillStrategy string
+
+const (
+	// StrategyPeriodic kills containers at fixed intervals with a probability
+	StrategyPeriodic KillStrategy = "periodic"
+	// StrategyExponential kills containers with exponentially distributed intervals
+	StrategyExponential KillStrategy = "exponential"
+)
+
 type ChaosConfig struct {
 	TargetContainers []string
-	KillInterval     time.Duration
-	KillProbability  float64
+	KillInterval     time.Duration // For periodic: fixed interval; For exponential: mean interval
+	KillProbability  float64       // Only used for periodic strategy
 	PauseDuration    time.Duration
+	Strategy         KillStrategy
 }
 
 func LoadChaosConfig() (*ChaosConfig, error) {
@@ -53,10 +64,20 @@ func LoadChaosConfig() (*ChaosConfig, error) {
 		return nil, fmt.Errorf("invalid PAUSE_DURATION: %w", err)
 	}
 
+	strategyStr := os.Getenv("KILL_STRATEGY")
+	if strategyStr == "" {
+		strategyStr = "periodic"
+	}
+	strategy := KillStrategy(strings.ToLower(strategyStr))
+	if strategy != StrategyPeriodic && strategy != StrategyExponential {
+		return nil, fmt.Errorf("invalid KILL_STRATEGY: %s (must be 'periodic' or 'exponential')", strategyStr)
+	}
+
 	return &ChaosConfig{
 		TargetContainers: targets,
 		KillInterval:     killInterval,
 		KillProbability:  killProb,
 		PauseDuration:    pauseDur,
+		Strategy:         strategy,
 	}, nil
 }

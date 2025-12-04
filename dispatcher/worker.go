@@ -424,7 +424,7 @@ func (rd *ResultsDispatcherWorker) createQueryCallback(queryType int) middleware
 			chunkData, _ := message.(*chunk.Chunk)
 
 			// Process with deserialized chunk
-			if err := rd.processMessage(chunkData, queryType); err != 0 {
+			if err := rd.processMessage(chunkData); err != 0 {
 				testing_utils.LogError("Results Dispatcher", "Failed to process Query%d message: %v", queryType, err)
 				delivery.Nack(false, true) // Reject and requeue
 				continue

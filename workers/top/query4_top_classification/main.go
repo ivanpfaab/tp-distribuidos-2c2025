@@ -350,17 +350,33 @@ func (tw *TopUsersWorker) sendTopUsers(clientID string, clientState *ClientState
 
 	// Build rank map for all users (for consistent output)
 	rankMap := make(map[string]int) // userID -> rank
-	for _, storeTop := range clientState.topUsersByStore {
+	for storeID, storeTop := range clientState.topUsersByStore {
+		// Skip metadata marker entries (empty storeID)
+		if storeID == "" {
+			continue
+		}
 		topUsers := storeTop.GetTopUsers()
 		for rank, user := range topUsers {
+			// Skip marker entries with empty userID
+			if user.UserID == "" {
+				continue
+			}
 			rankMap[user.UserID] = rank + 1
 		}
 	}
 
 	// Group users by reader based on their partition
-	for _, storeTop := range clientState.topUsersByStore {
+	for storeID, storeTop := range clientState.topUsersByStore {
+		// Skip metadata marker entries (empty storeID) - they are only for fault tolerance
+		if storeID == "" {
+			continue
+		}
 		topUsers := storeTop.GetTopUsers()
 		for _, user := range topUsers {
+			// Skip marker entries with empty userID
+			if user.UserID == "" {
+				continue
+			}
 			partition, err := getUserPartition(user.UserID, tw.numPartitions)
 			if err != nil {
 				log.Printf("Top Users Worker: Failed to get partition for user %s: %v", user.UserID, err)

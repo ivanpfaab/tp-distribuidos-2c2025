@@ -1,0 +1,5 @@
+*
+!chaos-monkey/
+!go.mod
+!go.sum
+
