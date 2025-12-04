@@ -148,7 +148,8 @@ docker-compose-logs-data-flow: ## Show logs for data-flow services only
 
 # Show logs for Chaos Monkey and supervisors only
 docker-compose-logs-chaos: ## Show logs for Chaos Monkey and supervisors only (fault injection monitoring)
-	docker compose logs -f chaos-monkey supervisor-1 supervisor-2 supervisor-3
+	@SUPERVISORS=$$(awk '/^services:/{s=1;next} s&&/^[a-zA-Z]/{s=0} s&&/^  supervisor-[0-9]+:/{sub(/:.*/,"");sub(/^  /,"");print}' docker-compose.yaml | tr '\n' ' '); \
+	docker compose logs -f chaos-monkey $$SUPERVISORS
 
 # Build all Docker images
 docker-compose-build: ## Build all Docker images
