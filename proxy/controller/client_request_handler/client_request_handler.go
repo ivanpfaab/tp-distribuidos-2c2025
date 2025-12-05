@@ -124,8 +124,9 @@ func (h *ClientRequestHandler) HandleConnection(conn net.Conn) {
 		} else {
 			// Store connection for this client if it's a batch message
 			if batchMsg, ok := h.processor.ExtractClientID(completeMessage); ok {
-				currentClientID = batchMsg.ClientID
-				h.connectionManager.Store(batchMsg.ClientID, conn)
+				uniqueClientID := dataHandler.CreateUniqueClientID(batchMsg.ClientID)
+				currentClientID = uniqueClientID
+				h.connectionManager.Store(uniqueClientID, conn)
 			}
 		}
 

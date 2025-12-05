@@ -28,14 +28,15 @@ echo ""
 
 # Function to extract and clean client data
 extract_client_data() {
-    local client_id="$1"
+    local results_file="$1"
     local query="$2"
     local output_file="$3"
 
-    # Extract query data and remove client prefix
+    # Extract query data and remove any client ID prefix (format: CLIENTID | QX | data)
     # Use || true to prevent grep exit code 1 (no matches) from stopping the script
-    grep "Q$query |" "$CLIENT_RESULTS_DIR/results_$client_id.txt" 2>/dev/null | \
-    sed "s/^$client_id | Q$query | //" > "${output_file}.raw" || true
+    # Pattern matches: any alphanumeric client ID, then " | Q{query} | ", then data
+    grep " | Q$query | " "$results_file" 2>/dev/null | \
+    sed "s/^[A-Z0-9]* | Q$query | //" > "${output_file}.raw" || true
     
     # Remove ALL header lines that could appear anywhere in the file
     # Use a more comprehensive pattern that detects CSV headers by looking for:
@@ -78,11 +79,11 @@ extract_client_data() {
 
 # Function to compare Q1 (exact match)
 compare_q1() {
-    local client_id="$1"
-    local client_file="$TEMP_DIR/${client_id}_q1_transactions.csv"
+    local results_file="$1"
+    local client_file="$2"
     local source_file="$SOURCE_OF_TRUTH_DIR/q1_transactions.csv"
 
-    echo "Comparing Q1 (Transactions) for $client_id..."
+    echo "Comparing Q1 (Transactions) for $(basename "$results_file" .txt)..."
 
     # Check if files exist and have data
     if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
@@ -119,10 +120,10 @@ compare_q1() {
 
 # Function to compare Q2 (category-based)
 compare_q2() {
-    local client_id="$1"
-    local client_file="$TEMP_DIR/${client_id}_q2_categories.csv"
+    local results_file="$1"
+    local client_file="$2"
 
-    echo "Comparing Q2 (Categories) for $client_id..."
+    echo "Comparing Q2 (Categories) for $(basename "$results_file" .txt)..."
 
     # Check if files exist and have data
     if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
@@ -138,21 +139,22 @@ compare_q2() {
     # Extract category 1 (best selling - top by quantity)
     # Client format: year,month,item_id,quantity,subtotal,category,item_name,coffee_category,price,is_seasonal
     # We need: year_month_created_at (col1-col2), item_name (col7), sellings_qty (col4)
-    awk -F',' '$6=="1" {printf "%s-%02d,%s,%d\n", $1, $2, $7, $4}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_best_selling.csv"
+    local base_name=$(basename "$client_file" _q2_categories.csv)
+    awk -F',' '$6=="1" {printf "%s-%02d,%s,%d\n", $1, $2, $7, $4}' "$client_file" | sort > "$TEMP_DIR/${base_name}_q2_best_selling.csv"
     
     # Extract category 2 (most profits - top by revenue)
     # We need: year_month_created_at (col1-col2), item_name (col7), profit_sum (col5) - treat as integer
-    awk -F',' '$6=="2" {printf "%s-%02d,%s,%d\n", $1, $2, $7, int($5)}' "$client_file" | sort > "$TEMP_DIR/${client_id}_q2_most_profits.csv"
+    awk -F',' '$6=="2" {printf "%s-%02d,%s,%d\n", $1, $2, $7, int($5)}' "$client_file" | sort > "$TEMP_DIR/${base_name}_q2_most_profits.csv"
     
     # Compare category 1 (top by quantity) against best_selling
     local best_selling_source="$SOURCE_OF_TRUTH_DIR/q2_best_selling.csv"
     tail -n +2 "$best_selling_source" | sort > "${best_selling_source}.sorted"
     
-    if diff -q "$TEMP_DIR/${client_id}_q2_best_selling.csv" "${best_selling_source}.sorted" > /dev/null 2>&1; then
-        echo -e "  Q2 Best Selling (category=1): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_best_selling.csv") rows)"
+    if diff -q "$TEMP_DIR/${base_name}_q2_best_selling.csv" "${best_selling_source}.sorted" > /dev/null 2>&1; then
+        echo -e "  Q2 Best Selling (category=1): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${base_name}_q2_best_selling.csv") rows)"
     else
         echo -e "  Q2 Best Selling (category=1): ${RED}❌ FAIL${NC}"
-        echo "    Client: $(wc -l < "$TEMP_DIR/${client_id}_q2_best_selling.csv") rows"
+        echo "    Client: $(wc -l < "$TEMP_DIR/${base_name}_q2_best_selling.csv") rows"
         echo "    Source: $(tail -n +2 "$best_selling_source" | wc -l) rows"
     fi
     
@@ -160,11 +162,11 @@ compare_q2() {
     local profits_source="$SOURCE_OF_TRUTH_DIR/q2_most_profits.csv"
     tail -n +2 "$profits_source" | awk -F',' '{printf "%s,%s,%d\n", $1, $2, int($3)}' | sort > "${profits_source}.sorted"
     
-    if diff -q "$TEMP_DIR/${client_id}_q2_most_profits.csv" "${profits_source}.sorted" > /dev/null 2>&1; then
-        echo -e "  Q2 Most Profits (category=2): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${client_id}_q2_most_profits.csv") rows)"
+    if diff -q "$TEMP_DIR/${base_name}_q2_most_profits.csv" "${profits_source}.sorted" > /dev/null 2>&1; then
+        echo -e "  Q2 Most Profits (category=2): ${GREEN}✅ PASS${NC} ($(wc -l < "$TEMP_DIR/${base_name}_q2_most_profits.csv") rows)"
     else
         echo -e "  Q2 Most Profits (category=2): ${RED}❌ FAIL${NC}"
-        echo "    Client: $(wc -l < "$TEMP_DIR/${client_id}_q2_most_profits.csv") rows"
+        echo "    Client: $(wc -l < "$TEMP_DIR/${base_name}_q2_most_profits.csv") rows"
         echo "    Source: $(tail -n +2 "$profits_source" | wc -l) rows"
     fi
     
@@ -174,11 +176,11 @@ compare_q2() {
 
 # Function to compare Q3 (with year-semester transformation)
 compare_q3() {
-    local client_id="$1"
-    local client_file="$TEMP_DIR/${client_id}_q3_tpv.csv"
+    local results_file="$1"
+    local client_file="$2"
     local source_file="$SOURCE_OF_TRUTH_DIR/q3_tpv.csv"
 
-    echo "Comparing Q3 (TPV) for $client_id..."
+    echo "Comparing Q3 (TPV) for $(basename "$results_file" .txt)..."
 
     # Check if files exist and have data
     if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
@@ -217,11 +219,11 @@ compare_q3() {
 
 # Function to compare Q4 (subset comparison)
 compare_q4() {
-    local client_id="$1"
-    local client_file="$TEMP_DIR/${client_id}_q4_most_purchases.csv"
+    local results_file="$1"
+    local client_file="$2"
     local source_file="$SOURCE_OF_TRUTH_DIR/q4_most_purchases.csv"
 
-    echo "Comparing Q4 (Most Purchases) for $client_id..."
+    echo "Comparing Q4 (Most Purchases) for $(basename "$results_file" .txt)..."
 
     # Check if files exist and have data
     if [ ! -f "$client_file" ] || [ ! -s "$client_file" ]; then
@@ -278,24 +280,25 @@ compare_q4() {
 
 # Main comparison function
 compare_client() {
-    local client_id="$1"
+    local results_file="$1"
+    local base_name=$(basename "$results_file" .txt)
 
-    echo -e "${BLUE}=== Processing $client_id ===${NC}"
+    echo -e "${BLUE}=== Processing $base_name ===${NC}"
 
     # Extract data for all queries (using exact source of truth naming)
-    extract_client_data "$client_id" "1" "$TEMP_DIR/${client_id}_q1_transactions.csv"
-    extract_client_data "$client_id" "2" "$TEMP_DIR/${client_id}_q2_categories.csv"  # Will be split into best_selling and most_profits
-    extract_client_data "$client_id" "3" "$TEMP_DIR/${client_id}_q3_tpv.csv"
-    extract_client_data "$client_id" "4" "$TEMP_DIR/${client_id}_q4_most_purchases.csv"
+    extract_client_data "$results_file" "1" "$TEMP_DIR/${base_name}_q1_transactions.csv"
+    extract_client_data "$results_file" "2" "$TEMP_DIR/${base_name}_q2_categories.csv"  # Will be split into best_selling and most_profits
+    extract_client_data "$results_file" "3" "$TEMP_DIR/${base_name}_q3_tpv.csv"
+    extract_client_data "$results_file" "4" "$TEMP_DIR/${base_name}_q4_most_purchases.csv"
 
     echo ""
-    echo -e "${BLUE}=== Comparison Results for $client_id ===${NC}"
+    echo -e "${BLUE}=== Comparison Results for $base_name ===${NC}"
 
     # Compare each query - use || true to continue even if comparison fails
-    compare_q1 "$client_id" || true
-    compare_q2 "$client_id" || true
-    compare_q3 "$client_id" || true
-    compare_q4 "$client_id" || true
+    compare_q1 "$results_file" "$TEMP_DIR/${base_name}_q1_transactions.csv" || true
+    compare_q2 "$results_file" "$TEMP_DIR/${base_name}_q2_categories.csv" || true
+    compare_q3 "$results_file" "$TEMP_DIR/${base_name}_q3_tpv.csv" || true
+    compare_q4 "$results_file" "$TEMP_DIR/${base_name}_q4_most_purchases.csv" || true
 
     echo ""
 }
@@ -303,12 +306,18 @@ compare_client() {
 # Check if required files exist (warns but doesn't exit)
 check_files() {
     local missing_files=()
+    local result_files=()
 
-    for client in CLI1 CLI2; do
-        if [ ! -f "$CLIENT_RESULTS_DIR/results_$client.txt" ]; then
-            missing_files+=("$CLIENT_RESULTS_DIR/results_$client.txt")
+    # Find all result files (results_*.txt)
+    for result_file in "$CLIENT_RESULTS_DIR"/results_*.txt; do
+        if [ -f "$result_file" ]; then
+            result_files+=("$result_file")
         fi
     done
+
+    if [ ${#result_files[@]} -eq 0 ]; then
+        missing_files+=("No result files found in $CLIENT_RESULTS_DIR/")
+    fi
 
     for query_file in q1_transactions.csv q2_best_selling.csv q2_most_profits.csv q3_tpv.csv q4_most_purchases.csv; do
         if [ ! -f "$SOURCE_OF_TRUTH_DIR/$query_file" ]; then
@@ -333,18 +342,17 @@ main() {
     echo "Starting comparison..."
     echo ""
 
-    # Compare both clients - continue even if one fails
-    if [ -f "$CLIENT_RESULTS_DIR/results_CLI1.txt" ]; then
-        compare_client "CLI1" || true
-    else
-        echo -e "${YELLOW}Skipping CLI1 - results file not found${NC}"
-        echo ""
-    fi
+    # Find and process all result files (results_*.txt)
+    local processed=0
+    for results_file in "$CLIENT_RESULTS_DIR"/results_*.txt; do
+        if [ -f "$results_file" ]; then
+            compare_client "$results_file" || true
+            processed=$((processed + 1))
+        fi
+    done
 
-    if [ -f "$CLIENT_RESULTS_DIR/results_CLI2.txt" ]; then
-        compare_client "CLI2" || true
-    else
-        echo -e "${YELLOW}Skipping CLI2 - results file not found${NC}"
+    if [ $processed -eq 0 ]; then
+        echo -e "${YELLOW}No result files found in $CLIENT_RESULTS_DIR/${NC}"
         echo ""
     fi
     

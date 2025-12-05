@@ -1180,8 +1180,18 @@ for i in $(seq 1 $SUPERVISOR_COUNT); do
         fi
     done
 
+    # we must add the other supervisors to MONITORED_WORKERS so as to monitor them too
+    other_supervisors=""
+    for j in $(seq 1 $SUPERVISOR_COUNT); do
+        if [ $j -ne $i ]; then
+            other_supervisors="${other_supervisors}supervisor-${j}:8888,"
+        fi
+    done
+
+    supervisor_monitored_workers="${other_supervisors}${MONITORED_WORKERS}"
+
     # Use perl to add MONITORED_WORKERS after SUPERVISOR_PEERS for this supervisor
-    perl -i -pe "s|SUPERVISOR_PEERS: \"${peers_pattern}\"|\$&\\n      MONITORED_WORKERS: \"${MONITORED_WORKERS}\"|" docker-compose.yaml
+    perl -i -pe "s|SUPERVISOR_PEERS: \"${peers_pattern}\"|\$&\\n      MONITORED_WORKERS: \"${supervisor_monitored_workers}\"|" docker-compose.yaml
 done
 
 # Update chaos-monkey with TARGET_CONTAINERS and KILL_STRATEGY
