@@ -100,7 +100,7 @@ make docker-compose-logs-chaos
 
 Chaos Monkey will randomly kill/pause/stop containers to test recovery mechanisms.
 
-### Compare Results
+### Results Comparison
 
 After processing, compare results with source of truth:
 
@@ -109,6 +109,15 @@ After processing, compare results with source of truth:
 ```
 
 This compares the generated results in `results/` with expected results in `results_source_of_truth/`.
+
+Note that we use, as our reduced dataset, the following files:
+* transactions_*: 202401, 202406, 202407, 202501, 202506
+* transaction_items_*:  202401, 202406, 202407, 202501, 202506
+* other files: all files
+
+To make sure ./compare_results.sh works as expected, we must have these files in the /data folder or create our own results_source_of_truth files accordingly.
+
+To test the full dataset and compare the full results, we must have all files from the dataset in the /data folder, and change the name of the /results_source_of_truth_full folder to /results_source_of_truth
 
 ## Makefile Commands
 
