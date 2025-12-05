@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"encoding/base32"
+	"hash/fnv"
 
 	"github.com/tp-distribuidos-2c2025/protocol/batch"
 	"github.com/tp-distribuidos-2c2025/protocol/chunk"
@@ -153,10 +155,31 @@ func (dh *DataHandler) ProcessBatchMessage(data []byte) error {
 	return nil
 }
 
+
+// This function generates a unique client ID by hashing the batch clientID
+// combined with the connection's remote address using FNV-1a 32-bit hash
+func (dh *DataHandler) CreateUniqueClientID(batchClientID string) string {
+
+	connectionAddr := dh.Conn.RemoteAddr().String()
+
+	combined := batchClientID + "_" + connectionAddr
+
+	h := fnv.New32a()
+	h.Write([]byte(combined))
+	hashBytes := h.Sum(nil) // Returns 4 bytes directly for 32-bit hash
+
+	encodedID := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(hashBytes)[:4] // Truncate to 4 characters
+
+	return encodedID
+}
+
 // createChunk creates a chunk from a batch message and query type
 func (dh *DataHandler) createChunk(batchMsg *batch.Batch, queryType uint8) *chunk.Chunk {
+
+	uniqueClientID := dh.CreateUniqueClientID(batchMsg.ClientID)
+
 	return chunk.NewChunk(
-		batchMsg.ClientID,        // clientID
+		uniqueClientID,           // clientID (unique ID based on connection)
 		batchMsg.FileID,          // fileID
 		queryType,                // queryType
 		batchMsg.BatchNumber,     // chunkNumber
