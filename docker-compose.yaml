@@ -16,6 +16,155 @@ services:
       retries: 5
       start_period: 30s
 
+  # Fault Tolerance - Supervisor 1
+  supervisor-1:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "1"
+      SUPERVISOR_PEERS: "supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000,supervisor-4:supervisor-4:9000,supervisor-5:supervisor-5:9000"
+      MONITORED_WORKERS: "supervisor-2:8888,supervisor-3:8888,supervisor-4:8888,supervisor-5:8888,year-filter-worker-1:8888,year-filter-worker-2:8888,year-filter-worker-3:8888,time-filter-worker-1:8888,time-filter-worker-2:8888,amount-filter-worker-1:8888,query-gateway-1:8888,join-data-handler-1:8888,itemid-join-worker-1:8888,storeid-join-worker-1:8888,user-partition-splitter-1:8888,user-partition-writer-1:8888,user-partition-writer-2:8888,user-partition-writer-3:8888,user-partition-writer-4:8888,user-partition-writer-5:8888,user-join-reader-1:8888,user-join-reader-2:8888,user-join-reader-3:8888,user-join-reader-4:8888,user-join-reader-5:8888,query2-partitioner-1:8888,query2-partitioner-2:8888,query2-partitioner-3:8888,query2-partitioner-4:8888,query2-partitioner-5:8888,query2-orchestrator-1:8888,query2-groupby-worker-1:8888,query2-orchestrator-2:8888,query2-groupby-worker-2:8888,query2-orchestrator-3:8888,query2-groupby-worker-3:8888,query2-orchestrator-4:8888,query2-groupby-worker-4:8888,query2-orchestrator-5:8888,query2-groupby-worker-5:8888,query2-top-items-worker-1:8888,query3-partitioner-1:8888,query3-partitioner-2:8888,query3-partitioner-3:8888,query3-partitioner-4:8888,query3-partitioner-5:8888,query3-orchestrator-1:8888,query3-groupby-worker-1:8888,query3-orchestrator-2:8888,query3-groupby-worker-2:8888,query3-orchestrator-3:8888,query3-groupby-worker-3:8888,query3-orchestrator-4:8888,query3-groupby-worker-4:8888,query3-orchestrator-5:8888,query3-groupby-worker-5:8888,query4-partitioner-1:8888,query4-partitioner-2:8888,query4-partitioner-3:8888,query4-partitioner-4:8888,query4-partitioner-5:8888,query4-orchestrator-1:8888,query4-groupby-worker-1:8888,query4-orchestrator-2:8888,query4-groupby-worker-2:8888,query4-orchestrator-3:8888,query4-groupby-worker-3:8888,query4-orchestrator-4:8888,query4-groupby-worker-4:8888,query4-orchestrator-5:8888,query4-groupby-worker-5:8888,query4-top-users-worker-1:8888,in-memory-join-orchestrator-1:8888,in-file-join-orchestrator-1:8888,results-dispatcher-1:8888,"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  # Fault Tolerance - Supervisor 2
+  supervisor-2:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "2"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-3:supervisor-3:9000,supervisor-4:supervisor-4:9000,supervisor-5:supervisor-5:9000"
+      MONITORED_WORKERS: "supervisor-1:8888,supervisor-3:8888,supervisor-4:8888,supervisor-5:8888,year-filter-worker-1:8888,year-filter-worker-2:8888,year-filter-worker-3:8888,time-filter-worker-1:8888,time-filter-worker-2:8888,amount-filter-worker-1:8888,query-gateway-1:8888,join-data-handler-1:8888,itemid-join-worker-1:8888,storeid-join-worker-1:8888,user-partition-splitter-1:8888,user-partition-writer-1:8888,user-partition-writer-2:8888,user-partition-writer-3:8888,user-partition-writer-4:8888,user-partition-writer-5:8888,user-join-reader-1:8888,user-join-reader-2:8888,user-join-reader-3:8888,user-join-reader-4:8888,user-join-reader-5:8888,query2-partitioner-1:8888,query2-partitioner-2:8888,query2-partitioner-3:8888,query2-partitioner-4:8888,query2-partitioner-5:8888,query2-orchestrator-1:8888,query2-groupby-worker-1:8888,query2-orchestrator-2:8888,query2-groupby-worker-2:8888,query2-orchestrator-3:8888,query2-groupby-worker-3:8888,query2-orchestrator-4:8888,query2-groupby-worker-4:8888,query2-orchestrator-5:8888,query2-groupby-worker-5:8888,query2-top-items-worker-1:8888,query3-partitioner-1:8888,query3-partitioner-2:8888,query3-partitioner-3:8888,query3-partitioner-4:8888,query3-partitioner-5:8888,query3-orchestrator-1:8888,query3-groupby-worker-1:8888,query3-orchestrator-2:8888,query3-groupby-worker-2:8888,query3-orchestrator-3:8888,query3-groupby-worker-3:8888,query3-orchestrator-4:8888,query3-groupby-worker-4:8888,query3-orchestrator-5:8888,query3-groupby-worker-5:8888,query4-partitioner-1:8888,query4-partitioner-2:8888,query4-partitioner-3:8888,query4-partitioner-4:8888,query4-partitioner-5:8888,query4-orchestrator-1:8888,query4-groupby-worker-1:8888,query4-orchestrator-2:8888,query4-groupby-worker-2:8888,query4-orchestrator-3:8888,query4-groupby-worker-3:8888,query4-orchestrator-4:8888,query4-groupby-worker-4:8888,query4-orchestrator-5:8888,query4-groupby-worker-5:8888,query4-top-users-worker-1:8888,in-memory-join-orchestrator-1:8888,in-file-join-orchestrator-1:8888,results-dispatcher-1:8888,"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  # Fault Tolerance - Supervisor 3
+  supervisor-3:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "3"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000,supervisor-4:supervisor-4:9000,supervisor-5:supervisor-5:9000"
+      MONITORED_WORKERS: "supervisor-1:8888,supervisor-2:8888,supervisor-4:8888,supervisor-5:8888,year-filter-worker-1:8888,year-filter-worker-2:8888,year-filter-worker-3:8888,time-filter-worker-1:8888,time-filter-worker-2:8888,amount-filter-worker-1:8888,query-gateway-1:8888,join-data-handler-1:8888,itemid-join-worker-1:8888,storeid-join-worker-1:8888,user-partition-splitter-1:8888,user-partition-writer-1:8888,user-partition-writer-2:8888,user-partition-writer-3:8888,user-partition-writer-4:8888,user-partition-writer-5:8888,user-join-reader-1:8888,user-join-reader-2:8888,user-join-reader-3:8888,user-join-reader-4:8888,user-join-reader-5:8888,query2-partitioner-1:8888,query2-partitioner-2:8888,query2-partitioner-3:8888,query2-partitioner-4:8888,query2-partitioner-5:8888,query2-orchestrator-1:8888,query2-groupby-worker-1:8888,query2-orchestrator-2:8888,query2-groupby-worker-2:8888,query2-orchestrator-3:8888,query2-groupby-worker-3:8888,query2-orchestrator-4:8888,query2-groupby-worker-4:8888,query2-orchestrator-5:8888,query2-groupby-worker-5:8888,query2-top-items-worker-1:8888,query3-partitioner-1:8888,query3-partitioner-2:8888,query3-partitioner-3:8888,query3-partitioner-4:8888,query3-partitioner-5:8888,query3-orchestrator-1:8888,query3-groupby-worker-1:8888,query3-orchestrator-2:8888,query3-groupby-worker-2:8888,query3-orchestrator-3:8888,query3-groupby-worker-3:8888,query3-orchestrator-4:8888,query3-groupby-worker-4:8888,query3-orchestrator-5:8888,query3-groupby-worker-5:8888,query4-partitioner-1:8888,query4-partitioner-2:8888,query4-partitioner-3:8888,query4-partitioner-4:8888,query4-partitioner-5:8888,query4-orchestrator-1:8888,query4-groupby-worker-1:8888,query4-orchestrator-2:8888,query4-groupby-worker-2:8888,query4-orchestrator-3:8888,query4-groupby-worker-3:8888,query4-orchestrator-4:8888,query4-groupby-worker-4:8888,query4-orchestrator-5:8888,query4-groupby-worker-5:8888,query4-top-users-worker-1:8888,in-memory-join-orchestrator-1:8888,in-file-join-orchestrator-1:8888,results-dispatcher-1:8888,"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  # Fault Tolerance - Supervisor 4
+  supervisor-4:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-4
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "4"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000,supervisor-5:supervisor-5:9000"
+      MONITORED_WORKERS: "supervisor-1:8888,supervisor-2:8888,supervisor-3:8888,supervisor-5:8888,year-filter-worker-1:8888,year-filter-worker-2:8888,year-filter-worker-3:8888,time-filter-worker-1:8888,time-filter-worker-2:8888,amount-filter-worker-1:8888,query-gateway-1:8888,join-data-handler-1:8888,itemid-join-worker-1:8888,storeid-join-worker-1:8888,user-partition-splitter-1:8888,user-partition-writer-1:8888,user-partition-writer-2:8888,user-partition-writer-3:8888,user-partition-writer-4:8888,user-partition-writer-5:8888,user-join-reader-1:8888,user-join-reader-2:8888,user-join-reader-3:8888,user-join-reader-4:8888,user-join-reader-5:8888,query2-partitioner-1:8888,query2-partitioner-2:8888,query2-partitioner-3:8888,query2-partitioner-4:8888,query2-partitioner-5:8888,query2-orchestrator-1:8888,query2-groupby-worker-1:8888,query2-orchestrator-2:8888,query2-groupby-worker-2:8888,query2-orchestrator-3:8888,query2-groupby-worker-3:8888,query2-orchestrator-4:8888,query2-groupby-worker-4:8888,query2-orchestrator-5:8888,query2-groupby-worker-5:8888,query2-top-items-worker-1:8888,query3-partitioner-1:8888,query3-partitioner-2:8888,query3-partitioner-3:8888,query3-partitioner-4:8888,query3-partitioner-5:8888,query3-orchestrator-1:8888,query3-groupby-worker-1:8888,query3-orchestrator-2:8888,query3-groupby-worker-2:8888,query3-orchestrator-3:8888,query3-groupby-worker-3:8888,query3-orchestrator-4:8888,query3-groupby-worker-4:8888,query3-orchestrator-5:8888,query3-groupby-worker-5:8888,query4-partitioner-1:8888,query4-partitioner-2:8888,query4-partitioner-3:8888,query4-partitioner-4:8888,query4-partitioner-5:8888,query4-orchestrator-1:8888,query4-groupby-worker-1:8888,query4-orchestrator-2:8888,query4-groupby-worker-2:8888,query4-orchestrator-3:8888,query4-groupby-worker-3:8888,query4-orchestrator-4:8888,query4-groupby-worker-4:8888,query4-orchestrator-5:8888,query4-groupby-worker-5:8888,query4-top-users-worker-1:8888,in-memory-join-orchestrator-1:8888,in-file-join-orchestrator-1:8888,results-dispatcher-1:8888,"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  # Fault Tolerance - Supervisor 5
+  supervisor-5:
+    build:
+      context: .
+      dockerfile: ./supervisor/Dockerfile
+    container_name: supervisor-5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SUPERVISOR_ID: "5"
+      SUPERVISOR_PEERS: "supervisor-1:supervisor-1:9000,supervisor-2:supervisor-2:9000,supervisor-3:supervisor-3:9000,supervisor-4:supervisor-4:9000"
+      MONITORED_WORKERS: "supervisor-1:8888,supervisor-2:8888,supervisor-3:8888,supervisor-4:8888,year-filter-worker-1:8888,year-filter-worker-2:8888,year-filter-worker-3:8888,time-filter-worker-1:8888,time-filter-worker-2:8888,amount-filter-worker-1:8888,query-gateway-1:8888,join-data-handler-1:8888,itemid-join-worker-1:8888,storeid-join-worker-1:8888,user-partition-splitter-1:8888,user-partition-writer-1:8888,user-partition-writer-2:8888,user-partition-writer-3:8888,user-partition-writer-4:8888,user-partition-writer-5:8888,user-join-reader-1:8888,user-join-reader-2:8888,user-join-reader-3:8888,user-join-reader-4:8888,user-join-reader-5:8888,query2-partitioner-1:8888,query2-partitioner-2:8888,query2-partitioner-3:8888,query2-partitioner-4:8888,query2-partitioner-5:8888,query2-orchestrator-1:8888,query2-groupby-worker-1:8888,query2-orchestrator-2:8888,query2-groupby-worker-2:8888,query2-orchestrator-3:8888,query2-groupby-worker-3:8888,query2-orchestrator-4:8888,query2-groupby-worker-4:8888,query2-orchestrator-5:8888,query2-groupby-worker-5:8888,query2-top-items-worker-1:8888,query3-partitioner-1:8888,query3-partitioner-2:8888,query3-partitioner-3:8888,query3-partitioner-4:8888,query3-partitioner-5:8888,query3-orchestrator-1:8888,query3-groupby-worker-1:8888,query3-orchestrator-2:8888,query3-groupby-worker-2:8888,query3-orchestrator-3:8888,query3-groupby-worker-3:8888,query3-orchestrator-4:8888,query3-groupby-worker-4:8888,query3-orchestrator-5:8888,query3-groupby-worker-5:8888,query4-partitioner-1:8888,query4-partitioner-2:8888,query4-partitioner-3:8888,query4-partitioner-4:8888,query4-partitioner-5:8888,query4-orchestrator-1:8888,query4-groupby-worker-1:8888,query4-orchestrator-2:8888,query4-groupby-worker-2:8888,query4-orchestrator-3:8888,query4-groupby-worker-3:8888,query4-orchestrator-4:8888,query4-groupby-worker-4:8888,query4-orchestrator-5:8888,query4-groupby-worker-5:8888,query4-top-users-worker-1:8888,in-memory-join-orchestrator-1:8888,in-file-join-orchestrator-1:8888,results-dispatcher-1:8888,"
+      ELECTION_PORT: "9000"
+      PROBE_TIMEOUT: "2s"
+      PROBE_INTERVAL: "5s"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+    profiles: ["orchestration", "data-flow"]
+
+  # Chaos Monkey (optional - use with 'chaos' profile)
+  chaos-monkey:
+    build:
+      context: .
+      dockerfile: ./chaos-monkey/Dockerfile
+    container_name: chaos-monkey
+    depends_on:
+      proxy-1:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      KILL_INTERVAL: "2s"
+      KILL_PROBABILITY: "1"
+      KILL_STRATEGY: "exponential"  # Options: "periodic" or "exponential"
+      TARGET_CONTAINERS: "year-filter-worker-1,year-filter-worker-2,year-filter-worker-3,time-filter-worker-1,time-filter-worker-2,amount-filter-worker-1,query-gateway-1,join-data-handler-1,itemid-join-worker-1,storeid-join-worker-1,user-partition-splitter-1,user-partition-writer-1,user-partition-writer-2,user-partition-writer-3,user-partition-writer-4,user-partition-writer-5,user-join-reader-1,user-join-reader-2,user-join-reader-3,user-join-reader-4,user-join-reader-5,query2-partitioner-1,query2-partitioner-2,query2-partitioner-3,query2-partitioner-4,query2-partitioner-5,query2-orchestrator-1,query2-groupby-worker-1,query2-orchestrator-2,query2-groupby-worker-2,query2-orchestrator-3,query2-groupby-worker-3,query2-orchestrator-4,query2-groupby-worker-4,query2-orchestrator-5,query2-groupby-worker-5,query2-top-items-worker-1,query3-partitioner-1,query3-partitioner-2,query3-partitioner-3,query3-partitioner-4,query3-partitioner-5,query3-orchestrator-1,query3-groupby-worker-1,query3-orchestrator-2,query3-groupby-worker-2,query3-orchestrator-3,query3-groupby-worker-3,query3-orchestrator-4,query3-groupby-worker-4,query3-orchestrator-5,query3-groupby-worker-5,query4-partitioner-1,query4-partitioner-2,query4-partitioner-3,query4-partitioner-4,query4-partitioner-5,query4-orchestrator-1,query4-groupby-worker-1,query4-orchestrator-2,query4-groupby-worker-2,query4-orchestrator-3,query4-groupby-worker-3,query4-orchestrator-4,query4-groupby-worker-4,query4-orchestrator-5,query4-groupby-worker-5,query4-top-users-worker-1,in-memory-join-orchestrator-1,in-file-join-orchestrator-1,results-dispatcher-1,"
+      PAUSE_DURATION: "10s"
+    profiles: ["chaos"]
+
   # Year Filter Worker 1
   year-filter-worker-1:
     build:
@@ -26,10 +175,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "year-filter-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - year-filter-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -44,10 +195,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "year-filter-worker-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - year-filter-worker-2-data:/app/worker-data
     profiles: ["orchestration"]
@@ -62,10 +215,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "year-filter-worker-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - year-filter-worker-3-data:/app/worker-data
     profiles: ["orchestration"]
@@ -80,10 +235,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "time-filter-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - time-filter-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -98,10 +255,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "time-filter-worker-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - time-filter-worker-2-data:/app/worker-data
     profiles: ["orchestration"]
@@ -116,10 +275,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "amount-filter-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - amount-filter-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -129,18 +290,20 @@ services:
     build:
       context: .
       dockerfile: ./workers/join/in-memory/itemid/Dockerfile
-    container_name: itemid-join-worker
+    container_name: itemid-join-worker-1
     depends_on:
       rabbitmq:
         condition: service_healthy
       join-data-handler-1:
         condition: service_started
     environment:
+      WORKER_ID: "itemid-join-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WORKER_INSTANCE_ID: "1"
+      HEALTH_PORT: "8888"
     volumes:
       - itemid-join-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -150,7 +313,7 @@ services:
     build:
       context: .
       dockerfile: ./workers/join/in-memory/storeid/Dockerfile
-    container_name: storeid-join-worker
+    container_name: storeid-join-worker-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -167,6 +330,7 @@ services:
       query3-orchestrator-5:
         condition: service_started
     environment:
+      WORKER_ID: "storeid-join-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -174,59 +338,66 @@ services:
       WORKER_INSTANCE_ID: "1"
       STOREID_BATCH_SIZE: 5
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - storeid-join-worker-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Results dispatcher (NOT SCALABLE - outputs to stdout)
-  results-dispatcher:
+  results-dispatcher-1:
     build:
       context: .
       dockerfile: ./dispatcher/Dockerfile
-    container_name: results-dispatcher
+    container_name: results-dispatcher-1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "results-dispatcher-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
-      - results-dispatcher-data:/app/worker-data
+      - results-dispatcher-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # In-Memory Join Orchestrator
-  in-memory-join-orchestrator:
+  in-memory-join-orchestrator-1:
     build:
       context: .
       dockerfile: ./workers/join/in-memory/orchestrator/Dockerfile
-    container_name: in-memory-join-orchestrator
+    container_name: in-memory-join-orchestrator-1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "in-memory-join-orchestrator-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - in-memory-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
 
-  in-file-join-orchestrator:
+  in-file-join-orchestrator-1:
     build:
       context: .
       dockerfile: ./workers/join/in-file/orchestrator/Dockerfile
-    container_name: in-file-join-orchestrator
+    container_name: in-file-join-orchestrator-1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "in-file-join-orchestrator-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - in-file-join-orchestrator-data:/app/orchestrator-data
     profiles: ["orchestration"]
@@ -236,38 +407,42 @@ services:
     build:
       context: .
       dockerfile: ./workers/join/data-handler/Dockerfile
-    container_name: join-data-handler
+    container_name: join-data-handler-1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "join-data-handler-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       ITEMID_WORKER_COUNT: "1"
       STOREID_WORKER_COUNT: "1"
+      HEALTH_PORT: "8888"
     volumes:
       - join-data-handler-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Partition Splitter (distributes users to writers)
-  user-partition-splitter:
+  user-partition-splitter-1:
     build:
       context: .
       dockerfile: ./workers/join/in-file/user-id/user-partition-splitter/Dockerfile
-    container_name: user-partition-splitter
+    container_name: user-partition-splitter-1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "user-partition-splitter-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
-      - user-partition-splitter-data:/app/worker-data
+      - user-partition-splitter-1-data:/app/worker-data
     profiles: ["orchestration"]
 
   # User Partition Writer 1
@@ -279,15 +454,17 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-splitter:
+      user-partition-splitter-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-partition-writer-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WRITER_ID: 1
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-1-data:/shared-data
     profiles: ["orchestration"]
@@ -301,15 +478,17 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-splitter:
+      user-partition-splitter-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-partition-writer-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WRITER_ID: 2
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-2-data:/shared-data
     profiles: ["orchestration"]
@@ -323,15 +502,17 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-splitter:
+      user-partition-splitter-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-partition-writer-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WRITER_ID: 3
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-3-data:/shared-data
     profiles: ["orchestration"]
@@ -345,15 +526,17 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-splitter:
+      user-partition-splitter-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-partition-writer-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WRITER_ID: 4
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-4-data:/shared-data
     profiles: ["orchestration"]
@@ -367,15 +550,17 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      user-partition-splitter:
+      user-partition-splitter-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-partition-writer-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       WRITER_ID: 5
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-5-data:/shared-data
     profiles: ["orchestration"]
@@ -391,17 +576,19 @@ services:
         condition: service_healthy
       user-partition-writer-1:
         condition: service_started
-      in-file-join-orchestrator:
+      in-file-join-orchestrator-1:
         condition: service_started
-      query4-top-users-worker:
+      query4-top-users-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-join-reader-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       READER_ID: 1
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-1-data:/shared-data
       - user-join-reader-1-data:/app/worker-data
@@ -418,17 +605,19 @@ services:
         condition: service_healthy
       user-partition-writer-2:
         condition: service_started
-      in-file-join-orchestrator:
+      in-file-join-orchestrator-1:
         condition: service_started
-      query4-top-users-worker:
+      query4-top-users-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-join-reader-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       READER_ID: 2
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-2-data:/shared-data
       - user-join-reader-2-data:/app/worker-data
@@ -445,17 +634,19 @@ services:
         condition: service_healthy
       user-partition-writer-3:
         condition: service_started
-      in-file-join-orchestrator:
+      in-file-join-orchestrator-1:
         condition: service_started
-      query4-top-users-worker:
+      query4-top-users-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-join-reader-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       READER_ID: 3
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-3-data:/shared-data
       - user-join-reader-3-data:/app/worker-data
@@ -472,17 +663,19 @@ services:
         condition: service_healthy
       user-partition-writer-4:
         condition: service_started
-      in-file-join-orchestrator:
+      in-file-join-orchestrator-1:
         condition: service_started
-      query4-top-users-worker:
+      query4-top-users-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-join-reader-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       READER_ID: 4
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-4-data:/shared-data
       - user-join-reader-4-data:/app/worker-data
@@ -499,17 +692,19 @@ services:
         condition: service_healthy
       user-partition-writer-5:
         condition: service_started
-      in-file-join-orchestrator:
+      in-file-join-orchestrator-1:
         condition: service_started
-      query4-top-users-worker:
+      query4-top-users-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "user-join-reader-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       READER_ID: 5
       NUM_WRITERS: 5
+      HEALTH_PORT: "8888"
     volumes:
       - user-writer-5-data:/shared-data
       - user-join-reader-5-data:/app/worker-data
@@ -520,15 +715,17 @@ services:
     build:
       context: .
       dockerfile: ./query-gateway/Dockerfile
-    container_name: query-gateway
+    container_name: query-gateway-1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query-gateway-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
+      HEALTH_PORT: "8888"
     volumes:
       - query-gateway-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -543,6 +740,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query2-partitioner-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -550,6 +748,7 @@ services:
       QUERY_TYPE: "2"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-partitioner-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -564,6 +763,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query2-partitioner-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -571,6 +771,7 @@ services:
       QUERY_TYPE: "2"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-partitioner-2-data:/app/worker-data
     profiles: ["orchestration"]
@@ -585,6 +786,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query2-partitioner-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -592,8 +794,55 @@ services:
       QUERY_TYPE: "2"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-partitioner-3-data:/app/worker-data
+    profiles: ["orchestration"]
+
+  # Query 2 Partitioner 4
+  query2-partitioner-4:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query2-partitioner-4
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: "query2-partitioner-4"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
+    volumes:
+      - query2-partitioner-4-data:/app/worker-data
+    profiles: ["orchestration"]
+
+  # Query 2 Partitioner 5
+  query2-partitioner-5:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query2-partitioner-5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: "query2-partitioner-5"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "2"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
+    volumes:
+      - query2-partitioner-5-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Query 2 GroupBy Worker 1
@@ -611,15 +860,21 @@ services:
         condition: service_started
       query2-partitioner-3:
         condition: service_started
+      query2-partitioner-4:
+        condition: service_started
+      query2-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query2-groupby-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "1"
+      WORKER_NUMERIC_ID: "1"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -639,15 +894,21 @@ services:
         condition: service_started
       query2-partitioner-3:
         condition: service_started
+      query2-partitioner-4:
+        condition: service_started
+      query2-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query2-groupby-worker-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "2"
+      WORKER_NUMERIC_ID: "2"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -667,15 +928,21 @@ services:
         condition: service_started
       query2-partitioner-3:
         condition: service_started
+      query2-partitioner-4:
+        condition: service_started
+      query2-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query2-groupby-worker-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "3"
+      WORKER_NUMERIC_ID: "3"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -695,15 +962,21 @@ services:
         condition: service_started
       query2-partitioner-3:
         condition: service_started
+      query2-partitioner-4:
+        condition: service_started
+      query2-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query2-groupby-worker-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "4"
+      WORKER_NUMERIC_ID: "4"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-4-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -723,15 +996,21 @@ services:
         condition: service_started
       query2-partitioner-3:
         condition: service_started
+      query2-partitioner-4:
+        condition: service_started
+      query2-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query2-groupby-worker-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "5"
+      WORKER_NUMERIC_ID: "5"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-5-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -748,12 +1027,14 @@ services:
       query2-groupby-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "query2-orchestrator-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "1"
+      WORKER_NUMERIC_ID: "1"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -770,12 +1051,14 @@ services:
       query2-groupby-worker-2:
         condition: service_started
     environment:
+      WORKER_ID: "query2-orchestrator-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "2"
+      WORKER_NUMERIC_ID: "2"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -792,12 +1075,14 @@ services:
       query2-groupby-worker-3:
         condition: service_started
     environment:
+      WORKER_ID: "query2-orchestrator-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "3"
+      WORKER_NUMERIC_ID: "3"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -814,12 +1099,14 @@ services:
       query2-groupby-worker-4:
         condition: service_started
     environment:
+      WORKER_ID: "query2-orchestrator-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "4"
+      WORKER_NUMERIC_ID: "4"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-4-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -836,22 +1123,24 @@ services:
       query2-groupby-worker-5:
         condition: service_started
     environment:
+      WORKER_ID: "query2-orchestrator-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "2"
-      WORKER_ID: "5"
+      WORKER_NUMERIC_ID: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-groupby-worker-5-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 2 Top items Classification
-  query2-top-items-worker:
+  query2-top-items-worker-1:
     build:
       context: .
       dockerfile: ./workers/top/query2_top_classification/Dockerfile
-    container_name: query2-top-items-worker
+    container_name: query2-top-items-worker-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -876,11 +1165,13 @@ services:
       query2-orchestrator-5:
         condition: service_started
     environment:
+      WORKER_ID: "query2-top-items-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query2-top-items-worker-data:/app/worker-data
     profiles: ["orchestration"]
@@ -895,6 +1186,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query3-partitioner-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -902,6 +1194,7 @@ services:
       QUERY_TYPE: "3"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-partitioner-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -916,6 +1209,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query3-partitioner-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -923,6 +1217,7 @@ services:
       QUERY_TYPE: "3"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-partitioner-2-data:/app/worker-data
     profiles: ["orchestration"]
@@ -937,6 +1232,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query3-partitioner-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -944,8 +1240,55 @@ services:
       QUERY_TYPE: "3"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-partitioner-3-data:/app/worker-data
+    profiles: ["orchestration"]
+
+  # Query 3 Partitioner 4
+  query3-partitioner-4:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query3-partitioner-4
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: "query3-partitioner-4"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "3"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
+    volumes:
+      - query3-partitioner-4-data:/app/worker-data
+    profiles: ["orchestration"]
+
+  # Query 3 Partitioner 5
+  query3-partitioner-5:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query3-partitioner-5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: "query3-partitioner-5"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "3"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
+    volumes:
+      - query3-partitioner-5-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Query 3 GroupBy Worker 1
@@ -963,15 +1306,21 @@ services:
         condition: service_started
       query3-partitioner-3:
         condition: service_started
+      query3-partitioner-4:
+        condition: service_started
+      query3-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query3-groupby-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "1"
+      WORKER_NUMERIC_ID: "1"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -991,15 +1340,21 @@ services:
         condition: service_started
       query3-partitioner-3:
         condition: service_started
+      query3-partitioner-4:
+        condition: service_started
+      query3-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query3-groupby-worker-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "2"
+      WORKER_NUMERIC_ID: "2"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1019,15 +1374,21 @@ services:
         condition: service_started
       query3-partitioner-3:
         condition: service_started
+      query3-partitioner-4:
+        condition: service_started
+      query3-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query3-groupby-worker-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "3"
+      WORKER_NUMERIC_ID: "3"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1047,15 +1408,21 @@ services:
         condition: service_started
       query3-partitioner-3:
         condition: service_started
+      query3-partitioner-4:
+        condition: service_started
+      query3-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query3-groupby-worker-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "4"
+      WORKER_NUMERIC_ID: "4"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-4-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1075,15 +1442,21 @@ services:
         condition: service_started
       query3-partitioner-3:
         condition: service_started
+      query3-partitioner-4:
+        condition: service_started
+      query3-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query3-groupby-worker-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "5"
+      WORKER_NUMERIC_ID: "5"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-5-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1100,12 +1473,14 @@ services:
       query3-groupby-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "query3-orchestrator-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "1"
+      WORKER_NUMERIC_ID: "1"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1122,12 +1497,14 @@ services:
       query3-groupby-worker-2:
         condition: service_started
     environment:
+      WORKER_ID: "query3-orchestrator-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "2"
+      WORKER_NUMERIC_ID: "2"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1144,12 +1521,14 @@ services:
       query3-groupby-worker-3:
         condition: service_started
     environment:
+      WORKER_ID: "query3-orchestrator-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "3"
+      WORKER_NUMERIC_ID: "3"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1166,12 +1545,14 @@ services:
       query3-groupby-worker-4:
         condition: service_started
     environment:
+      WORKER_ID: "query3-orchestrator-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "4"
+      WORKER_NUMERIC_ID: "4"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-4-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1188,12 +1569,14 @@ services:
       query3-groupby-worker-5:
         condition: service_started
     environment:
+      WORKER_ID: "query3-orchestrator-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "3"
-      WORKER_ID: "5"
+      WORKER_NUMERIC_ID: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query3-groupby-worker-5-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1208,6 +1591,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query4-partitioner-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -1215,6 +1599,7 @@ services:
       QUERY_TYPE: "4"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-partitioner-1-data:/app/worker-data
     profiles: ["orchestration"]
@@ -1229,6 +1614,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query4-partitioner-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -1236,6 +1622,7 @@ services:
       QUERY_TYPE: "4"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-partitioner-2-data:/app/worker-data
     profiles: ["orchestration"]
@@ -1250,6 +1637,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      WORKER_ID: "query4-partitioner-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
@@ -1257,8 +1645,55 @@ services:
       QUERY_TYPE: "4"
       NUM_PARTITIONS: "100"
       NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-partitioner-3-data:/app/worker-data
+    profiles: ["orchestration"]
+
+  # Query 4 Partitioner 4
+  query4-partitioner-4:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query4-partitioner-4
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: "query4-partitioner-4"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
+    volumes:
+      - query4-partitioner-4-data:/app/worker-data
+    profiles: ["orchestration"]
+
+  # Query 4 Partitioner 5
+  query4-partitioner-5:
+    build:
+      context: .
+      dockerfile: ./workers/group_by/shared/partitioner/Dockerfile
+    container_name: query4-partitioner-5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      WORKER_ID: "query4-partitioner-5"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: password
+      QUERY_TYPE: "4"
+      NUM_PARTITIONS: "100"
+      NUM_WORKERS: "5"
+      HEALTH_PORT: "8888"
+    volumes:
+      - query4-partitioner-5-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Query 4 GroupBy Worker 1
@@ -1276,15 +1711,21 @@ services:
         condition: service_started
       query4-partitioner-3:
         condition: service_started
+      query4-partitioner-4:
+        condition: service_started
+      query4-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query4-groupby-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "1"
+      WORKER_NUMERIC_ID: "1"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1304,15 +1745,21 @@ services:
         condition: service_started
       query4-partitioner-3:
         condition: service_started
+      query4-partitioner-4:
+        condition: service_started
+      query4-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query4-groupby-worker-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "2"
+      WORKER_NUMERIC_ID: "2"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1332,15 +1779,21 @@ services:
         condition: service_started
       query4-partitioner-3:
         condition: service_started
+      query4-partitioner-4:
+        condition: service_started
+      query4-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query4-groupby-worker-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "3"
+      WORKER_NUMERIC_ID: "3"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1360,15 +1813,21 @@ services:
         condition: service_started
       query4-partitioner-3:
         condition: service_started
+      query4-partitioner-4:
+        condition: service_started
+      query4-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query4-groupby-worker-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "4"
+      WORKER_NUMERIC_ID: "4"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-4-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1388,15 +1847,21 @@ services:
         condition: service_started
       query4-partitioner-3:
         condition: service_started
+      query4-partitioner-4:
+        condition: service_started
+      query4-partitioner-5:
+        condition: service_started
     environment:
+      WORKER_ID: "query4-groupby-worker-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "5"
+      WORKER_NUMERIC_ID: "5"
       NUM_WORKERS: "5"
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-5-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1413,12 +1878,14 @@ services:
       query4-groupby-worker-1:
         condition: service_started
     environment:
+      WORKER_ID: "query4-orchestrator-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "1"
+      WORKER_NUMERIC_ID: "1"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-1-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1435,12 +1902,14 @@ services:
       query4-groupby-worker-2:
         condition: service_started
     environment:
+      WORKER_ID: "query4-orchestrator-2"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "2"
+      WORKER_NUMERIC_ID: "2"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-2-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1457,12 +1926,14 @@ services:
       query4-groupby-worker-3:
         condition: service_started
     environment:
+      WORKER_ID: "query4-orchestrator-3"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "3"
+      WORKER_NUMERIC_ID: "3"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-3-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1479,12 +1950,14 @@ services:
       query4-groupby-worker-4:
         condition: service_started
     environment:
+      WORKER_ID: "query4-orchestrator-4"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "4"
+      WORKER_NUMERIC_ID: "4"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-4-data:/app/groupby-data
     profiles: ["orchestration"]
@@ -1501,22 +1974,24 @@ services:
       query4-groupby-worker-5:
         condition: service_started
     environment:
+      WORKER_ID: "query4-orchestrator-5"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       QUERY_TYPE: "4"
-      WORKER_ID: "5"
+      WORKER_NUMERIC_ID: "5"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-groupby-worker-5-data:/app/groupby-data
     profiles: ["orchestration"]
 
   # Query 4 Top users Classification
-  query4-top-users-worker:
+  query4-top-users-worker-1:
     build:
       context: .
       dockerfile: ./workers/top/query4_top_classification/Dockerfile
-    container_name: query4-top-users-worker
+    container_name: query4-top-users-worker-1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -1541,21 +2016,23 @@ services:
       query4-orchestrator-5:
         condition: service_started
     environment:
+      WORKER_ID: "query4-top-users-worker-1"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: admin
       RABBITMQ_PASS: password
       NUM_PARTITIONS: "100"
+      HEALTH_PORT: "8888"
     volumes:
       - query4-top-users-worker-data:/app/worker-data
     profiles: ["orchestration"]
 
   # Core application (data flow services)
-  proxy:
+  proxy-1:
     build:
       context: .
       dockerfile: ./proxy/Dockerfile
-    container_name: proxy
+    container_name: proxy-1
     ports:
       - "8081:8080"  # TCP port for client connections
     depends_on:
@@ -1577,7 +2054,7 @@ services:
         condition: service_started
       join-data-handler-1:
         condition: service_started
-      user-partition-splitter:
+      user-partition-splitter-1:
         condition: service_started
       user-partition-writer-1:
         condition: service_started
@@ -1619,6 +2096,10 @@ services:
         condition: service_started
       query2-partitioner-3:
         condition: service_started
+      query2-partitioner-4:
+        condition: service_started
+      query2-partitioner-5:
+        condition: service_started
       query2-groupby-worker-1:
         condition: service_started
       query2-groupby-worker-2:
@@ -1629,7 +2110,7 @@ services:
         condition: service_started
       query2-groupby-worker-5:
         condition: service_started
-      query2-top-items-worker:
+      query2-top-items-worker-1:
         condition: service_started
       query3-orchestrator-1:
         condition: service_started
@@ -1646,6 +2127,10 @@ services:
       query3-partitioner-2:
         condition: service_started
       query3-partitioner-3:
+        condition: service_started
+      query3-partitioner-4:
+        condition: service_started
+      query3-partitioner-5:
         condition: service_started
       query3-groupby-worker-1:
         condition: service_started
@@ -1673,6 +2158,10 @@ services:
         condition: service_started
       query4-partitioner-3:
         condition: service_started
+      query4-partitioner-4:
+        condition: service_started
+      query4-partitioner-5:
+        condition: service_started
       query4-groupby-worker-1:
         condition: service_started
       query4-groupby-worker-2:
@@ -1683,13 +2172,13 @@ services:
         condition: service_started
       query4-groupby-worker-5:
         condition: service_started
-      query4-top-users-worker:
+      query4-top-users-worker-1:
         condition: service_started
-      results-dispatcher:
+      results-dispatcher-1:
         condition: service_started
-      in-memory-join-orchestrator:
+      in-memory-join-orchestrator-1:
         condition: service_started
-      in-file-join-orchestrator:
+      in-file-join-orchestrator-1:
         condition: service_started
     environment:
       - SERVER_PORT=8080
@@ -1697,7 +2186,10 @@ services:
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=admin
       - RABBITMQ_PASS=password
-    profiles: ["data-flow"]
+      - HEALTH_PORT=8888
+    volumes:
+      - proxy-1-data:/app/worker-data
+    profiles: ["orchestration", "data-flow"]
 
   # Client 1
   client-1:
@@ -1706,7 +2198,7 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client-1
     depends_on:
-      proxy:
+      proxy-1:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -1714,7 +2206,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI1
-    command: ["./main", "/app/data", "proxy:8080"]
+      - CHUNK_SIZE=1000  # Number of rows per chunk
+    command: ["./main", "/app/data", "proxy-1:8080"]
     profiles: ["data-flow"]
 
   # Client 2
@@ -1724,7 +2217,7 @@ services:
       dockerfile: ./client/Dockerfile
     container_name: client-2
     depends_on:
-      proxy:
+      proxy-1:
         condition: service_started
     volumes:
       - ./data:/app/data
@@ -1732,7 +2225,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Access to Docker daemon
     environment:
       - CLIENT_ID=CLI2
-    command: ["./main", "/app/data", "proxy:8080"]
+      - CHUNK_SIZE=1000  # Number of rows per chunk
+    command: ["./main", "/app/data", "proxy-1:8080"]
     profiles: ["data-flow"]
 
   # Testing (optional, can be run with profile)
@@ -1745,7 +2239,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      proxy:
+      proxy-1:
         condition: service_started
     environment:
       RABBITMQ_URL: "amqp://admin:password@rabbitmq:5672/"
@@ -1756,43 +2250,6 @@ services:
     tty: true
 
 volumes:
-  # Year filter worker volumes
-  year-filter-worker-1-data:
-    driver: local
-  year-filter-worker-2-data:
-    driver: local
-  year-filter-worker-3-data:
-    driver: local
-  # Time filter worker volumes
-  time-filter-worker-1-data:
-    driver: local
-  time-filter-worker-2-data:
-    driver: local
-  # Amount filter worker volumes
-  amount-filter-worker-1-data:
-    driver: local
-  # Query gateway volumes
-  query-gateway-1-data:
-    driver: local
-  # GroupBy partitioner volumes
-  query2-partitioner-1-data:
-    driver: local
-  query2-partitioner-2-data:
-    driver: local
-  query2-partitioner-3-data:
-    driver: local
-  query3-partitioner-1-data:
-    driver: local
-  query3-partitioner-2-data:
-    driver: local
-  query3-partitioner-3-data:
-    driver: local
-  query4-partitioner-1-data:
-    driver: local
-  query4-partitioner-2-data:
-    driver: local
-  query4-partitioner-3-data:
-    driver: local
   # User partition writer volumes
   user-partition-writer-1-data:
     driver: local
@@ -1814,29 +2271,6 @@ volumes:
   user-writer-4-data:
     driver: local
   user-writer-5-data:
-    driver: local
-  # User partition splitter volume
-  user-partition-splitter-data:
-    driver: local
-  # Join data handler volume
-  join-data-handler-1-data:
-    driver: local
-  # ItemID join worker volume
-  itemid-join-worker-1-data:
-    driver: local
-  # StoreID join worker volume
-  storeid-join-worker-1-data:
-    driver: local
-  # User join reader volumes
-  user-join-reader-1-data:
-    driver: local
-  user-join-reader-2-data:
-    driver: local
-  user-join-reader-3-data:
-    driver: local
-  user-join-reader-4-data:
-    driver: local
-  user-join-reader-5-data:
     driver: local
   # Query 2 worker volumes
   query2-groupby-worker-1-data:
@@ -1871,8 +2305,76 @@ volumes:
     driver: local
   query4-groupby-worker-5-data:
     driver: local
-  # Results dispatcher volume
-  results-dispatcher-data:
+  # Filter workers volumes
+  year-filter-worker-1-data:
+    driver: local
+  year-filter-worker-2-data:
+    driver: local
+  year-filter-worker-3-data:
+    driver: local
+  time-filter-worker-1-data:
+    driver: local
+  time-filter-worker-2-data:
+    driver: local
+  amount-filter-worker-1-data:
+    driver: local
+  # Join workers volumes
+  itemid-join-worker-1-data:
+    driver: local
+  storeid-join-worker-1-data:
+    driver: local
+  join-data-handler-1-data:
+    driver: local
+  user-partition-splitter-1-data:
+    driver: local
+  user-join-reader-1-data:
+    driver: local
+  user-join-reader-2-data:
+    driver: local
+  user-join-reader-3-data:
+    driver: local
+  user-join-reader-4-data:
+    driver: local
+  user-join-reader-5-data:
+    driver: local
+  # Partitioner volumes
+  query2-partitioner-1-data:
+    driver: local
+  query2-partitioner-2-data:
+    driver: local
+  query2-partitioner-3-data:
+    driver: local
+  query2-partitioner-4-data:
+    driver: local
+  query2-partitioner-5-data:
+    driver: local
+  query3-partitioner-1-data:
+    driver: local
+  query3-partitioner-2-data:
+    driver: local
+  query3-partitioner-3-data:
+    driver: local
+  query3-partitioner-4-data:
+    driver: local
+  query3-partitioner-5-data:
+    driver: local
+  query4-partitioner-1-data:
+    driver: local
+  query4-partitioner-2-data:
+    driver: local
+  query4-partitioner-3-data:
+    driver: local
+  query4-partitioner-4-data:
+    driver: local
+  query4-partitioner-5-data:
+    driver: local
+  # Query gateway and dispatcher volumes
+  query-gateway-1-data:
+    driver: local
+  results-dispatcher-1-data:
+    driver: local
+  # Proxy volume
+  proxy-1-data:
     driver: local
   # Join orchestrator volumes
   in-memory-join-orchestrator-data:
