@@ -121,18 +121,18 @@ extract_all_containers() {
 
 categorize_nodes() {
     local monitored_workers=$(extract_monitored_workers 2>/dev/null)
-    
+
     while IFS= read -r container; do
         [ -z "$container" ] && continue
-        
-        if [ -n "$monitored_workers" ] && echo "$monitored_workers" | grep -q "^${container}$"; then
-            node_category["$container"]="monitored"
-        elif [[ "$container" =~ ^supervisor-[0-9]+$ ]]; then
+
+        if [[ "$container" =~ ^supervisor-[0-9]+$ ]]; then
             node_category["$container"]="supervisor"
         elif [[ "$container" =~ ^client-[0-9]+$ ]]; then
             node_category["$container"]="client"
         elif [[ "$container" == "rabbitmq-orchestrator" ]] || [[ "$container" == "chaos-monkey" ]] || [[ "$container" == "proxy-1" ]] || [[ "$container" == "test-runner" ]]; then
             node_category["$container"]="infrastructure"
+        elif [ -n "$monitored_workers" ] && echo "$monitored_workers" | grep -q "^${container}$"; then
+            node_category["$container"]="monitored"
         else
             node_category["$container"]="other"
         fi
